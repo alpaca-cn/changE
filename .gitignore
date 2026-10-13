@@ -1,0 +1,43 @@
+# ── 可视化伴侣的会话存档（过程产物，保留在磁盘但不入库）──
+.superpowers/
+
+# ── Java / Maven ──
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/timing.properties
+
+# ── 前端（Vue + Vite）──
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# ── Tauri / Rust ──
+src-tauri/target/
+
+# ── 运行时数据：数据库与照片，绝不入库 ──
+data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# ── 模型接口的密钥，绝不入库 ──
+.env
+.env.local
+application-local.yml
+application-local.properties
+
+# ── 日志与临时文件 ──
+*.log
+logs/
+*.tmp
+
+# ── IDE ──
+.idea/
+.vscode/
+*.iml
+*.iws
