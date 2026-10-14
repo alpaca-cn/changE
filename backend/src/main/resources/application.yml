@@ -27,6 +27,6 @@ server:
   port: 0                           # 由系统分配；实际端口由 PortReporter 上报（后续任务）
 
 change:
-  data-dir: ./target/data
+  data-dir: ${CHANGE_DATA_DIR:${APPDATA}/changE}
   redis:
     enabled: true
