@@ -442,7 +442,7 @@ git commit -m "chore: 后端项目骨架（Spring Boot 3.5.16 + JDK 25 + SQLite 
 - Create: `backend/src/main/resources/db/migration/V1__baseline.sql`
 - Test: `backend/src/test/java/com/change/MigrationTest.java`
 
-- [ ] **Step 1: 写基线迁移**
+- [x] **Step 1: 写基线迁移**
 
 ```sql
 -- V1: 基线。只建一张探针表，用来验证 Flyway 真的跑起来了。
@@ -456,7 +456,7 @@ INSERT INTO schema_probe (note, created_at)
 VALUES ('baseline', '2026-10-14T00:00:00');
 ```
 
-- [ ] **Step 2: 写迁移测试**
+- [x] **Step 2: 写迁移测试**
 
 ```java
 package com.change;
@@ -490,13 +490,13 @@ class MigrationTest {
 }
 ```
 
-- [ ] **Step 3: 跑测试**
+- [x] **Step 3: 跑测试**
 
 Run: `cd backend && mvn -B test -Dtest=MigrationTest`
 
 Expected: `Tests run: 2, Failures: 0, Errors: 0`
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add backend/src/main/resources/db/migration/V1__baseline.sql backend/src/test/java/com/change/MigrationTest.java
