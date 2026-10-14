@@ -3,7 +3,9 @@ spring:
     name: change
   datasource:
     # busy_timeout=5000：SQLite 默认 busy_timeout=0，写冲突会立刻失败；给 5 秒让单写者排队
-    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db?busy_timeout=5000
+    # foreign_keys=true：SQLite 默认 PRAGMA foreign_keys=0，且该开关是「每连接」的；
+    # 迁移里大量 REFERENCES ... ON DELETE CASCADE 不开这一项就只是装饰（级联删除不发生）
+    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db?busy_timeout=5000&foreign_keys=true
     driver-class-name: org.sqlite.JDBC
     hikari:
       maximum-pool-size: 1          # SQLite 单写者，连接池开大只会互相等锁

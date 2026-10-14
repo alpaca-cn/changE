@@ -74,6 +74,7 @@ backend/
 - Create: `backend/src/main/resources/application.yml`
 - Create: `backend/src/main/resources/META-INF/spring.factories`
 - Test: `backend/src/test/java/com/change/ChangeApplicationTests.java`
+- Test: `backend/src/test/java/com/change/config/DataDirectoryInitializerTest.java`
 - Test: `backend/src/test/resources/application.properties`
 
 **为什么需要数据目录初始化器（`DataDirectoryInitializer`）**
@@ -195,7 +196,9 @@ spring:
     name: change
   datasource:
     # busy_timeout=5000：SQLite 默认 busy_timeout=0，写冲突会立刻失败；给 5 秒让单写者排队
-    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db?busy_timeout=5000
+    # foreign_keys=true：SQLite 默认 PRAGMA foreign_keys=0，且该开关是「每连接」的；
+    # 迁移里大量 REFERENCES ... ON DELETE CASCADE 不开这一项就只是装饰（级联删除不发生）
+    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db?busy_timeout=5000&foreign_keys=true
     driver-class-name: org.sqlite.JDBC
     hikari:
       maximum-pool-size: 1          # SQLite 单写者，连接池开大只会互相等锁
@@ -293,13 +296,134 @@ class ChangeApplicationTests {
 change.data-dir=${user.dir}/target/data
 ```
 
+上面这条断言是恒真的（初始化器先回写、后读取，见 Step 5 的说明），所以另建一个补盲区的测试类。它不起 Spring 上下文，手搓 `MockEnvironment` 直接对初始化器下断言：
+
+```java
+package com.change.config;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.boot.logging.DeferredLog;
+import org.springframework.core.env.PropertySource;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.mock.env.MockEnvironment;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * 直接对 DataDirectoryInitializer 的行为下断言，而不是透过 @SpringBootTest 看回写后的结果。
+ *
+ * 为什么需要这个测试：ChangeApplicationTests 里那条断言（读到的是绝对路径）是恒真的，
+ * 因为初始化器在 Spring 读取属性之前就把值回写成了绝对路径——它永远看不到「配置被改坏」，
+ * 真正被证明的只是「数据目录可用」。本类补上三个盲区：
+ *   - 回写与规范化这条动作本身（删掉回写 / 删掉 normalize 立刻变红）；
+ *   - 盘根兜底真的兜住了（空串 APPDATA 那条路径）；
+ *   - 发布的默认值不是工作目录相对路径（只能靠读未经回写的原始配置来测）。
+ *
+ * 全部是纯单元测试：手搓 MockEnvironment、手搓 DeferredLogFactory，不起 Spring 上下文。
+ */
+class DataDirectoryInitializerTest {
+
+    /**
+     * 与 spring.factories 注册的构造函数一致：真实类依赖 DeferredLogFactory，
+     * 就用 DeferredLog 直接顶上，不为迁就测试去改生产代码的构造函数。
+     */
+    private static DataDirectoryInitializer initializer() {
+        return new DataDirectoryInitializer(clazz -> new DeferredLog());
+    }
+
+    @Test
+    void relative_input_is_rewritten_to_an_absolute_normalized_path() throws Exception {
+        String configured = "./target/rel/";
+        MockEnvironment env = new MockEnvironment();
+        env.setProperty("change.data-dir", configured);
+
+        initializer().postProcessEnvironment(env, null);
+
+        // 断言「配置 → 绝对路径」的转换结果本身，而不是它是否可用。
+        // 删掉回写那两行，或者去掉 .normalize()，这条立刻变红。
+        assertThat(env.getProperty("change.data-dir"))
+                .isEqualTo(Path.of(configured).toAbsolutePath().normalize().toString());
+        assertThat(Files.isDirectory(Path.of(env.getProperty("change.data-dir")))).isTrue();
+    }
+
+    @Test
+    void root_level_path_falls_back_under_user_home() throws Exception {
+        // 这条会真的 createDirectories，所以把 user.home 指到 target 下的临时目录，
+        // 绝不碰真实用户数据目录（C:\Users\<me>\AppData\Roaming）。
+        Path tempHome = Path.of("target", "user-home-probe").toAbsolutePath().normalize();
+        deleteRecursively(tempHome);
+        Files.createDirectories(tempHome);
+
+        String previousUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempHome.toString());
+        try {
+            MockEnvironment env = new MockEnvironment();
+            env.setProperty("change.data-dir", "/changE");
+
+            initializer().postProcessEnvironment(env, null);
+
+            Path result = Path.of(env.getProperty("change.data-dir"));
+            Path rootLevelCandidate = Path.of("/changE").toAbsolutePath().normalize();
+
+            // 复现前提：这个输入解析后确实只剩「盘根 + 一层」，否则这条测试没在测兜底
+            assertThat(rootLevelCandidate.getNameCount()).isEqualTo(1);
+            assertThat(result)
+                    .as("盘根下的单个目录必须被兜底掉，而不是落在盘根")
+                    .isNotEqualTo(rootLevelCandidate);
+            assertThat(result.getNameCount()).isGreaterThan(1);
+            assertThat(result.startsWith(tempHome)).isTrue();
+            assertThat(Files.isDirectory(result)).isTrue();
+            assertThat(Files.exists(rootLevelCandidate)).isFalse();
+        } finally {
+            System.setProperty("user.home", previousUserHome);
+            deleteRecursively(tempHome);            // 跑完清理临时 home
+        }
+    }
+
+    @Test
+    void published_default_data_dir_is_not_a_working_directory_relative_path() throws Exception {
+        // 唯一能防住「默认值被改回相对路径」的方式：读未经初始化器回写的原始配置。
+        // 走 Spring 环境拿到的值一定已经是绝对路径，看不出默认值本身写的是什么。
+        List<PropertySource<?>> sources = new YamlPropertySourceLoader()
+                .load("application.yml", new ClassPathResource("application.yml"));
+        Object raw = sources.get(0).getProperty("change.data-dir");
+
+        assertThat(raw).isNotNull();
+        assertThat(raw.toString()).doesNotStartWith("./").doesNotStartWith(".\\");
+    }
+
+    private static void deleteRecursively(Path root) throws Exception {
+        if (!Files.exists(root)) {
+            return;
+        }
+        try (var paths = Files.walk(root)) {
+            for (Path p : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(p);
+            }
+        }
+    }
+}
+```
+
 - [x] **Step 5: 跑测试**
 
 Run: `cd backend && Remove-Item -Recurse -Force target; mvn -B test`
 
-Expected: `BUILD SUCCESS`，`Tests run: 2, Failures: 0, Errors: 0`
+Expected: `BUILD SUCCESS`，`Tests run: 5, Failures: 0, Errors: 0`
+（`ChangeApplicationTests` 2 条 + 复审补齐的 `DataDirectoryInitializerTest` 3 条）
 
-两个测试分别锁住：① 上下文能加载（Redis 不可达时必须通过，这是 Task 11 的降级验收点）；② `change.data-dir` 是绝对路径、目录确实被创建、`DataSource` 拿到的连接真的可用。**第二条是关键**：没有它，谁把数据目录改回相对路径、或者把 `${APPDATA}` 拼错，测试照样绿灯。
+两个测试分别锁住：① 上下文能加载（Redis 不可达时必须通过，这是 Task 11 的降级验收点）；② `change.data-dir` 是绝对路径、目录确实被创建、`DataSource` 拿到的连接真的可用。
+
+**② 真正证明的只是「数据目录最终可用」**：数据目录最终是绝对路径、已经被创建、连接可用。换工作目录也就换库这条约定，靠的是「目录真的建好了 + 连接真的能开」这个结果，而不是靠读取配置本身。
+
+**② 不能证明「配置没被改坏」**：`DataDirectoryInitializer` 是 `EnvironmentPostProcessor`，它在 Spring 读到 `change.data-dir` **之前**就把规范化结果回写进了属性源，所以 `env.getProperty("change.data-dir")` 拿到的永远是回写值——哪怕 `application.yml` 的默认值被改成 `./target/data`，`isAbsolute()` 也照样为真。这条断言在结构上不可能是红的（实测：把配置改成 `./target/relative-probe`，套件依然全绿）。
+
+要真正防住「默认值被改回相对路径」，只能读**未经回写的原始配置**，也就是 `DataDirectoryInitializerTest.published_default_data_dir_is_not_a_working_directory_relative_path()`。
 
 如果因为 Redis 连不上而失败，说明降级还没做——**先继续，Task 11 会解决它**；但记下这个失败，Task 11 结束时它必须变绿。
 

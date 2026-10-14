@@ -98,11 +98,20 @@ public class DataDirectoryInitializer implements EnvironmentPostProcessor {
     }
 
     /**
-     * 是否是「盘根下的单个目录」：{@code E:\changE}、{@code /changE} 这类。
+     * 是否是「盘根下的单个目录」：{@code /changE}、{@code \changE} 这类。
      *
-     * 判据刻意看原始串而不是只看 Path：空串 APPDATA 拼出来的 "/changE" 在 Windows 上
-     * 被 JDK 当作「相对路径」解析（{@code Path.of("/changE").isAbsolute()} 是 false），
-     * 但 {@code toAbsolutePath()} 又会把它挂到当前盘根上，光看 Path 很容易漏掉。
+     * 触发条件是两条同时成立：原始串以分隔符开头（{@code /} 或 {@code \}），
+     * 且解析规范化之后只剩「盘根 + 一层」。之所以要看原始串，是因为空串 APPDATA 拼出来的
+     * "/changE" 在 Windows 上被 JDK 当作「相对路径」解析
+     * （{@code Path.of("/changE").isAbsolute()} 是 false），但 {@code toAbsolutePath()}
+     * 又会把它挂到当前盘根上，光看 Path 很容易漏掉。真正的根（{@code E:\}、{@code /}）
+     * 也一并算作异常。
+     *
+     * 注意这里**不抓**带盘符的形式：{@code E:\changE}、{@code C:\changE} 的原始串不以分隔符
+     * 开头，返回 false。这是刻意的——本守卫要兜的是「APPDATA 为空串，于是我们**自己算出**了
+     * 一个盘根路径」那种意外；用户**显式**设置 {@code CHANGE_DATA_DIR=C:\changE} 是他的明确
+     * 选择，会被尊重、不被拦截，数据就写在他指定的位置。
+     *
      * 合法的数据目录（如 {@code E:\devtools\cache\dt\changE}）前一跳都在，不会误伤。
      */
     private boolean isSuspiciousRootPath(String configured, Path path) {
