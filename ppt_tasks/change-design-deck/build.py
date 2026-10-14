@@ -114,11 +114,11 @@ put(s, ML, 2.05, 11.0, 1.5, "changE", size=78, bold=True)
 rect(s, ML + 0.04, 3.72, 1.45, 0.045, C["accent"])
 put(s, ML, 4.02, 10.5, 0.6, "一个只服务一个人的健身记录客户端", size=21, color=C["muted"])
 
-# 右侧三条关键数字，给封面一个支点
+# 右侧三条关键数字，给封面一个支点（全部为实测值，不带估算）
 bx = 8.55
-for i, (num, lab) in enumerate([("12 MB", "Tauri 打包产物"),
-                                ("0.06 ms", "3D 拾取耗时"),
-                                ("15", "张表的数据模型")]):
+for i, (num, lab) in enumerate([("12 MB", "Tauri 外壳（实测）"),
+                                ("47 MB", "精简 Java 运行时（实测）"),
+                                ("0.06 ms", "3D 拾取耗时（实测）")]):
     yy = 2.35 + i * 1.15
     put(s, bx, yy, 4.0, 0.5, num, size=26, bold=True, color=C["accent"])
     put(s, bx, yy + 0.46, 4.0, 0.3, lab, size=12, color=C["muted"])
@@ -604,8 +604,8 @@ blocks = [
      [("Rust 工具链", "1.99.0"), ("MSVC 工具集", "14.44"), ("cargo 包缓存", "321 MB")],
      "国内源实测：USTC 3.4 MB/s；官方源仅 19 KB/s"),
     ("Tauri 冒烟测试", "全链路通过",
-     [("首次编译", "1.9 分钟"), ("产出 exe", "12 MB"), ("Electron 对比", "150 MB")],
-     "唯一仍需验证：JDK 25 与 Spring Boot 3.x 的版本搭配"),
+     [("首次编译", "1.9 分钟"), ("Tauri 外壳", "12 MB"), ("精简 JRE", "47 MB")],
+     "完整安装包预计 100–130 MB：外壳 + 自带 JRE + fat jar。仍小于 Electron 的 150 MB 起，但不是数量级差距"),
     ("3D 拾取基准", "240 条射线全命中",
      [("原生 Raycaster", "14.96 ms"), ("＋ MeshBVH", "0.203 ms"), ("合并 + BVH", "0.06 ms")],
      "模型：683 个独立命名 mesh，128 万三角形"),
@@ -639,21 +639,22 @@ risks = [
     ("Java 生态没有成熟可抄的健身项目", "中", "照 wger 思路用 Java 重写，正是学习价值"),
     ("LangChain4j 迭代极快", "中", "锁版本 + BOM；以英文文档为准"),
     ("拍照估热量不够准", "中", "定位为估算 + 一句话修正"),
+    ("朋友的电脑没有 JDK", "中", "自带 47 MB 精简 JRE；首次启动向导配数据目录与模型 key"),
     ("Redis 在虚拟机上，常关", "中", "无缓存是常态路径；超时压到 300 ms"),
-    ("CC BY-SA 的 ShareAlike 传染性", "中", "自用无碍；分发受限；界面必须署名"),
+    ("CC BY-SA 的 ShareAlike 传染性", "中", "自用无碍；一旦分发则整体须 CC BY-SA"),
 ]
 y = T_BODY + 0.05
 for r, level, fix in risks:
-    put(s, ML, y, 5.2, 0.28, r, size=11.5)
-    put(s, ML + 5.35, y, 0.7, 0.28, level, size=11.5,
+    put(s, ML, y, 5.2, 0.26, r, size=11.5)
+    put(s, ML + 5.35, y, 0.7, 0.26, level, size=11.5,
         bold=True, color=C["accent"] if level == "高" else C["muted"])
-    put(s, ML + 6.2, y, 5.6, 0.28, fix, size=11, color=C["faint"])
-    y += 0.42
-    rule(s, y - 0.13)
+    put(s, ML + 6.2, y, 5.6, 0.26, fix, size=11, color=C["faint"])
+    y += 0.36
+    rule(s, y - 0.11)
 # 两阶段
 eyebrow(s, ML, y + 0.10, "两阶段排期")
-ph = [("第一阶段 · 10 步", "最小骨架 → 数据层 → 动作库 → 训练 → 饮食 → 智能体 → 身体数据 → 人体图 2D → Redis 缓存 → 打包",
-       "做完就有个能天天用的东西", C["accent"]),
+ph = [("第一阶段 · 10 步", "最小骨架 → 数据层 → 动作库 → 训练 → 饮食 → 智能体 → 身体数据 → 人体图 2D → Redis 缓存 → 打包分发（自带 JRE）",
+       "能天天用，也能发给朋友", C["accent"]),
       ("第二阶段 · 8–14 人日", "模型管线 → 合并几何 + BVH 拾取 → 热力图着色 → Tauri 集成调优",
        "只替换渲染层，其余一律不动", C["muted"])]
 yy = y + 0.44
