@@ -1,0 +1,10 @@
+{
+  "task_id": "ff8b4c60-2637-4639-9562-fcc8aa89f304",
+  "task_name": "change-design-deck",
+  "skill": "ppt-design-skill",
+  "skill_version": "1.5",
+  "template_source": "skill/templates/task-init",
+  "project_root": "E:\\idea\\program\\change",
+  "task_root": "E:\\idea\\program\\change\\ppt_tasks\\change-design-deck",
+  "created_at": "2026-10-14T05:24:10.439237+00:00"
+}
