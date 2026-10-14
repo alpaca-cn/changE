@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: change
+  datasource:
+    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1          # SQLite 单写者，连接池开大只会互相等锁
+  jpa:
+    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    hibernate:
+      ddl-auto: validate            # 建表交给 Flyway，Hibernate 只校验
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  data:
+    redis:
+      host: ${change.redis.host:192.168.100.128}
+      port: ${change.redis.port:6379}
+      timeout: 500ms
+      connect-timeout: 300ms
+  main:
+    banner-mode: off
+
+server:
+  port: 0                           # 由系统分配；实际端口由 PortReporter 上报（后续任务）
+
+change:
+  data-dir: ./target/data
+  redis:
+    enabled: true
