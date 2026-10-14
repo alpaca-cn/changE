@@ -287,9 +287,13 @@
 
 SQL 语法、建表与索引、事务、连接池（HikariCP）、JDBC、Spring Data JPA、MyBatis，这些**在 SQLite 上完全一样**。差别只有三处：驱动（`sqlite-jdbc` vs `mysql-connector-j`）、连接 URL、以及 Hibernate 的方言（SQLite 需要 `hibernate-community-dialects`）。
 
-**具体做法**：数据访问层照常用 JPA / MyBatis 写，数据库连接做成配置项，另外提供一份 `application-mysql.yml`。想练 MySQL 时，本地装一个 MySQL，切 profile 就能用**同一套代码、同一套 Flyway 迁移脚本**跑起来。日常自用则不必背 MySQL 的运维。
+**具体做法**：数据访问层照常用 JPA / MyBatis 写，数据库连接做成配置项，另外提供一份 `application-mysql.yml`。想练 MySQL 时，本地装一个 MySQL，切 profile 就能跑起来。日常自用则不必背 MySQL 的运维。
+
+**但迁移脚本不能共用**——迁移按方言分目录存放（例如 `db/migration/sqlite/` 与 `db/migration/mysql/`），切换 profile 时同时切换 `spring.flyway.locations`。共享的是**数据访问层代码与实体定义**，不是迁移脚本：V1 用到的 `INTEGER PRIMARY KEY AUTOINCREMENT`、以 `TEXT` 存 ISO-8601 时间戳，以及 Task 3 会大量用到的 `PRAGMA table_info`、部分索引（`CREATE UNIQUE INDEX ... WHERE`，MySQL 根本不支持）、`CHECK` 约束，在 MySQL 上要么跑不通、要么语义不同；`CREATE TABLE IF NOT EXISTS` 虽然 MySQL 也有，但 `CREATE INDEX IF NOT EXISTS` 没有，同一份脚本照样得按方言改。想让一套 SQL 同时喂两个方言，只能退到两者语法的最小公约数，而那个公约数连「部分唯一索引」和「自增主键」都表达不利索——等于拿主要场景（SQLite）的清晰度去换次要场景（练习 MySQL）的省事，不划算。
 
 > 这样安排的理由：桌面客户端的第一体验是「双击就能用」。让它依赖一个必须常驻的数据库服务，是把运维负担转嫁给自己——而这个负担换不来任何功能。
+
+> 此条由 Task 2 的代码质量审查发现并修正。
 
 #### 问题二：Redis 怎么用
 

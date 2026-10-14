@@ -5,7 +5,16 @@ spring:
     # busy_timeout=5000：SQLite 默认 busy_timeout=0，写冲突会立刻失败；给 5 秒让单写者排队
     # foreign_keys=true：SQLite 默认 PRAGMA foreign_keys=0，且该开关是「每连接」的；
     # 迁移里大量 REFERENCES ... ON DELETE CASCADE 不开这一项就只是装饰（级联删除不发生）
-    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db?busy_timeout=5000&foreign_keys=true
+    # journal_mode=WAL：默认的 journal_mode=delete + synchronous=FULL 每次 commit 都要 fsync，
+    # 且写完之前读者被阻塞。本应用的写入形状是「逐组记训练、逐条记饮食」——小事务、高频次，
+    # 这个组合会把每次点击都卡在一次磁盘同步上。WAL 让写者与读者互不阻塞。
+    # 只能走 URL 参数：SQLite 在事务内拒绝切 WAL（cannot change into wal mode from within a
+    # transaction），而 Flyway 默认把迁移包在事务里，-- flyway:executeInTransaction=false 也无效
+    # （已实测），所以迁移脚本这条路无论怎么走都是错的。
+    # 注意参数名必须与 PRAGMA 名逐字一致：xerial 驱动会把无法识别的 URL 参数当成 PRAGMA 名
+    # 执行，拼错大小写（如 journalMode=WAL）不是静默忽略，而是直接 SQLITE_CANTOPEN 连不上库。
+    # 哨兵见 MigrationTest#connection_pragmas_are_effective。
+    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db?busy_timeout=5000&foreign_keys=true&journal_mode=WAL
     driver-class-name: org.sqlite.JDBC
     hikari:
       maximum-pool-size: 1          # SQLite 单写者，连接池开大只会互相等锁

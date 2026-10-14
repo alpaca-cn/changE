@@ -1,0 +1,12 @@
+# 行尾护栏：这个仓库要在别人的机器上分发，就不能让「谁在哪台机器上提交过」
+# 决定文件里是 LF 还是 CRLF。缺这份文件时，一次在 core.autocrlf=true 的
+# Windows 上提交就可能把 CRLF 写进历史，之后再在别的平台检出就整片假 diff。
+# 实测过：加这份文件之前，.gitignore 在索引里是 LF、工作区里是 mixed。
+* text=auto eol=lf
+*.sql   text eol=lf
+*.java  text eol=lf
+*.yml   text eol=lf
+*.properties text eol=lf
+# PowerShell 与批处理在 Windows 上用 CRLF 更稳妥，故单独放行。
+*.ps1   text eol=crlf
+*.bat   text eol=crlf

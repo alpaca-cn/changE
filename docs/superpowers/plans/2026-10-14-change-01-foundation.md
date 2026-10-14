@@ -513,10 +513,65 @@ git commit -m "feat: 接通 SQLite 与 Flyway，加基线迁移与验证测试"
 - Create: `backend/src/main/resources/db/migration/V4__auxiliary.sql`
 - Test: `backend/src/test/java/com/change/SchemaTest.java`
 
+### 进入 Task 3 前必须遵守的约定
+
+> 以下五条来自 Task 2 的代码质量审查，**在动手写 `V2__training.sql` 之前先读完**。
+> 第 1 条是审查实测；第 2、3 条在本轮复核里重新实测过一遍（结论与原审查一致）。
+> 它们不是风格偏好，每一条都对应一次会真实发生的故障。
+
+1. **任何迁移脚本里不出现 `PRAGMA`** —— 一律走 JDBC URL 参数（`application.yml` 的 `url`）。
+   实测：让 Flyway 跑一份含 `PRAGMA journal_mode=WAL;` 的迁移，SQLite 直接拒绝，报
+   `cannot change into wal mode from within a transaction` —— Flyway 默认把迁移包在事务里。
+   加 `-- flyway:executeInTransaction=false` 也不是绕过办法（实测仍失败）。
+   所以想开 `journal_mode=WAL` 只能写在 URL 上：**迁移脚本这条路无论怎么走都是错的**。
+
+2. **迁移里不加 `IF NOT EXISTS`**（唯一例外是 V1 这个已发布的历史遗留，且它不许再改）。
+   `flyway_schema_history` 已经保证「一个版本只跑一次」，`IF NOT EXISTS` 换不来任何保护，
+   却制造了「表存在 ≠ 本迁移建了它」这个模糊地带——测试断言正是因此失效的。
+   实测：把 V1 的内容清空、只留注释，Flyway 照样报 `Successfully applied 1 migration` 并记下
+   `success=1`。此时旧断言（数一行数据）之所以变红，只是因为查一张不存在的表抛了
+   `no such table: schema_probe`——**是碰巧撞红的，不是断言发现了「这次迁移什么都没建」**；
+   而如果 V1 只是把表建错了（漏 `NOT NULL`、丢了 `AUTOINCREMENT`），旧断言会全绿。
+   对**唯一索引**尤其危险：被静默跳过不会有任何报错，只会留下悄悄变慢、或悄悄允许重复的查询。
+
+3. **`V2__training.sql` 的第一行加 `DROP TABLE schema_probe;`**。探针表是 V1 的历史遗留，
+   没有业务含义，不该永久留在每个用户的库里。同时把 `SchemaTest.all_fifteen_tables_exist`
+   里 `name <> 'schema_probe'` 那个特例一并删掉（本计划 Step 4 的代码已同步改好）。
+   **绝不要改 `V1__baseline.sql`**：checksum 一变，所有已经跑过 V1 的库启动即抛
+   `FlywayValidateException: Migrations have failed validation / Migration checksum mismatch
+   for migration version 1`（实测：仅仅给 V1 加一行注释，`MigrationTest` 三条就全部报错、
+   上下文根本起不来）。这就是「已发布的迁移不可变」这条纪律的由来——所以
+   `DROP TABLE schema_probe` 放在 V2 的第一行，而不是回头去删 V1 里那两行。
+
+4. **备份 / 导出文档（Task 9 起）必须写明**：应用运行时复制数据库要连 `-wal` / `-shm`
+   一起拷；关掉应用再拷则只需 `change.db`。开了 WAL 之后，最新提交可能还躺在 `-wal` 里，
+   只拷 `.db` 会得到一个「少了最后几次训练记录」的库。
+   （实测：应用正常关闭后 `-wal` / `-shm` 已被 checkpoint 并删除，数据目录里只剩 `change.db`；
+   但崩溃或强杀之后它们会留下来，所以「关掉再拷」必须是**正常退出**，不能是「进程没了就算」。）
+
+5. **硬编码时间戳要带注释**说明「本地时间，无时区后缀，与全局约定一致」，否则下一个人会
+   以为是 UTC，或者以为是笔误。V1 里的 `'2026-10-14T00:00:00'` 正是这种时间戳——
+   **但它已发布，不许为了补注释去改它**（理由见约定 3）；这条从 V2 起生效。
+
+**写 V2 / V3 / V4 时该照抄 V1 的：**
+
+- 文件头注释写「**为什么有这份文件**」，而不是复述下面的 SQL；
+- 列一律显式 `NOT NULL`（SQLite 默认「可为空」，漏写就是一个静默的可空列）；
+- 主键用 `INTEGER PRIMARY KEY AUTOINCREMENT`；
+- 时间戳用 `TEXT` + ISO-8601（SQLite 没有原生日期类型）；
+- 一份迁移只承担一个域（训练 / 饮食 / 辅助），别把三个域的改动塞进同一个版本号。
+
+**不该照抄的：**
+
+- `CREATE TABLE IF NOT EXISTS` —— 理由见上面第 2 条。
+
 - [ ] **Step 1: 写训练域迁移 V2**
 
 ```sql
 -- V2: 训练域 6 张表
+-- 第一行先清掉 V1 的探针表：它是基线迁移的历史遗留，没有业务含义，
+-- 不该永久留在每个用户的库里（理由见上一节的约定 3）。
+DROP TABLE schema_probe;
 
 CREATE TABLE muscle_group (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -739,8 +794,7 @@ class SchemaTest {
     void all_fifteen_tables_exist() {
         List<String> names = jdbc.queryForList(
                 "SELECT name FROM sqlite_master WHERE type='table' " +
-                "AND name NOT LIKE 'sqlite_%' AND name <> 'flyway_schema_history' " +
-                "AND name <> 'schema_probe'", String.class);
+                "AND name NOT LIKE 'sqlite_%' AND name <> 'flyway_schema_history'", String.class);
         assertThat(names).containsExactlyInAnyOrderElementsOf(EXPECTED);
     }
 
