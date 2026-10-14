@@ -23,6 +23,7 @@ backend/
     │   │   ├── ChangeApplication.java
     │   │   ├── config/            # 缓存、端口上报等基础设施装配
     │   │   │   ├── CacheConfig.java
+    │   │   │   ├── DataDirectoryInitializer.java   # Task 1：建数据目录 + 规范化路径回写
     │   │   │   └── PortReporter.java
     │   │   ├── domain/            # JPA 实体，一表一类
     │   │   │   ├── Exercise.java
@@ -40,20 +41,24 @@ backend/
     │   │       └── ChangeLogService.java
     │   └── resources/
     │       ├── application.yml
+    │       ├── META-INF/spring.factories          # 注册 DataDirectoryInitializer
     │       └── db/migration/
     │           ├── V1__baseline.sql
     │           ├── V2__training.sql
     │           ├── V3__nutrition.sql
     │           └── V4__auxiliary.sql
-    └── test/java/com/change/
-        ├── calc/
-        │   ├── NutritionCalculatorTest.java
-        │   ├── PortionConverterTest.java
-        │   ├── VolumeCalculatorTest.java
-        │   └── OneRepMaxTest.java
-        ├── MigrationTest.java
-        ├── repo/TrainingRepoTest.java
-        └── service/ChangeLogServiceTest.java
+    └── test/
+        ├── java/com/change/
+        │   ├── ChangeApplicationTests.java
+        │   ├── calc/
+        │   │   ├── NutritionCalculatorTest.java
+        │   │   ├── PortionConverterTest.java
+        │   │   ├── VolumeCalculatorTest.java
+        │   │   └── OneRepMaxTest.java
+        │   ├── MigrationTest.java
+        │   ├── repo/TrainingRepoTest.java
+        │   └── service/ChangeLogServiceTest.java
+        └── resources/application.properties        # 测试用绝对数据目录，避免碰真实数据
 ```
 
 **为什么 `calc/` 要独立成包且不依赖 Spring**：这三个计算的正确性决定所有统计的可信度，但它们和框架无关。做成纯类可以用最快的单元测试锁死行为，跑一次不到一秒。
@@ -65,10 +70,22 @@ backend/
 **Files:**
 - Create: `backend/pom.xml`
 - Create: `backend/src/main/java/com/change/ChangeApplication.java`
+- Create: `backend/src/main/java/com/change/config/DataDirectoryInitializer.java`
 - Create: `backend/src/main/resources/application.yml`
+- Create: `backend/src/main/resources/META-INF/spring.factories`
 - Test: `backend/src/test/java/com/change/ChangeApplicationTests.java`
+- Test: `backend/src/test/resources/application.properties`
 
-- [ ] **Step 1: 写 pom.xml**
+**为什么需要数据目录初始化器（`DataDirectoryInitializer`）**
+
+SQLite 不会创建父目录，目录不存在时 Flyway 会在建连阶段直接抛 `SQLITE_CANTOPEN`，Hibernate 根本轮不到执行。所以数据目录必须在**任何 Bean 实例化之前**就建好。
+
+- 用 `EnvironmentPostProcessor` 而不是普通 Bean：它是环境准备阶段跑的，早于 `DataSource`/Flyway 的装配，也早于 `@SpringBootTest` 的环境装配——`main()` 与测试都能覆盖到（注册在 `META-INF/spring.factories`）。
+- 规范化后**回写 environment**：目录的创建者与消费者不能各自解释同一个字符串。`CHANGE_DATA_DIR=E:\devtools\cache\dt\` 这种带尾部反斜杠的写法，`Path.of()` 会规范化掉，而 SQLite 拿到的是原串，结果就是 `SQLITE_CANTOPEN`。回写成同一个绝对路径后，数据源 URL、Flyway、将来的照片根目录消费的都是同一个值。
+- **空串兜底**：`${APPDATA:...}` 的多级兜底只能处理「变量不存在」。`APPDATA` **存在且为空串**时（实测的机器环境），占位符会解析成空串，拼出 `/changE`，在 Windows 上等于「当前盘:\changE」。这一层在初始化器里按 `user.home` 再兜一次，兜不住就报错，绝不静默写进盘根。
+- 启动日志用 `DeferredLogFactory` 注入的延迟日志打一行数据目录位置——应用起来后「库到底建哪去了」是排查时的刚需。
+
+- [x] **Step 1: 写 pom.xml**
 
 以 `spike/pom.xml` 为基础，去掉 spike 专用的部分，加上 Flyway。**版本号照抄，不要凭记忆改**——这些是 2026-10-14 实测通过的组合。
 
@@ -154,7 +171,7 @@ backend/
 </project>
 ```
 
-- [ ] **Step 2: 写启动类**
+- [x] **Step 2: 写启动类**
 
 ```java
 package com.change;
@@ -170,17 +187,20 @@ public class ChangeApplication {
 }
 ```
 
-- [ ] **Step 3: 写 application.yml**
+- [x] **Step 3: 写 application.yml**
 
 ```yaml
 spring:
   application:
     name: change
   datasource:
-    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db
+    # busy_timeout=5000：SQLite 默认 busy_timeout=0，写冲突会立刻失败；给 5 秒让单写者排队
+    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db?busy_timeout=5000
     driver-class-name: org.sqlite.JDBC
     hikari:
       maximum-pool-size: 1          # SQLite 单写者，连接池开大只会互相等锁
+      connection-timeout: 3000      # 别用默认 30s：单连接池被占满时要快速失败而不是挂住
+      # 约定：池只有 1 条连接，禁止 REQUIRES_NEW（会自己等自己）
   jpa:
     database-platform: org.hibernate.community.dialect.SQLiteDialect
     hibernate:
@@ -199,44 +219,94 @@ spring:
     banner-mode: off
 
 server:
+  address: 127.0.0.1                # 无鉴权的后端只许本机访问；Tauri 壳也走 127.0.0.1
   port: 0                           # 由系统分配；实际端口由 PortReporter 上报（Task 10）
 
 change:
-  data-dir: ./target/data
+  # APPDATA 存在且为空串时 ${APPDATA}/changE 会解析成 /changE，在 Windows 上等于「当前盘:\changE」，
+  # 静默把库写进盘根不可接受，所以这里逐级兜底到 user.home（空串情形另由 DataDirectoryInitializer 兜底）
+  data-dir: ${CHANGE_DATA_DIR:${APPDATA:${user.home}/AppData/Roaming}/changE}
   redis:
     enabled: true
 ```
 
-- [ ] **Step 4: 写上下文加载测试**
+**注意 `server.address`**：不写这一行时 Tomcat 绑的是 `::`（等价 `0.0.0.0`），而这个后端**没有任何鉴权**，Task 10 之后还会有能读写全部数据、能调模型 API 的 `/api/chat`。设计文档写的是「本地 HTTP，127.0.0.1 随机端口」，所以必须显式绑回环。
+
+- [x] **Step 4: 写上下文加载测试**
 
 ```java
 package com.change;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.env.Environment;
 
+import javax.sql.DataSource;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.Connection;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * 上下文加载 + 数据目录约定的验收。
+ *
+ * 这里刻意保持默认的 MOCK web 环境（不起真容器），端口协商与监听地址由 Task 10
+ * 用 RANDOM_PORT / 显式绑定覆盖；本测试只关心「换个工作目录也不换库」这条约定。
+ */
 @SpringBootTest
 class ChangeApplicationTests {
+
+    @Autowired
+    DataSource dataSource;
+
+    @Autowired
+    Environment env;
 
     @Test
     void contextLoads() {
         // 能加载即通过。Redis 不可达时也必须通过——这是降级的验收点。
     }
+
+    @Test
+    void data_directory_is_absolute_created_and_usable() throws Exception {
+        Path dir = Path.of(env.getProperty("change.data-dir"));
+
+        assertThat(dir.isAbsolute())
+                .as("数据目录必须是绝对路径，否则换个工作目录就换一个库")
+                .isTrue();
+        assertThat(Files.isDirectory(dir))
+                .as("数据目录必须被自动创建（SQLite 不会建父目录）")
+                .isTrue();
+
+        try (Connection c = dataSource.getConnection()) {
+            assertThat(c.isValid(1)).as("连接必须真的可用").isTrue();
+        }
+    }
 }
 ```
 
-- [ ] **Step 5: 跑测试**
+测试用 `src/test/resources/application.properties` 把 `change.data-dir` 指到 `${user.dir}/target/data`（绝对路径），保证测试永远碰不到真实数据目录：
 
-Run: `cd backend && mvn -B test -Dtest=ChangeApplicationTests`
+```properties
+change.data-dir=${user.dir}/target/data
+```
 
-Expected: `BUILD SUCCESS`，`Tests run: 1, Failures: 0, Errors: 0`
+- [x] **Step 5: 跑测试**
+
+Run: `cd backend && Remove-Item -Recurse -Force target; mvn -B test`
+
+Expected: `BUILD SUCCESS`，`Tests run: 2, Failures: 0, Errors: 0`
+
+两个测试分别锁住：① 上下文能加载（Redis 不可达时必须通过，这是 Task 11 的降级验收点）；② `change.data-dir` 是绝对路径、目录确实被创建、`DataSource` 拿到的连接真的可用。**第二条是关键**：没有它，谁把数据目录改回相对路径、或者把 `${APPDATA}` 拼错，测试照样绿灯。
 
 如果因为 Redis 连不上而失败，说明降级还没做——**先继续，Task 11 会解决它**；但记下这个失败，Task 11 结束时它必须变绿。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
-git add backend/pom.xml backend/src
+git add backend/pom.xml backend/src backend/src/test/resources
 git commit -m "chore: 后端项目骨架（Spring Boot 3.5.16 + JDK 25 + SQLite + Flyway）"
 ```
 

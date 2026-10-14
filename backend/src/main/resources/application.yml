@@ -2,10 +2,13 @@ spring:
   application:
     name: change
   datasource:
-    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db
+    # busy_timeout=5000：SQLite 默认 busy_timeout=0，写冲突会立刻失败；给 5 秒让单写者排队
+    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db?busy_timeout=5000
     driver-class-name: org.sqlite.JDBC
     hikari:
       maximum-pool-size: 1          # SQLite 单写者，连接池开大只会互相等锁
+      connection-timeout: 3000      # 别用默认 30s：单连接池被占满时要快速失败而不是挂住
+      # 约定：池只有 1 条连接，禁止 REQUIRES_NEW（会自己等自己）
   jpa:
     database-platform: org.hibernate.community.dialect.SQLiteDialect
     hibernate:
@@ -24,9 +27,12 @@ spring:
     banner-mode: off
 
 server:
+  address: 127.0.0.1                # 无鉴权的后端只许本机访问；Tauri 壳也走 127.0.0.1
   port: 0                           # 由系统分配；实际端口由 PortReporter 上报（后续任务）
 
 change:
-  data-dir: ${CHANGE_DATA_DIR:${APPDATA}/changE}
+  # APPDATA 存在且为空串时 ${APPDATA}/changE 会解析成 /changE，在 Windows 上等于「当前盘:\changE」，
+  # 静默把库写进盘根不可接受，所以这里逐级兜底到 user.home
+  data-dir: ${CHANGE_DATA_DIR:${APPDATA:${user.home}/AppData/Roaming}/changE}
   redis:
     enabled: true
