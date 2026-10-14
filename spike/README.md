@@ -33,6 +33,29 @@ mvn -B -DskipTests package
 | `langchain4j` | LangChain4j 1.22.0 能加载并构造出 ChatModel（**不发起网络调用**） |
 | 应用能启动 | **Redis 不可达时照样启动** —— `application.properties` 里指向的是那台常关的虚拟机 |
 
+## 追加验证：Flyway 能在 SQLite 上跑
+
+`flyway-core` 在 Flyway 10+ 之后把数据库支持模块化了，而 Maven 上**查不到 `flyway-database-sqlite` 这个 artifact**，所以「SQLite 到底还需不需要额外模块」是个真问题。
+
+实测结论：**不需要，SQLite 支持就在 `flyway-core` 里。**
+
+验法（`src/main/resources/db/migration/V1__probe.sql` 已就位，`spring.flyway.enabled=true`）：
+
+```powershell
+java -jar target\spike-0.0.1-SNAPSHOT.jar --spring.main.web-application-type=none
+# 然后直接查数据库文件：
+python -c "import sqlite3;c=sqlite3.connect(r'target\spike.db');print([r for r in c.execute('SELECT version,description,success FROM flyway_schema_history')])"
+```
+
+实测输出：
+
+```
+表: ['flyway_probe', 'flyway_schema_history', 'probe', 'sqlite_sequence']
+flyway_probe 内容: [(1, 'flyway-works-on-sqlite')]
+  历史: (1, '1', 'probe', 'SQL', 1)
+RESULT: FLYWAY_WORKS_ON_SQLITE
+```
+
 ## 两个实测数字（写进了设计文档）
 
 - **启动耗时 3.769 秒** —— 所以外壳必须配加载提示，不能让用户双击后干等近 4 秒
