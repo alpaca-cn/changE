@@ -41,3 +41,6 @@ logs/
 .vscode/
 *.iml
 *.iws
+
+# ── PPT 任务派生物 ──
+ppt_tasks/*/render/*.pdf
