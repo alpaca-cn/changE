@@ -565,12 +565,96 @@ git commit -m "feat: 接通 SQLite 与 Flyway，加基线迁移与验证测试"
 
 - `CREATE TABLE IF NOT EXISTS` —— 理由见上面第 2 条。
 
+### 进入 Task 4 前必须验证：8 种破坏都要能让测试变红
+
+> 以下内容来自 Task 3 的**代码质量审查**。审查者在当时的实现上做了 8 处破坏，
+> 套件**依然 12/12 全绿**；九条修复做完之后，每一种破坏都必须让某条测试变红。
+> **进入 Task 4 之前请把这 8 条逐一做一遍并确认变红**（每条都要先删 `target/`
+> 再跑 `mvn -B test`：`src/main/resources` 下的改动可能没被复制进 `target/classes`，
+> 不删就会读到上一轮的旧脚本）。这一步不能省：它是「这一版 schema 真的有守卫」的
+> 唯一证据，而迁移一旦发布就不可再改。
+
+| # | 破坏 | 当时实测后果 | 现在由谁拦 |
+|---|---|---|---|
+| 1 | `muscle_group.name_zh` 去掉 `NOT NULL` | NULL 中文名可入库 | `SchemaTest.not_null_snapshot_is_exact_for_all_fifteen_tables` + `constraint_snapshot_key_ddl_clauses` |
+| 2 | `exercise` 多一列 | 无人察觉 | `SchemaTest.column_snapshot_is_exact_for_all_fifteen_tables` |
+| 3 | 删掉部分唯一索引 `ux_exercise_source` | 同名 `source_id` 写入 4 行 | `SchemaTest.index_snapshot_names_and_uniqueness` + `constraint_snapshot_key_ddl_clauses`（`WHERE source_id IS NOT NULL`） |
+| 4 | 删掉 `workout_set.set_type` 的 CHECK | `set_type='total_nonsense'` 入库 | `SchemaTest.constraint_snapshot_key_ddl_clauses` |
+| 5 | 删掉 `session_exercise.session_id` 的外键 | 级联删除失效 | `SchemaTest.constraint_snapshot_key_ddl_clauses` |
+| 6 | `food.kcal_per100` 去掉 `NOT NULL` 与默认值 | 营养值可空 | `SchemaTest.not_null_snapshot_...` + `constraint_snapshot_key_ddl_clauses`（`NOT NULL DEFAULT 0`） |
+| 7 | 删掉 `chat_message.session_id` 的外键 | 级联删除失效 | `SchemaTest.constraint_snapshot_key_ddl_clauses` |
+| 8 | 删掉 `change_log.origin`/`action` 的 CHECK | `origin='martian'` 入库 | `SchemaTest.constraint_snapshot_key_ddl_clauses` |
+
+**结论：schema 这一层在此之前没有任何守卫。** Flyway 的 checksum 只在「已经跑过该版本的
+库」上报警，本地删掉 `target` 之后每次都是全新的库，checksum 校验根本不会被触发——
+所以 `MigrationTest` 里另加了一条 `published_migrations_are_byte_frozen`，
+把 V1–V4 的 checksum 钉死在测试里。
+
+### 本轮对 schema 的九条修复（已落地）
+
+1. **重排 V3/V4，让 `meal.photo_id` 能加外键**：V3 建 `photo` + `food` + `food_portion`
+   （照片被餐引用，必须在前），V4 建 `meal` + `meal_item` + `body_metric` + `chat_session`
+   + `chat_message` + `change_log`。`photo_id INTEGER REFERENCES photo(id) ON DELETE SET NULL`
+   ——照片是餐的可选元数据：用 `SET NULL` 而不是拒绝，是因为删一张照片不该被一顿饭挡住；
+   用 `SET NULL` 而不是 CASCADE，是因为删照片绝不能连带删掉用餐记录。
+2. **四个纯日期列加形状约束**：`workout_session.session_date`、`meal.meal_date`、
+   `body_metric.measured_on`、`photo.taken_on` 一律
+   `CHECK (<列> GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')`。
+   不这么做的话，一旦有代码写进完整时间戳（DTO 用 `LocalDateTime`、前端传 `toISOString()`），
+   `WHERE session_date = '2026-10-14'` 对 `'2026-10-14T03:22:11'` **返回 0 行**（等值查询静默失效）；
+   改用 `date(session_date)` 归一化则用不上 `ix_session_date`，索引白建。
+   `started_at` / `ended_at` / `eaten_at` / `created_at` / `changed_at` 是**真时间戳**，
+   刻意不加这个约束。
+3. **`change_log` 补 `CHECK (action <> 'update' OR before_json IS NOT NULL)`**：
+   「一键回退」是第一阶段的核心安全机制，没有 before 快照就无从恢复，而 UI 只看 `action`。
+4. **`workout_set` 补数值合法性 CHECK**（`weight`/`target_weight`/`reps` ≥ 0、
+   `duration_seconds` > 0）。**刻意不给这三列加 `NOT NULL`**：三空的行表达「这一组还没做/没记」，
+   训练中的增量保存需要它。「`completed=1` 却三空」这类跨列语义由应用层保证。
+5. **索引命名统一为 `ix_`/`ux_` + 表名全称 + 列名**，规则写进 V2 文件头。改名前：
+   `ix_sessex_session`、`ix_set_sessex`、`ix_exercise_muscle_muscle`、`ix_chat_msg_session`、
+   `ix_changelog_target`、`ix_changelog_time`、`ix_metric_type_date`。
+6. **`set_index` 语义冻结 + 唯一索引**：每个子组各占一个 `set_index`，用 `set_type` 区分性质
+   （递减组的三段是 `set_index` 0/1/2 + `set_type='dropset'`，不是三段共用同一个号）。
+   加 `ux_workout_set_session_exercise_index` 与 `ux_session_exercise_session_order`。
+7. **`exercise.source_id` 加命名空间约定**（形如 `'free-exercise-db:barbell-bench-press'`；
+   **空串一律视为无效，必须写 NULL**——空串不算 NULL，导入器写 `''` 会让第二次导入整批失败），
+   并加 `ux_exercise_name_en`。同名动作事后合并要写迁移 + 重挂 `session_exercise.exercise_id`
+   + 重算所有衍生指标，所以**只能现在定**。
+   **`food.name_zh` 刻意不加唯一约束**：中式食物同名不同做法的条目真实存在，
+   去重与报告由导入器负责。
+8. **修掉 `food.source` 注释里的错误枚举**：原来写的是 `'free-exercise-db'`——那是动作数据集，
+   不是食物库（从 V2 复制粘贴留下的错误）。改成 `'manual' | 'cn-food-table' | 'agent' | 'takeout'`
+   并补上 CHECK。
+9. **补真正的 schema 守卫**：`SchemaTest` 加列级 / NOT NULL / 索引级 / 约束级四层结构快照，
+   `MigrationTest` 加 checksum 冻结与「内存库执行 V1」的列级断言。
+
+---
+
 - [x] **Step 1: 写训练域迁移 V2**
 
+> 实际文件第一行是 `DROP TABLE schema_probe;`（下面代码块的头部注释解释了理由），
+> 剪掉了它后面的内容，这里照抄时**不要漏掉那一行**。
+
 ```sql
--- V2: 训练域 6 张表
--- 第一行先清掉 V1 的探针表：它是基线迁移的历史遗留，没有业务含义，
--- 不该永久留在每个用户的库里（理由见上一节的约定 3）。
+-- V2: 训练域 6 张表。
+--
+-- 索引命名：唯一索引 ux_<表名全称>_<列>；普通索引 ix_<表名全称>_<列>；表名不缩写。
+--
+-- 为什么这条规则要写死在文件头：SQLite 给索引另起一个名字再建一次**不会报错**，
+-- 只会静默多出一个功能重复的索引（写变慢、占用翻倍，而没有任何提示）。表名缩写在
+-- 这里尤其危险——`ix_sessex_session` 对下一个人来说不显然等于 `session_exercise`，
+-- 于是他很可能再建一个 `ix_session_exercise_session`，而两者并存时谁也不会告诉他。
+-- 一条可机械照抄的规则比一句「请保持一致」有用得多。
+--
+-- 为什么有这份文件：「一次训练 = 多动作 × 多组」是这个应用的核心事实，一个动作的
+-- 同一组里既要知道「我们打算做多少」，也要知道「实际做了多少」。把这两件事放进不同的表
+-- 会让「今天练得比计划重还是轻」变成一次跨表对齐，因此这里刻意建成三层嵌套
+-- （workout_session → session_exercise → workout_set），并让目标值与实际值同处一行。
+-- 组与组之间的差异用 set_type 枚举表达，而不是靠「第几组」的序号去猜。
+--
+-- 第一行先清掉 V1 的探针表：它是基线迁移的历史遗留，没有业务含义，不该永久留在
+-- 每个用户的库里。删在这里而不是回头去改 V1——V1 的 checksum 已经发布，一动所有
+-- 跑过它的库启动即抛 FlywayValidateException。
 DROP TABLE schema_probe;
 
 CREATE TABLE muscle_group (
@@ -591,11 +675,21 @@ CREATE TABLE exercise (
     equipment     TEXT,
     is_compound   INTEGER NOT NULL DEFAULT 0,
     default_unit  TEXT    NOT NULL DEFAULT 'kg',
-    source_id     TEXT,                    -- free-exercise-db 的 id
+    -- source_id：外部数据集的主键，必须带命名空间前缀，形如
+    -- 'free-exercise-db:barbell-bench-press'。手工录入的动作必须写 NULL，
+    -- **空串不算 NULL**——`source_id` 上的部分唯一索引只看 NULL：
+    -- 写 '' 的动作第二次导入就撞 UNIQUE constraint failed，整批回滚；
+    -- 而不带前缀的裸 id 会在接入第二个数据集时静默冲突（两个数据集都叫 'curl'）。
+    source_id     TEXT,
     note          TEXT,
     archived      INTEGER NOT NULL DEFAULT 0
 );
+-- 部分唯一索引：只约束「有外部来源」的动作，手工动作（source_id IS NULL）可以无限重复。
 CREATE UNIQUE INDEX ux_exercise_source ON exercise(source_id) WHERE source_id IS NOT NULL;
+-- 同名动作必须挡在库外，而且**只能现在挡**：一旦库里出现两行同名，唯一索引就建不上，
+-- 事后合并要写迁移 + 重挂 session_exercise.exercise_id + 重算所有衍生指标。而在此之前，
+-- 重复行会安静地毁掉每一个统计：进步曲线分裂成两条线、周容量翻倍、PR 被拆成两个。
+CREATE UNIQUE INDEX ux_exercise_name_en ON exercise(name_en);
 CREATE INDEX ix_exercise_name_zh ON exercise(name_zh);
 
 CREATE TABLE exercise_muscle (
@@ -604,11 +698,18 @@ CREATE TABLE exercise_muscle (
     role            TEXT    NOT NULL CHECK (role IN ('primary', 'secondary')),
     PRIMARY KEY (exercise_id, muscle_group_id)
 );
-CREATE INDEX ix_exercise_muscle_muscle ON exercise_muscle(muscle_group_id);
+CREATE INDEX ix_exercise_muscle_muscle_group ON exercise_muscle(muscle_group_id);
 
 CREATE TABLE workout_session (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_date           TEXT    NOT NULL,   -- ISO-8601 日期
+    -- 纯日期，形状锁死为 YYYY-MM-DD（另见 meal.meal_date / body_metric.measured_on /
+    -- photo.taken_on 的同款 CHECK）。这一条拦的不是脏数据，而是**静默失效**：
+    -- 一旦有代码写进完整时间戳（DTO 用 LocalDateTime、前端传了 toISOString()），
+    -- `WHERE session_date = '2026-10-14'` 对 '2026-10-14T03:22:11' 返回 0 行——
+    -- 查询没报错，只是永远查不到；改用 date(session_date) 归一化则用不上 ix_session_date，
+    -- 索引白建；按日期分组的统计还会把同一天拆成两行。
+    session_date           TEXT    NOT NULL CHECK (session_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+    -- started_at / ended_at 是**真时间戳**，本来就该含时间，不要加日期形状 CHECK。
     started_at             TEXT,
     ended_at               TEXT,
     title                  TEXT,
@@ -626,15 +727,26 @@ CREATE TABLE session_exercise (
     note          TEXT,
     superset_group TEXT                        -- 同值即超级组；NULL 表示不参与超级组
 );
-CREATE INDEX ix_sessex_session ON session_exercise(session_id);
+CREATE INDEX ix_session_exercise_session ON session_exercise(session_id);
+-- order_index 是「这个动作在本次训练里排第几」，同一次训练里两行同序没有意义。
+CREATE UNIQUE INDEX ux_session_exercise_session_order
+    ON session_exercise(session_id, order_index);
 
 CREATE TABLE workout_set (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     session_exercise_id INTEGER NOT NULL REFERENCES session_exercise(id) ON DELETE CASCADE,
+    -- set_index 的语义（冻结，不要再解释成别的意思）：
+    -- **每个子组各占一个 set_index，用 set_type 区分性质。**
+    -- 递减组的三段是 set_index 0/1/2 + set_type 'dropset'，巨集组同理，
+    -- 而不是三段共用同一个 set_index。理由：set_index 是「带出上次重量」的对齐键，
+    -- 两行同号会让对齐随机取到其中一行——而取错的那次不会有任何报错。
     set_index           INTEGER NOT NULL,
     set_type            TEXT    NOT NULL DEFAULT 'normal'
                         CHECK (set_type IN ('normal','warmup','dropset','myo','partial',
                                             'forced','tut','iso','jump')),
+    -- weight / repetitions / duration_seconds 刻意**可为空**：三空的行是一个真实状态
+    -- （「这一组还没做/没记」），训练中界面靠增量保存逐字段补上，加 NOT NULL 会逼客户端编造数字。
+    -- 空值放行、有值必须合法，所以约束写成 `IS NULL OR ...`。
     weight              REAL,
     repetitions         INTEGER,
     duration_seconds    INTEGER,               -- 计时动作（平板支撑等），与 repetitions 二选一
@@ -643,22 +755,49 @@ CREATE TABLE workout_set (
     rest_seconds        INTEGER,
     completed           INTEGER NOT NULL DEFAULT 0,
     target_weight       REAL,
-    target_reps         INTEGER
+    target_reps         INTEGER,
+    -- 这里只保证单列数值合法。「completed=1 却三空」「weight 与 duration_seconds 同时有值」
+    -- 这类**跨列语义**由应用层保证，数据库层不拦。
+    CHECK (weight IS NULL OR weight >= 0),
+    CHECK (repetitions IS NULL OR repetitions >= 0),
+    CHECK (duration_seconds IS NULL OR duration_seconds > 0),
+    CHECK (target_weight IS NULL OR target_weight >= 0),
+    CHECK (target_reps IS NULL OR target_reps >= 0)
 );
-CREATE INDEX ix_set_sessex ON workout_set(session_exercise_id);
+CREATE INDEX ix_workout_set_session_exercise ON workout_set(session_exercise_id);
+-- 同一个动作下 set_index 必须唯一——否则上面那段语义冻结只是一句注释。
+CREATE UNIQUE INDEX ux_workout_set_session_exercise_index
+    ON workout_set(session_exercise_id, set_index);
 ```
 
-- [x] **Step 2: 写饮食域迁移 V3**
+- [x] **Step 2: 写食物库与照片迁移 V3**
+
+照片从原来的 V4 提到这里：`meal.photo_id` 要指向 `photo(id)`，外键要求被引用的表先存在。
 
 ```sql
--- V3: 饮食域 4 张表
+-- V3: 食物库与照片 3 张表（food / food_portion / photo）。
+--
+-- 为什么有这份文件：一条饮食记录要同时回答「吃了什么」和「吃了多少」，而这两个问题的
+-- 分辨率完全不同——营养值对某个食物是固定属性，份量则每次都不一样。所以营养值只在
+-- food 表里按每 100 克存一份，meal_item 只记份量与换算克数，热量由读取时现算。
+--
+-- 为什么 photo 在这份迁移而不是 V4：meal.photo_id 要指向 photo(id)，外键要求被引用
+-- 的表先存在。所以按依赖顺序重排——本文件建食物库与照片，V4 建餐记录（依赖 photo）
+-- 与其余辅助表。一份迁移仍然只承担一个域，只是把「照片」归到了它被引用的那一侧。
+--
 -- 铁律：营养一律按每 100 克存；条目只存份量与换算克数，绝不存绝对热量。
 
 CREATE TABLE food (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- name_zh 刻意**不加唯一约束**：中式食物里「同名不同做法」的条目真实存在
+    -- （同一个菜名对应完全不同的配料与热量）。同名条目由导入器负责去重与报告，
+    -- 不在数据库层强制唯一——在这里唯一化会逼导入器丢掉真实存在的条目。
     name_zh      TEXT    NOT NULL,
     name_en      TEXT,
-    source       TEXT    NOT NULL,     -- 'free-exercise-db' | 'manual' | 'cn-food-table'
+    -- 食物来源枚举。注意这里**没有** free-exercise-db：那是动作数据集，不是食物库
+    -- （V2 的 exercise.source_id 才是它的命名空间）。这条注释曾经误抄了动作那边的枚举。
+    source       TEXT    NOT NULL
+                 CHECK (source IN ('manual','cn-food-table','agent','takeout')),
     kcal_per100  REAL    NOT NULL DEFAULT 0,
     protein_per100 REAL  NOT NULL DEFAULT 0,
     carb_per100  REAL    NOT NULL DEFAULT 0,
@@ -676,13 +815,52 @@ CREATE TABLE food_portion (
 );
 CREATE UNIQUE INDEX ux_food_portion ON food_portion(food_id, unit_name);
 
+-- 照片先建在这里（被 meal.photo_id 引用），本表没有任何指向业务表的引用。
+CREATE TABLE photo (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- 纯日期，形状锁死为 YYYY-MM-DD。理由见 V2 里 workout_session.session_date 上方的长注释。
+    taken_on   TEXT    NOT NULL CHECK (taken_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+    rel_path   TEXT    NOT NULL,       -- 只存相对路径，根目录由配置决定
+    sha256     TEXT    NOT NULL,
+    width      INTEGER,
+    height     INTEGER,
+    kind       TEXT    NOT NULL CHECK (kind IN ('food','body','other')),
+    note       TEXT
+);
+CREATE UNIQUE INDEX ux_photo_sha ON photo(sha256);
+CREATE INDEX ix_photo_kind_date ON photo(kind, taken_on);
+```
+
+- [x] **Step 3: 写餐记录与其余辅助迁移 V4**
+
+`meal` 从原来的 V3 移到这里，与它依赖的 `photo` 分开在两份迁移里；
+`body_metric` / `chat_session` / `chat_message` / `change_log` 位置不变。
+
+```sql
+-- V4: 餐记录与其余辅助表 6 张表（meal / meal_item / body_metric / chat_session /
+--     chat_message / change_log）。
+--
+-- 为什么有这份文件：餐记录、身体指标、对话记录与变更日志都不是训练本身的数据，
+-- 但它们各自被别的域引用（meal.photo_id 指向 V3 的 photo，撤销一次训练改动时要回放
+-- change_log），所以必须与业务表同库、同事务，而不是另一个存储。这些表彼此的耦合
+-- 只到这里为止，单独成一份迁移是为了让日后的改动不会牵动 V2/V3 的 checksum。
+--
+-- 为什么 meal 在 V4 而不是 V3：它的 photo_id 外键指向 photo(id)，而被引用的表必须先存在。
+-- 于是按依赖顺序重排：V3 建食物库与照片，本文件建依赖 photo 的餐记录与其余辅助表。
+
 CREATE TABLE meal (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    meal_date  TEXT    NOT NULL,
+    -- 纯日期，形状锁死为 YYYY-MM-DD。理由见 V2 里 workout_session.session_date 上方的长注释。
+    meal_date  TEXT    NOT NULL CHECK (meal_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
     slot       TEXT    NOT NULL CHECK (slot IN ('breakfast','lunch','dinner','snack')),
+    -- eaten_at 是**真时间戳**，本来就该含时间，不要加日期形状 CHECK。
     eaten_at   TEXT,
     note       TEXT,
-    photo_id   INTEGER                 -- 外键在 V4 建表后才有意义，此处不加约束
+    -- ON DELETE SET NULL（而不是默认的拒绝、也不是 CASCADE）是有意的取舍：
+    -- 照片是餐的**可选元数据**。删一张照片不该被一顿饭的存在挡住（拒绝），
+    -- 删照片更绝不能连带删掉用餐记录（CASCADE 会把「今天吃了什么」删没）；
+    -- 所以照片没了就把这一格清空，餐本身留下。
+    photo_id   INTEGER REFERENCES photo(id) ON DELETE SET NULL
 );
 CREATE INDEX ix_meal_date ON meal(meal_date);
 
@@ -699,35 +877,17 @@ CREATE TABLE meal_item (
     -- 注意：这里没有 kcal 字段，故意的。
 );
 CREATE INDEX ix_meal_item_meal ON meal_item(meal_id);
-```
-
-- [x] **Step 3: 写辅助域迁移 V4**
-
-```sql
--- V4: 辅助域 5 张表
-
-CREATE TABLE photo (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    taken_on   TEXT    NOT NULL,
-    rel_path   TEXT    NOT NULL,       -- 只存相对路径，根目录由配置决定
-    sha256     TEXT    NOT NULL,
-    width      INTEGER,
-    height     INTEGER,
-    kind       TEXT    NOT NULL CHECK (kind IN ('food','body','other')),
-    note       TEXT
-);
-CREATE UNIQUE INDEX ux_photo_sha ON photo(sha256);
-CREATE INDEX ix_photo_kind_date ON photo(kind, taken_on);
 
 CREATE TABLE body_metric (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    measured_on TEXT    NOT NULL,
+    -- 纯日期，形状锁死为 YYYY-MM-DD。理由见 V2 里 workout_session.session_date 上方的长注释。
+    measured_on TEXT    NOT NULL CHECK (measured_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
     metric_type TEXT    NOT NULL,      -- weight / body_fat / waist / arm / ...
     value       REAL    NOT NULL,
     unit        TEXT    NOT NULL,
     note        TEXT
 );
-CREATE INDEX ix_metric_type_date ON body_metric(metric_type, measured_on);
+CREATE INDEX ix_body_metric_type_date ON body_metric(metric_type, measured_on);
 
 CREATE TABLE chat_session (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -743,7 +903,7 @@ CREATE TABLE chat_message (
     tool_calls    TEXT,                -- JSON 数组，记录本次调用了哪些工具
     created_at    TEXT    NOT NULL
 );
-CREATE INDEX ix_chat_msg_session ON chat_message(session_id);
+CREATE INDEX ix_chat_message_session ON chat_message(session_id);
 
 CREATE TABLE change_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -755,94 +915,474 @@ CREATE TABLE change_log (
     before_json TEXT,                  -- insert 时为 NULL
     after_json  TEXT    NOT NULL,
     chat_session_id INTEGER,
-    undone      INTEGER NOT NULL DEFAULT 0
+    undone      INTEGER NOT NULL DEFAULT 0,
+    -- 「一键回退」是第一阶段的核心安全机制，而它唯一的依据就是 before_json：
+    -- action='update' 却没有 before 快照，等于这一行永远回不去，可 UI 只看 action
+    -- 就会照常画出一个「撤销」按钮——按下去才发现无事可撤。设计文档明确不允许删除，
+    -- 所以 update 必然存在变更前的状态，这条约束是纯收益。
+    CHECK (action <> 'update' OR before_json IS NOT NULL)
 );
-CREATE INDEX ix_changelog_target ON change_log(target_table, target_id);
-CREATE INDEX ix_changelog_time ON change_log(changed_at);
+CREATE INDEX ix_change_log_target ON change_log(target_table, target_id);
+CREATE INDEX ix_change_log_time ON change_log(changed_at);
 ```
 
-- [x] **Step 4: 写表结构测试**
+- [x] **Step 4: 写结构测试**
 
-用一张期望清单核对，**避免漏建或多建**。
+四层快照，逐张表收口：**列清单 + NOT NULL 清单**（拦多一列、少一列、NOT NULL 被拿掉）、
+**业务索引清单**（名字 + 唯一性 + 是否部分索引，拦索引被删 / 改名 / 唯一性被去掉）、
+**关键 DDL 片段**（拦 CHECK / `REFERENCES ... ON DELETE ...` / DEFAULT 被删）。
+约束那层断言的是 DDL 原文而不是「写入被拒」，因为只有前者能指出**哪一条**约束没了；
+「写入真的被拒」由 Task 3 的验收逐条实测覆盖。
 
-> **实施时对本块的修正（已落地，与 Task 2 那条同一个套路）**：
-> 原代码里 `List<String> cols = jdbc.queryForList("PRAGMA table_info(meal_item)", String.class)`
-> 是写不出来的——`PRAGMA table_info` 是「一行六列」的表函数，`queryForList(..., String.class)`
-> 会对它抛 `IncorrectResultSizeDataAccessException`，于是 `doesNotContain` 那一行**永远执行不到**：
-> 这条断言会以「红」的形式恒绿（红在读取上，不在断言上）。改走 `pragma_table_info('meal_item')`
-> 并显式选 `name` 列——`workout_set` 那条本来就是这么写的，现在两张表写法一致。
-> 另外补上 `probe_table_was_dropped_by_v2`，把「V2 删掉了探针表」变成可执行断言，
-> 这样 `all_fifteen_tables_exist` 里才敢不带 `name <> 'schema_probe'` 那个特例。
+代码块整体缩进了 4 格（迁移到计划文档时的排版需要），贴回文件时请去掉这层缩进。
+
+> **实施时对本块的修正（已落地）**：原写的 `PRAGMA table_info(meal_item)` 是写不出来的——
+> 它是「一行六列」的表函数，`queryForList(..., String.class)` 会对它抛
+> `IncorrectResultSetColumnCountException`（`org.springframework.jdbc` 下的类，与
+> `IncorrectResultSizeDataAccessException` 是**兄弟**关系，`instanceof` 判不出来），
+> 于是 `doesNotContain` 那一行**永远执行不到**。统一改走：
+>
+> ```java
+> SELECT name FROM pragma_table_info('<表>')
+> ```
+>
+> `PRAGMA index_list` 同理，要写成表函数形式 `pragma_index_list('<表>')`；
+> 另外**不要**写 `pragma_index_list_all`——实测该名字不存在（SQLite 3.53.1 报
+> `no such table: pragma_index_list_all`）。
+>
+> **另一个必须记住的坑**：`sqlite_master.sql` 存的是**原样文本**（列是按列对齐的，
+> `name_zh         TEXT    NOT NULL`），拿对齐后的字面量去 `contains` 必然失败。
+> 所以 DDL 片段断言一律先过 `collapseWhitespace(...)`，断言里写单空格的自然形式。
 
 ```java
-package com.change;
+    package com.change;
 
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.jdbc.core.JdbcTemplate;
+    import org.junit.jupiter.api.Test;
+    import org.springframework.beans.factory.annotation.Autowired;
+    import org.springframework.boot.test.context.SpringBootTest;
+    import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+    import java.util.LinkedHashMap;
+    import java.util.List;
+    import java.util.Map;
+    import java.util.Set;
 
-import static org.assertj.core.api.Assertions.assertThat;
+    import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
-class SchemaTest {
+    /**
+     * 十五张业务表的结构快照。
+     *
+     * 为什么用一张「期望清单」而不是逐个断言表存在：逐个断言只能发现「少建了」，
+     * 发现不了「多建了」——多出来的表（比如 V1 的探针表没被清掉）会让下一个人以为
+     * 它是模型的一部分。containsExactlyInAnyOrderElementsOf 两侧都收口。
+     *
+     * 为什么这一轮要补列级 / 索引级 / 约束级三层快照：Task 3 的代码质量审查做了 8 处
+     * 破坏——去掉 NOT NULL、多一列、删掉部分唯一索引、删掉 CHECK、删掉外键——套件**依然
+     * 12/12 全绿**。当时只有 4 条断言，且都只问「某张表某几列在不在」，对约束、
+     * 索引、可空性完全不设防。而迁移一旦发布就不可再改（改 V1/V2/V3/V4 的任何一个字节都会
+     * 让跑过它的库抛 FlywayValidateException），所以现在这一版 schema 的守卫只能建在测试里。
+     *
+     * 三层各拦一类破坏：
+     * - 列快照（列清单 + NOT NULL 清单）拦「多一列 / 少一列 / NOT NULL 被拿掉」；
+     * - 索引快照（名字 + 唯一性 + 是否部分索引）拦「索引被删 / 被改名 / 唯一性被去掉」——
+     *   SQLite 对「另起一个名字再建一次」不报错，只会静默留下两个功能重复的索引；
+     * - 约束快照（sqlite_master.sql 里的关键片段）拦「CHECK / REFERENCES ... ON DELETE
+     *   CASCADE / DEFAULT 被删」——这些在 pragma 里问不出来（pragma 只报外键的目标表与动作，
+     *   报不出 CHECK 的内容），只有 DDL 原文里有。
+     *
+     * 注意约束快照断言的是 DDL 片段，不是「写入真的被拒」。两者都值得有，但只有前者能
+     * 精确指出「哪一条约束没了」；后者已经在验收里逐条实测过。
+     */
+    @SpringBootTest
+    class SchemaTest {
 
-    @Autowired
-    JdbcTemplate jdbc;
+        @Autowired
+        JdbcTemplate jdbc;
 
-    private static final Set<String> EXPECTED = Set.of(
-            "exercise", "workout_session", "session_exercise", "workout_set",
-            "muscle_group", "exercise_muscle",
-            "food", "food_portion", "meal", "meal_item",
-            "photo", "body_metric", "chat_session", "chat_message", "change_log");
+        private static final Set<String> EXPECTED = Set.of(
+                "exercise", "workout_session", "session_exercise", "workout_set",
+                "muscle_group", "exercise_muscle",
+                "food", "food_portion", "meal", "meal_item",
+                "photo", "body_metric", "chat_session", "chat_message", "change_log");
 
-    @Test
-    void all_fifteen_tables_exist() {
-        List<String> names = jdbc.queryForList(
-                "SELECT name FROM sqlite_master WHERE type='table' " +
-                "AND name NOT LIKE 'sqlite_%' AND name <> 'flyway_schema_history'", String.class);
-        assertThat(names).containsExactlyInAnyOrderElementsOf(EXPECTED);
+        @Test
+        void all_fifteen_tables_exist() {
+            // sqlite_% 排除的是 SQLite 自己维护的表（AUTOINCREMENT 会建 sqlite_sequence）；
+            // flyway_schema_history 是迁移框架的历史表，不属于业务模型。
+            // 这里刻意不排除 schema_probe：它若还在，这条断言就该红。
+            //
+            // 将来新增**内部**表（FTS5 全文检索的影子表如 *_data / *_idx / *_content /
+            // *_docsize / *_config、sqlite_stat1 等）时，必须同步更新本断言——否则这条
+            // 「多建了也要红」的收口会先把真正的业务表变化挡住，让人误以为只是影子表噪音。
+            List<String> names = jdbc.queryForList(
+                    "SELECT name FROM sqlite_master WHERE type='table' " +
+                    "AND name NOT LIKE 'sqlite_%' AND name <> 'flyway_schema_history'", String.class);
+            assertThat(names).containsExactlyInAnyOrderElementsOf(EXPECTED);
+        }
+
+        @Test
+        void probe_table_was_dropped_by_v2() {
+            Integer n = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_probe'",
+                    Integer.class);
+            assertThat(n)
+                    .as("V2 的第一行应当 DROP 掉 V1 的探针表，让它不再留在用户的库里")
+                    .isZero();
+        }
+
+        @Test
+        void meal_item_has_no_stored_calorie_column() {
+            // 这条是防回归：一旦有人「顺手」加了 kcal 列，测试立刻失败。
+            // 走 pragma_table_info 而不是 PRAGMA table_info：后者是「一行多列」的表函数，
+            // queryForList(..., String.class) 会对它抛 IncorrectResultSetColumnCountException
+            // （org.springframework.jdbc 下的类，与 IncorrectResultSizeDataAccessException 是
+            // 兄弟关系，instanceof 判不出来），断言就永远走不到 doesNotContain 那一行。
+            assertThat(columns("meal_item")).doesNotContain("kcal", "calories", "energy");
+        }
+
+        @Test
+        void workout_set_supports_timed_and_per_side() {
+            // 用 containsExactlyInAnyOrder 而不是 contains：contains 对「多出一列」恒绿，
+            // 而「多出一列没人察觉」正是本轮审查实测发生的破坏之一。
+            assertThat(columns("workout_set")).containsExactlyInAnyOrder(
+                    "id", "session_exercise_id", "set_index", "set_type", "weight", "repetitions",
+                    "duration_seconds", "per_side", "rir", "rest_seconds", "completed",
+                    "target_weight", "target_reps");
+        }
+
+        // ------------------------------------------------------------------
+        // 第一层：列级快照
+        // ------------------------------------------------------------------
+
+        /**
+         * 列清单**逐表、按声明顺序**精确断言，外加每表的 NOT NULL 列清单。
+         *
+         * 顺序也算在内是有意的：pragma_table_info 按声明顺序返回，而列顺序是「一份迁移
+         * 建出来什么」的一部分，插入到中间的新列值得被看见（它往往意味着有人在原地改
+         * 一份已发布的迁移）。
+         */
+        @Test
+        void column_snapshot_is_exact_for_all_fifteen_tables() {
+            Map<String, List<String>> expectedColumns = new LinkedHashMap<>();
+            expectedColumns.put("muscle_group", List.of(
+                    "id", "name_zh", "name_en", "body_part", "region_ids",
+                    "weekly_sets_min", "weekly_sets_max"));
+            expectedColumns.put("exercise", List.of(
+                    "id", "name_en", "name_zh", "equipment", "is_compound", "default_unit",
+                    "source_id", "note", "archived"));
+            expectedColumns.put("exercise_muscle", List.of(
+                    "exercise_id", "muscle_group_id", "role"));
+            expectedColumns.put("workout_session", List.of(
+                    "id", "session_date", "started_at", "ended_at", "title", "perceived_state",
+                    "note", "source_routine_day_id"));
+            expectedColumns.put("session_exercise", List.of(
+                    "id", "session_id", "exercise_id", "order_index", "note", "superset_group"));
+            expectedColumns.put("workout_set", List.of(
+                    "id", "session_exercise_id", "set_index", "set_type", "weight", "repetitions",
+                    "duration_seconds", "per_side", "rir", "rest_seconds", "completed",
+                    "target_weight", "target_reps"));
+            expectedColumns.put("food", List.of(
+                    "id", "name_zh", "name_en", "source", "kcal_per100", "protein_per100",
+                    "carb_per100", "fat_per100", "fiber_per100", "sodium_per100"));
+            expectedColumns.put("food_portion", List.of(
+                    "id", "food_id", "unit_name", "grams"));
+            expectedColumns.put("photo", List.of(
+                    "id", "taken_on", "rel_path", "sha256", "width", "height", "kind", "note"));
+            expectedColumns.put("meal", List.of(
+                    "id", "meal_date", "slot", "eaten_at", "note", "photo_id"));
+            expectedColumns.put("meal_item", List.of(
+                    "id", "meal_id", "food_id", "order_index", "amount", "unit_name", "grams",
+                    "origin"));
+            expectedColumns.put("body_metric", List.of(
+                    "id", "measured_on", "metric_type", "value", "unit", "note"));
+            expectedColumns.put("chat_session", List.of(
+                    "id", "title", "created_at"));
+            expectedColumns.put("chat_message", List.of(
+                    "id", "session_id", "role", "content", "tool_calls", "created_at"));
+            expectedColumns.put("change_log", List.of(
+                    "id", "changed_at", "origin", "action", "target_table", "target_id",
+                    "before_json", "after_json", "chat_session_id", "undone"));
+
+            // 双侧收口：EXPECTED 与这里的键集合必须一致，少写一张表也会红。
+            assertThat(expectedColumns.keySet())
+                    .as("列快照必须覆盖全部十五张表")
+                    .containsExactlyInAnyOrderElementsOf(EXPECTED);
+
+            expectedColumns.forEach((table, columns) ->
+                    assertThat(columns(table))
+                            .as("表 %s 的列清单（多一列、少一列、改名、换序都会红）", table)
+                            .containsExactlyElementsOf(columns));
+        }
+
+        /**
+         * NOT NULL 清单。这是本轮审查第 1、6 条破坏的唯一守卫：去掉
+         * `muscle_group.name_zh` 或 `food.kcal_per100` 的 NOT NULL 之后，列清单纹丝不动。
+         */
+        @Test
+        void not_null_snapshot_is_exact_for_all_fifteen_tables() {
+            Map<String, List<String>> expectedNotNull = new LinkedHashMap<>();
+            expectedNotNull.put("muscle_group", List.of("name_zh", "name_en", "body_part"));
+            expectedNotNull.put("exercise", List.of("name_en", "is_compound", "default_unit", "archived"));
+            expectedNotNull.put("exercise_muscle", List.of("exercise_id", "muscle_group_id", "role"));
+            expectedNotNull.put("workout_session", List.of("session_date"));
+            expectedNotNull.put("session_exercise", List.of("session_id", "exercise_id", "order_index"));
+            expectedNotNull.put("workout_set", List.of(
+                    "session_exercise_id", "set_index", "set_type", "per_side", "completed"));
+            expectedNotNull.put("food", List.of(
+                    "name_zh", "source", "kcal_per100", "protein_per100", "carb_per100",
+                    "fat_per100", "fiber_per100", "sodium_per100"));
+            expectedNotNull.put("food_portion", List.of("food_id", "unit_name", "grams"));
+            expectedNotNull.put("photo", List.of("taken_on", "rel_path", "sha256", "kind"));
+            expectedNotNull.put("meal", List.of("meal_date", "slot"));
+            expectedNotNull.put("meal_item", List.of(
+                    "meal_id", "food_id", "order_index", "amount", "grams", "origin"));
+            expectedNotNull.put("body_metric", List.of("measured_on", "metric_type", "value", "unit"));
+            expectedNotNull.put("chat_session", List.of("created_at"));
+            expectedNotNull.put("chat_message", List.of("session_id", "role", "created_at"));
+            expectedNotNull.put("change_log", List.of(
+                    "changed_at", "origin", "action", "target_table", "target_id", "after_json",
+                    "undone"));
+
+            assertThat(expectedNotNull.keySet())
+                    .as("NOT NULL 快照必须覆盖全部十五张表")
+                    .containsExactlyInAnyOrderElementsOf(EXPECTED);
+
+            expectedNotNull.forEach((table, columns) ->
+                    assertThat(notNullColumns(table))
+                            .as("表 %s 的 NOT NULL 列（漏写 NOT NULL 在 SQLite 里等于静默可空）", table)
+                            .containsExactlyElementsOf(columns));
+        }
+
+        // ------------------------------------------------------------------
+        // 第二层：索引级快照
+        // ------------------------------------------------------------------
+
+        /**
+         * 业务索引的完整清单（名字 + 唯一性 + 是否部分索引）。sqlite_ 开头的自动索引
+         * （UNIQUE 约束 / 复合主键产生的）不算业务索引，不进这张表。
+         *
+         * 命名规则（与 V2 文件头同一句）：唯一索引 `ux_<表名全称>_<列>`，普通索引
+         * `ix_<表名全称>_<列>`，表名不缩写。这里把名字也钉死，是因为 SQLite 允许
+         * 同名索引以外的新名字静默重建——两个功能重复的索引不会报错，只会悄悄变慢。
+         */
+        @Test
+        void index_snapshot_names_and_uniqueness() {
+            Map<String, String> expected = new LinkedHashMap<>();
+            expected.put("ux_muscle_group_en", "UNIQUE");
+            expected.put("ux_exercise_source", "UNIQUE PARTIAL");
+            expected.put("ux_exercise_name_en", "UNIQUE");
+            expected.put("ix_exercise_name_zh", "NOT UNIQUE");
+            expected.put("ix_exercise_muscle_muscle_group", "NOT UNIQUE");
+            expected.put("ix_session_date", "NOT UNIQUE");
+            expected.put("ix_session_exercise_session", "NOT UNIQUE");
+            expected.put("ux_session_exercise_session_order", "UNIQUE");
+            expected.put("ix_workout_set_session_exercise", "NOT UNIQUE");
+            expected.put("ux_workout_set_session_exercise_index", "UNIQUE");
+            expected.put("ix_food_name_zh", "NOT UNIQUE");
+            expected.put("ux_food_portion", "UNIQUE");
+            expected.put("ux_photo_sha", "UNIQUE");
+            expected.put("ix_photo_kind_date", "NOT UNIQUE");
+            expected.put("ix_meal_date", "NOT UNIQUE");
+            expected.put("ix_meal_item_meal", "NOT UNIQUE");
+            expected.put("ix_body_metric_type_date", "NOT UNIQUE");
+            expected.put("ix_chat_message_session", "NOT UNIQUE");
+            expected.put("ix_change_log_target", "NOT UNIQUE");
+            expected.put("ix_change_log_time", "NOT UNIQUE");
+
+            assertThat(businessIndexes())
+                    .as("业务索引清单（名字 + 唯一性 + 是否部分索引，多一个少一个都要红）")
+                    .containsExactlyInAnyOrderEntriesOf(expected);
+        }
+
+        // ------------------------------------------------------------------
+        // 第三层：约束级快照（DDL 原文片段）
+        // ------------------------------------------------------------------
+
+        /**
+         * 每张表的 DDL 里必须出现的关键片段：CHECK / REFERENCES ... ON DELETE ... /
+         * NOT NULL / DEFAULT。
+         *
+         * 为什么读 sqlite_master.sql 而不是 pragma：CHECK 的内容在 pragma 里根本问不出来
+         * （PRAGMA table_info 只给非空标记与默认值），`REFERENCES` 的目标动作虽然能用
+         * pragma_foreign_key_list 读到，但读不出「这一列上到底写没写约束」。DDL 原文是
+         * 唯一能同时覆盖这几类的地方；对应地，断言必须写成**带尾随逗号或整行**的形式，
+         * 否则 `REFERENCES photo(id)` 会把 `REFERENCES photo(id) ON DELETE SET NULL`
+         * 也算通过——那正好丢掉我们要守的那个动作。
+         */
+        @Test
+        void constraint_snapshot_key_ddl_clauses() {
+            assertThat(ddlOf("muscle_group")).contains(
+                    collapseWhitespace("name_zh         TEXT    NOT NULL"));
+
+            // 部分唯一索引的定义体：只约束有外部来源的动作，手工动作可以重复。
+            // 名字层面的检查在 index_snapshot 里，这里确认「部分」这个语义没被丢掉
+            // （去掉 WHERE 就变成「手工动作也只能有一个」，那是另一种错）。
+            assertThat(indexDdl("ux_exercise_source"))
+                    .contains(collapseWhitespace("WHERE source_id IS NOT NULL"));
+
+            // 四个纯日期列的 GLOB 形状约束。少一个，那一路的等值查询就会在某天静默失效。
+            assertThat(ddlOf("workout_session")).contains(collapseWhitespace(
+                    "CHECK (session_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
+            assertThat(ddlOf("meal")).contains(collapseWhitespace(
+                    "CHECK (meal_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
+            assertThat(ddlOf("body_metric")).contains(collapseWhitespace(
+                    "CHECK (measured_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
+            assertThat(ddlOf("photo")).contains(collapseWhitespace(
+                    "CHECK (taken_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
+
+            // 真时间戳列**不该**被套上日期形状约束——它们本来就含时间。
+            assertThat(ddlOf("workout_session")).doesNotContain("CHECK (started_at");
+            assertThat(ddlOf("workout_session")).doesNotContain("CHECK (ended_at");
+            assertThat(ddlOf("meal")).doesNotContain("CHECK (eaten_at");
+            assertThat(ddlOf("chat_message")).doesNotContain("CHECK (created_at");
+            assertThat(ddlOf("change_log")).doesNotContain("CHECK (changed_at");
+
+            // 枚举 CHECK
+            assertThat(ddlOf("exercise_muscle")).contains(
+                    collapseWhitespace("CHECK (role IN ('primary', 'secondary'))"));
+            assertThat(ddlOf("workout_set")).contains(collapseWhitespace(
+                    "CHECK (set_type IN ('normal','warmup','dropset','myo','partial', "
+                            + "'forced','tut','iso','jump'))"));
+            assertThat(ddlOf("food")).contains(
+                    collapseWhitespace("CHECK (source IN ('manual','cn-food-table','agent','takeout'))"));
+            assertThat(ddlOf("meal")).contains(
+                    collapseWhitespace("CHECK (slot IN ('breakfast','lunch','dinner','snack'))"));
+            assertThat(ddlOf("meal_item")).contains(
+                    collapseWhitespace("CHECK (origin IN ('manual','photo','agent','takeout'))"));
+            assertThat(ddlOf("photo")).contains(
+                    collapseWhitespace("CHECK (kind IN ('food','body','other'))"));
+            assertThat(ddlOf("chat_message")).contains(
+                    collapseWhitespace("CHECK (role IN ('user','assistant','tool'))"));
+            assertThat(ddlOf("change_log")).contains(
+                    collapseWhitespace("CHECK (origin IN ('user','agent'))"));
+            assertThat(ddlOf("change_log")).contains(
+                    collapseWhitespace("CHECK (action IN ('insert','update'))"));
+            // 「一键回退」的守卫：action='update' 必须有 before 快照，否则这行永远回不去，
+            // 而 UI 只看 action 就会画出一个按下去无事可撤的「撤销」按钮。
+            assertThat(ddlOf("change_log")).contains(
+                    collapseWhitespace("CHECK (action <> 'update' OR before_json IS NOT NULL)"));
+
+            // workout_set 的数值合法性（刻意不加 NOT NULL：三空行是有意的状态）
+            assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (weight IS NULL OR weight >= 0)"));
+            assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (repetitions IS NULL OR repetitions >= 0)"));
+            assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (duration_seconds IS NULL OR duration_seconds > 0)"));
+            assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (target_weight IS NULL OR target_weight >= 0)"));
+            assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (target_reps IS NULL OR target_reps >= 0)"));
+
+            // 级联删除：少一个 REFERENCES ... ON DELETE CASCADE，删训练/删会话就会留下孤儿行，
+            // 而且**不会有任何报错**。尾随逗号是必须的，防止基础外键形式蒙混通过。
+            assertThat(ddlOf("exercise_muscle")).contains(collapseWhitespace(
+                    "exercise_id     INTEGER NOT NULL REFERENCES exercise(id) ON DELETE CASCADE"));
+            assertThat(ddlOf("exercise_muscle")).contains(collapseWhitespace(
+                    "muscle_group_id INTEGER NOT NULL REFERENCES muscle_group(id) ON DELETE CASCADE"));
+            assertThat(ddlOf("session_exercise")).contains(collapseWhitespace(
+                    "session_id    INTEGER NOT NULL REFERENCES workout_session(id) ON DELETE CASCADE"));
+            assertThat(ddlOf("workout_set")).contains(collapseWhitespace(
+                    "session_exercise_id INTEGER NOT NULL REFERENCES session_exercise(id) ON DELETE CASCADE"));
+            assertThat(ddlOf("food_portion")).contains(collapseWhitespace(
+                    "food_id   INTEGER NOT NULL REFERENCES food(id) ON DELETE CASCADE"));
+            assertThat(ddlOf("meal_item")).contains(collapseWhitespace(
+                    "meal_id      INTEGER NOT NULL REFERENCES meal(id) ON DELETE CASCADE"));
+            assertThat(ddlOf("chat_message")).contains(collapseWhitespace(
+                    "session_id    INTEGER NOT NULL REFERENCES chat_session(id) ON DELETE CASCADE"));
+
+            // 不级联的外键：动作与食物被引用时不允许连带删除，所以这里是裸 REFERENCES（带逗号）。
+            assertThat(ddlOf("session_exercise")).contains(collapseWhitespace(
+                    "exercise_id   INTEGER NOT NULL REFERENCES exercise(id),"));
+            assertThat(ddlOf("meal_item")).contains(collapseWhitespace(
+                    "food_id      INTEGER NOT NULL REFERENCES food(id),"));
+
+            // meal.photo_id：照片是餐的可选元数据，删照片只能清空这一格，绝不能删掉用餐记录。
+            assertThat(ddlOf("meal")).contains(
+                    collapseWhitespace("REFERENCES photo(id) ON DELETE SET NULL"));
+
+            // 营养值必须有默认 0 且非空：既非空又有默认，去掉哪一个都会让「只填了名字的食物」
+            // 在读取时炸掉或者悄悄变成 NULL 热量。
+            assertThat(ddlOf("food")).contains(collapseWhitespace("kcal_per100 REAL NOT NULL DEFAULT 0"));
+            assertThat(ddlOf("food")).contains(collapseWhitespace("protein_per100 REAL NOT NULL DEFAULT 0"));
+            assertThat(ddlOf("food")).contains(collapseWhitespace("carb_per100 REAL NOT NULL DEFAULT 0"));
+            assertThat(ddlOf("food")).contains(collapseWhitespace("fat_per100 REAL NOT NULL DEFAULT 0"));
+            assertThat(ddlOf("food")).contains(collapseWhitespace("fiber_per100 REAL NOT NULL DEFAULT 0"));
+            assertThat(ddlOf("food")).contains(collapseWhitespace("sodium_per100 REAL NOT NULL DEFAULT 0"));
+
+            // autoincrement：丢掉它，SQLite 会把删掉的最大 rowid 重新发出去，
+            // 于是「删掉第 7 条训练之后再建一条」会拿到 7，而 change_log 里还留着旧的 7。
+            // 十四张表都有单列 id 主键；exercise_muscle 是复合主键的关联表
+            // （PRIMARY KEY (exercise_id, muscle_group_id)），本来就没有 AUTOINCREMENT，
+            // 它由上面那条 DDL 断言里的 PRIMARY KEY 片段守着。
+            EXPECTED.stream()
+                    .filter(table -> !"exercise_muscle".equals(table))
+                    .forEach(table -> assertThat(ddlOf(table))
+                            .as("表 %s 的主键必须显式 AUTOINCREMENT", table)
+                            .contains(collapseWhitespace("INTEGER PRIMARY KEY AUTOINCREMENT")));
+            assertThat(ddlOf("exercise_muscle")).contains(
+                    collapseWhitespace("PRIMARY KEY (exercise_id, muscle_group_id)"));
+        }
+
+        // ------------------------------------------------------------------
+        // 结构查询工具
+        // ------------------------------------------------------------------
+
+        /** 按声明顺序返回列名。用 pragma_table_info 表函数，不能用 PRAGMA table_info。 */
+        private List<String> columns(String table) {
+            return jdbc.queryForList("SELECT name FROM pragma_table_info('" + table + "')", String.class);
+        }
+
+        /** 按声明顺序返回非空列名（不含主键：pragma 的 notnull 对 INTEGER PRIMARY KEY 恒为 0）。 */
+        private List<String> notNullColumns(String table) {
+            return jdbc.queryForList(
+                    "SELECT name FROM pragma_table_info('" + table + "') WHERE \"notnull\" = 1",
+                    String.class);
+        }
+
+        /**
+         * 业务索引 -> "UNIQUE" / "NOT UNIQUE"（可加 " PARTIAL"）。sqlite_ 开头的自动索引
+         * 由 UNIQUE 约束与复合主键产生，不属于本迁移显式建的索引，不计入。
+         *
+         * `PRAGMA index_list` 是「一行多列」的表函数，按 SQLite 的规则加表名参数写成
+         * `pragma_index_list('表')` 就能在 FROM 里用。注意**不要**写 pragma_index_list_all：
+         * 实测该名字不存在（SQLite 3.53.1 报 `no such table: pragma_index_list_all`）。
+         */
+        private Map<String, String> businessIndexes() {
+            Map<String, String> out = new LinkedHashMap<>();
+            for (String table : EXPECTED) {
+                jdbc.query(
+                        "SELECT name, \"unique\", partial FROM pragma_index_list('" + table + "') "
+                                + "WHERE name NOT LIKE 'sqlite_%'",
+                        rs -> {
+                            while (rs.next()) {
+                                out.put(rs.getString("name"),
+                                        (rs.getInt("unique") == 1 ? "UNIQUE" : "NOT UNIQUE")
+                                                + (rs.getInt("partial") == 1 ? " PARTIAL" : ""));
+                            }
+                            return null;
+                        });
+            }
+            return out;
+        }
+
+        /** 建表 DDL 原文，空白折叠成单空格，便于断言跨行的 CHECK。 */
+        private String ddlOf(String table) {
+            return collapseWhitespace(jdbc.queryForObject(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?", String.class, table));
+        }
+
+        private String indexDdl(String index) {
+            return collapseWhitespace(jdbc.queryForObject(
+                    "SELECT sql FROM sqlite_master WHERE type='index' AND name = ?", String.class, index));
+        }
+
+        private static String collapseWhitespace(String sql) {
+            return sql.replaceAll("\\s+", " ").trim();
+        }
     }
-
-    @Test
-    void probe_table_was_dropped_by_v2() {
-        Integer n = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_probe'",
-                Integer.class);
-        assertThat(n)
-                .as("V2 的第一行应当 DROP 掉 V1 的探针表，让它不再留在用户的库里")
-                .isZero();
-    }
-
-    @Test
-    void meal_item_has_no_stored_calorie_column() {
-        // 这条是防回归：一旦有人「顺手」加了 kcal 列，测试立刻失败。
-        // 走 pragma_table_info 而不是 PRAGMA table_info：后者是「一行多列」的表函数，
-        // queryForList(..., String.class) 会对它抛 IncorrectResultSizeDataAccessException，
-        // 断言就永远走不到 doesNotContain 那一行。
-        Set<String> cols = new HashSet<>(
-                jdbc.queryForList("SELECT name FROM pragma_table_info('meal_item')", String.class));
-        assertThat(cols).doesNotContain("kcal", "calories", "energy");
-    }
-
-    @Test
-    void workout_set_supports_timed_and_per_side() {
-        Set<String> cols = new HashSet<>(
-                jdbc.queryForList("SELECT name FROM pragma_table_info('workout_set')", String.class));
-        assertThat(cols).contains("duration_seconds", "per_side", "target_weight", "target_reps");
-    }
-}
 ```
 
 - [x] **Step 5: 跑测试**
 
 Run: `cd backend && mvn -B test -Dtest=SchemaTest`
 
-Expected: `Tests run: 4, Failures: 0, Errors: 0`
+Expected: `Tests run: 8, Failures: 0, Errors: 0`（本轮修复后 SchemaTest 从 4 条变成 8 条）
 
 **但只跑 `-Dtest=SchemaTest` 是不够的**：V2 的第一行会把 `schema_probe` 删掉，而
 `MigrationTest.baseline_migration_created_probe_table` 断言的是「这张表还在」——
@@ -881,17 +1421,200 @@ V2 一旦 DROP 掉探针表，`MigrationTest` 里那条断言就**结构性地�
 **全新的库照样跑得通**（本仓库的测试库每次 `target` 一删就是全新的），
 所以光靠运行时断言根本拦不住这类改动。
 
+**但子串断言丢掉了列级精确性**（审查意见），所以本轮又补了一条**内存库**测试：
+把 V1 的脚本文本对 `jdbc:sqlite::memory:` 执行一遍，再断言列清单与
+`AUTOINCREMENT` / `NOT NULL`。下面是 `MigrationTest` 的最终实现（与
+`SchemaTest.java` 一样，代码块整体缩进 4 格）：
+
+> **三个实测踩出来的坑**：内存库是「一连接一库」，必须保持同一个 `Connection` 打开、
+> 不能交给连接池；`PRAGMA table_info` 是表函数，要写
+> `SELECT name FROM pragma_table_info('schema_probe')`；这条断言验证的是「脚本文本能跑出
+> 什么」，**不能替代** Flyway 那条断言（它绕过了 `flyway_schema_history`、绕过了真实
+> 的迁移执行路径），注释里已写清。
+
+```java
+
+    package com.change;
+
+    import org.junit.jupiter.api.Test;
+    import org.springframework.beans.factory.annotation.Autowired;
+    import org.springframework.boot.test.context.SpringBootTest;
+    import org.springframework.core.io.ClassPathResource;
+    import org.springframework.jdbc.core.JdbcTemplate;
+    import org.springframework.jdbc.datasource.SingleConnectionDataSource;
+    import org.springframework.jdbc.datasource.init.ScriptUtils;
+
+    import java.nio.charset.StandardCharsets;
+    import java.sql.Connection;
+    import java.sql.DriverManager;
+
+    import static org.assertj.core.api.Assertions.assertThat;
+
+    /**
+     * 迁移机制的哨兵。
+     *
+     * 为什么第一条断言「结构」而不是「有一行数据」：把 V1 的内容清空、只留注释，
+     * Flyway 照样会记一行 success=1——于是「数一行数据」式的断言仍然全绿，而 V1 其实
+     * 什么也没做。对一个用来证明「迁移机制可靠」的测试来说，这恰好是反例。
+     *
+     * 为什么从 Task 3 起这条改成读迁移脚本本身：V2 的第一行就是 DROP TABLE schema_probe，
+     * 迁移在上下文启动时就跑完，**任何**测试方法都看不到这张表了——继续断言「表在」
+     * 无论怎么写都必然红，而断言「表不在」只是把 SchemaTest 那条抄一遍。
+     * 想守住的其实还是同一件事：V1 里那句 CREATE 不能消失或被改坏。这件事只有读
+     * 脚本原文才问得出来，顺带还补上了原断言查不到的盲区——改 V1 只让「已经跑过 V1 的库」
+     * 报 checksum 失配，**全新的库照样跑得通**，所以光靠运行时断言拦不住这类改动。
+     *
+     * 本轮（Task 3 审查后）补了三条：
+     * - v1_script_still_produces_the_probe_table_it_is_known_for：把 V1 的脚本文本对一条
+     *   **内存**库执行一遍，再断言它真的建出那张表、列名与 AUTOINCREMENT / NOT NULL 都在。
+     *   这是对上面那条子串断言的收窄：子串断言问不出「脚本还能不能跑」，也问不出列级细节。
+     * - published_migrations_are_byte_frozen：把已发布版本的 checksum 钉死。
+     * - （原有的 PRAGMA 哨兵不变。）
+     */
+    @SpringBootTest
+    class MigrationTest {
+
+        @Autowired
+        JdbcTemplate jdbc;
+
+        @Test
+        void baseline_migration_still_defines_the_probe_table_it_is_known_for() {
+            // 读资源原文而不是数据库：schema_probe 已被 V2 删掉（见 SchemaTest 的对应断言）。
+            String v1 = readMigration("V1__baseline.sql");
+
+            // 空迁移、CREATE 被删掉 / 改名 / 拆成别的表，都会在这里变红。
+            assertThat(v1).contains("CREATE TABLE");
+            assertThat(v1).contains("schema_probe");
+            assertThat(v1).contains("INTEGER PRIMARY KEY AUTOINCREMENT");
+            assertThat(v1).contains("NOT NULL");
+
+            // 反过来说：V1 真的建了这张表，才轮得到 V2 去 DROP 它——V2 里那句
+            // DROP TABLE schema_probe（无 IF EXISTS）在空 schema 上必然报
+            // "no such table: schema_probe"，整个上下文起不来。这条链子本身就是
+            // V1 执行过的证据。
+        }
+
+        /**
+         * 把 V1 的脚本文本对一条**内存** SQLite 连接执行一遍，然后断言列级细节。
+         *
+         * 为什么需要它：上面那条子串断言只看「文里有没有这几段字」，看不出脚本还能不能执行，
+         * 也看不出列类型 / 顺序 / 非空标记。审查正是据此指出它「丢掉了列级精确性」。
+         *
+         * 三个必须注意的点（都是实测踩出来的）：
+         * 1. `jdbc:sqlite::memory:` 是**一连接一库**：交给连接池（或每条语句各取一次连接）
+         *    就会拿到一个空库，`no such table: schema_probe`。所以这里手动
+         *    DriverManager.getConnection 并且全程只有这一条 Connection。
+         * 2. `PRAGMA table_info` 是表函数（一行多列），queryForList(..., String.class) 会对它抛
+         *    IncorrectResultSetColumnCountException；写成 `SELECT name FROM pragma_table_info(...)`。
+         * 3. 它验证的是「脚本文本能跑出什么」，**不能替代** Flyway 那条断言——它绕过了
+         *    flyway_schema_history、绕过了真实的迁移执行路径，也不检查 V1 是否真的被 Flyway
+         *    应用过。两条断言守的是不同的东西，删哪一条都会露出一个洞。
+         */
+        @Test
+        void v1_script_still_produces_the_probe_table_it_is_known_for() throws Exception {
+            // 手动开连接、手动关：内存库随连接存在，不能交给连接池。
+            try (Connection memory = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+                ScriptUtils.executeSqlScript(memory, new ClassPathResource("db/migration/V1__baseline.sql"));
+
+                // 包一层 SingleConnectionDataSource，让下面几条查询都走这一条 Connection
+                // （内存库是一连接一库，换一条连接就换一个空库）。
+                JdbcTemplate mem = new JdbcTemplate(new SingleConnectionDataSource(memory, true));
+
+                // 1) 列清单：少一列、改名、顺序变了都会红。
+                assertThat(mem.queryForList(
+                        "SELECT name FROM pragma_table_info('schema_probe')", String.class))
+                        .containsExactly("id", "note", "created_at");
+
+                // 2) DDL 原文里的 AUTOINCREMENT 与列级 NOT NULL。
+                //    DDL 是按列对齐存的（`note       TEXT NOT NULL`），所以断言前先把空白折叠成
+                //    单空格：这样断言既不怕迁移被重新排版，又能真正问出「这一列上有没有 NOT NULL」。
+                String ddl = collapseWhitespace(mem.queryForObject(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name='schema_probe'",
+                        String.class));
+                assertThat(ddl).contains("INTEGER PRIMARY KEY AUTOINCREMENT");
+                assertThat(ddl).contains("note TEXT NOT NULL,");
+                assertThat(ddl).contains("created_at TEXT NOT NULL");
+
+                // 3) 脚本里的那行数据也真的进去了（空脚本 / INSERT 被删掉会红）。
+                assertThat(mem.queryForObject("SELECT note FROM schema_probe", String.class))
+                        .isEqualTo("baseline");
+            }
+        }
+
+        /**
+         * 「已发布迁移不可变」这条纪律，此前只剩文档在守。
+         *
+         * 与 Flyway 自己的校验**不重复**：Flyway 只在「已经跑过该版本的库」上比 checksum，
+         * 而本地删掉 target 之后每次跑测试都是全新的库，checksum 校验根本不会被触发——
+         * 于是给 V1 加一行注释、或者把 V2 的某个 CHECK 删掉，套件照样全绿。
+         * 这里把 checksum 钉死在测试里，任何对 V1–V4 的编辑（哪怕只加一行注释）都会让它变红。
+         *
+         * checksum 是 Flyway 对迁移文件内容算出的 CRC32，必须从**实跑后的库**里读出来填，
+         * 不能猜。当前值对应 V1–V4 发布时的字节内容：
+         *   1:baseline / 2:training / 3:nutrition / 4:auxiliary。
+         *
+         * 版本号写死成 containsExactly（不是「前四个必须是」）：将来新增 V5 时这条会红，
+         * 那是**有意的**——新迁移一旦发布就该被一起冻结，加进来的同时也要确认它已发布。
+         */
+        @Test
+        void published_migrations_are_byte_frozen() {
+            assertThat(jdbc.queryForList(
+                    "SELECT version || ':' || checksum FROM flyway_schema_history ORDER BY installed_rank",
+                    String.class))
+                    .containsExactly("1:1904735359", "2:-962992177", "3:1207314981", "4:1460974919");
+        }
+
+        private String readMigration(String fileName) {
+            try (var in = new ClassPathResource("db/migration/" + fileName).getInputStream()) {
+                // 统一换行符：断言只关心内容，不该因为 checkout 的行尾设置而变红。
+                return new String(in.readAllBytes(), StandardCharsets.UTF_8).replace("\r\n", "\n");
+            } catch (Exception e) {
+                throw new IllegalStateException("读不到迁移脚本: " + fileName, e);
+            }
+        }
+
+        /** 把空白折叠成单空格：DDL 是按列对齐存的，断言片段不该因为排版而失配。 */
+        private static String collapseWhitespace(String sql) {
+            return sql.replaceAll("\\s+", " ").trim();
+        }
+
+        @Test
+        void flyway_history_has_v1() {
+            String desc = jdbc.queryForObject(
+                    "SELECT description FROM flyway_schema_history WHERE version = '1'", String.class);
+            assertThat(desc).isEqualTo("baseline");
+        }
+
+        @Test
+        void connection_pragmas_are_effective() {
+            // 这两个 PRAGMA 靠 JDBC URL 参数开启（迁移脚本里开不了：SQLite 在事务内
+            // 拒绝切 WAL）。它们一旦写错大小写，驱动会当成 PRAGMA 名执行并直接
+            // SQLITE_CANTOPEN，应用根本起不来——所以这条断言是必要的哨兵。
+            assertThat(queryPragma("foreign_keys")).isEqualTo("1");
+            assertThat(queryPragma("journal_mode")).isEqualTo("wal");
+        }
+
+        private String queryPragma(String name) {
+            return jdbc.queryForObject("PRAGMA " + name, String.class);
+        }
+    }
+```
+
 - [x] **Step 6: 跑全量测试**
 
 Run: `cd backend && Remove-Item -Recurse -Force target; mvn -B test`
 
-Expected: `Tests run: 12, Failures: 0, Errors: 0`
+Expected: `Tests run: 18, Failures: 0, Errors: 0`（实测值）
 
-（原计划写的 8 + 4 漏算了 V2 会弄红 `MigrationTest` 一条；修好之后总数仍是
-2 + 3 + 3 + 4 = 12。**必须先删 `target`**：`src/main/resources` 下的改动
-可能没被复制到 `target/classes`，验证结果会与源码不符。）
+（本轮修复前的总数是 12 = 2 + 3 + 3 + 4。修复后 18 = `ChangeApplicationTests` 2 +
+`DataDirectoryInitializerTest` 3 + `MigrationTest` 5 + `SchemaTest` 8；具体为
+`MigrationTest` 3 → 5，新增 `v1_script_still_produces_the_probe_table_it_is_known_for`
+与 `published_migrations_are_byte_frozen`；`SchemaTest` 4 → 8，新增列级 / NOT NULL /
+索引级 / 约束级四条快照，并把 `workout_set_supports_timed_and_per_side` 由 `contains`
+改成 `containsExactlyInAnyOrder`（对「多出一列」恒绿的写法）。**必须先删 `target`**：
+`src/main/resources` 下的改动可能没被复制到 `target/classes`，验证结果会与源码不符。）
 
-- [x] **Step 7: 提交**
+- [x] **Step 7: 提交（Task 3 原始实现）**
 
 ```bash
 git add backend/src/main/resources/db/migration/V2__training.sql \
@@ -902,8 +1625,21 @@ git add backend/src/main/resources/db/migration/V2__training.sql \
 git commit -m "feat: 十五张表的迁移，含三条防回归断言"
 ```
 
----
+- [ ] **Step 8: 提交（Task 3 审查修复）**
 
+```bash
+git add -A
+git commit -m "fix(schema): 硬化十五张表的约束与守卫（审查发现 8 种破坏均无人拦）"
+```
+
+**提交前必须完成上一节那张表里的 8 种破坏验证**：逐条破坏、删 `target`、跑
+`mvn -B test` 确认变红、恢复。任何一种**抓不住**都说明修复没到位，要报告而不是挑
+容易的做。做完这一步才允许勾选 Step 8 进入 Task 4。
+
+> 实施记录见 commit message 与 `git log`；本轮实测的 8 条破坏结果（哪条测试变红、
+> 报了什么错）已逐条记录。
+
+---
 ## Task 4: 训练域 JPA 实体与仓储
 
 **Files:**
