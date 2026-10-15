@@ -21,7 +21,12 @@ spring:
       connection-timeout: 3000      # 别用默认 30s：单连接池被占满时要快速失败而不是挂住
       # 约定：池只有 1 条连接，禁止 REQUIRES_NEW（会自己等自己）
   jpa:
-    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    # ChangeSqliteDialect 是 community SQLiteDialect 的子类，只改类型名映射：
+    # community 方言把 Long/boolean/LocalDate/LocalDateTime/Double 报成
+    # bigint/boolean/date/timestamp/double，而 V1–V4 里写的是 INTEGER/TEXT/REAL（SQLite
+    # 只有这四个存储类），ddl-auto=validate 会因此整片报「wrong column type」、上下文起不来。
+    # 详见该类的注释：为什么这条规则放在方言里而不是每个实体字段上。
+    database-platform: com.change.config.ChangeSqliteDialect
     hibernate:
       ddl-auto: validate            # 建表交给 Flyway，Hibernate 只校验
     open-in-view: false
