@@ -453,6 +453,29 @@ Java 后台（JDK 25 + Spring Boot 3.x）
 
 **难点二：一餐多条目 + 单位换算** → 营养按 per-100g 存，份量单独存。`FoodPortion` 承担「1 碗 = 150 克」这类换算。
 
+### 类型绑定约定（Java 类型 ↔ SQLite 存储类）
+
+SQLite 只有四个存储类：`INTEGER` / `REAL` / `TEXT` / `BLOB`。而 Hibernate 会为 Java 类型声明更细的「期望类型名」，在 `ddl-auto: validate` 下逐列比对，不一致就拒绝启动。
+
+**因此有两条硬性约定，违反第二条会静默损坏数据：**
+
+| # | 约定 | 违反的后果 |
+|---|---|---|
+| 1 | **方言必须用 `com.change.config.ChangeSqliteDialect`**，不能用 community 的 `SQLiteDialect` | 后者把 `Long`→`bigint`、`boolean`→`boolean`、`LocalDate`→`date`、`LocalDateTime`→`timestamp`、`Double`→`double precision`，与 schema 里的 `INTEGER`/`REAL`/`TEXT` 全对不上——**上下文直接起不来**（实测 17 个错误） |
+| 2 | **`LocalDate` / `LocalDateTime` 字段必须加 `@JdbcTypeCode`** | xerial 驱动默认把 java.time 类型写成**纪元毫秒**。`session_date` 有日期形状 CHECK 兜着（响亮失败），但 `started_at`/`ended_at` **没有 CHECK**，会**静默**存成 `date()`/`datetime()` 都解析不了的数字串 |
+
+实测对照（`started_at` 列）：
+
+| 配置 | `session_date` | `started_at` | 是否报错 |
+|---|---|---|---|
+| 加注解（正确） | `'2026-10-14'` | `'2026-10-14T19:30:15'` | 否 |
+| 时间戳不加注解 | `'2026-10-14'` | `'1791977415000'` | **否 —— 静默损坏** |
+| 日期也不加注解 | CHECK 拒绝 | — | 是 |
+
+第二条正是「时间戳用 `TEXT` 存 ISO-8601」这条原则的**落实机制**——原则早就在，缺的是机制，而驱动的默认行为会静默违反它。
+
+**另一条已实测的细节**：`LocalDateTime` 秒为 0 时 `toString()` 会省略，`20:15:00` 落库为 `'2026-10-14T20:15'`（16 字符而非 19）。仍是合法 ISO-8601，但**列内长度不固定**，将来做字符串比较或排序时要注意。
+
 ### 为什么 `BodyMetric` 用「类型 + 数值」
 
 不给每个围度开一列，是为了**以后加「小腿围」「肩宽」不用改表**。代价是查询时要按类型分组，但这个代价在自用场景里可以忽略。
@@ -687,6 +710,27 @@ Java 后台（JDK 25 + Spring Boot 3.x）
 1. **最大的选型风险消失**，排期里的「先验证版本搭配」不再是阻塞项。
 2. **启动要 3.8 秒**，所以「外壳先不显示窗口避免白屏」这个设计**必须配一个加载提示**，否则用户双击后近 4 秒没有任何反馈。这条已并入第一阶段打包步骤。
 3. **fat jar 是 79.1 MB**，比预估的大。完整安装包 = 12 MB（Tauri 壳）+ 47 MB（精简 JRE）+ 79 MB（jar）≈ **138 MB**。仍是 Electron 的量级，不是数量级优势——**但这是实测值，不再是估算**。
+
+### SQLite 方言与时间绑定的实测发现（2026-10-14，Task 4 期间）
+
+上面那条「先验证版本搭配」当时只验到「驱动能连通」，**没有验到 JPA 映射层**。Task 4 写第一个实体时才暴露两处，都已独立复现：
+
+**发现一：community 的 `SQLiteDialect` 与冻结 schema 的类型名对不上。**
+`ddl-auto: validate` 下报：
+
+```
+Schema-validation: wrong column type encountered in column [id] in table [exercise];
+found [integer (Types#INTEGER)], but expecting [bigint (Types#BIGINT)]
+```
+
+改成自建 `ChangeSqliteDialect`（覆写 `columnType()` 把类型映射回四个存储类）后通过。**这解释了为什么 `spike/` 当时没发现**：spike 里没有实体，`validate` 没有任何东西可比。
+
+> 替代方案也实测可行：给每个字段加 `@Column(columnDefinition="INTEGER")` 能被 validate 采信，且**不改动 JDBC 绑定**。选方言是因为它一次覆盖后续所有实体、不会漏；`@JdbcTypeCode(INTEGER)` 那条路则**不能用**——它把 `Long` 绑定走 32 位通道（`PreparedStatement.setInt`），而 SQLite 的 rowid 是 64 位。
+
+**发现二：xerial 驱动默认把 `LocalDate`/`LocalDateTime` 写成纪元毫秒。**
+详见「六、数据模型 → 类型绑定约定」。这一条的危害比发现一**更隐蔽**：发现一是响亮的（起不来），发现二是静默的（能起来，但时间戳报废）。
+
+**教训（值得记入方法论）**：版本验证要验到**真实的映射层**，不能只验到「能连上」。`spike/` 证明了「JDK 25 + Boot 3.5.16 + 驱动能通」，但没覆盖「Hibernate 的期望类型名 ↔ schema 的实际类型名」这一层——而后者才是 `ddl-auto=validate` 每天在检查的东西。
 
 ### 本机环境（已实测通过）
 
