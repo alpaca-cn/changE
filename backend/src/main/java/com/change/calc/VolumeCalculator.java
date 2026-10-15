@@ -1,6 +1,6 @@
 package com.change.calc;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -19,12 +19,35 @@ import java.util.Objects;
  */
 public final class VolumeCalculator {
 
+    /**
+     * 合法的肌群角色。必须与 {@code V2__training.sql} 里 {@code exercise_muscle.role}
+     * 的 {@code CHECK} 一致（DDL 原文：{@code role IN ('primary', 'secondary')}）。
+     *
+     * <p>抽成常量是为了让「Java 侧白名单」与「DDL 侧白名单」两侧**互相收口**：
+     * {@code SchemaTest.role_whitelist_matches_the_ddl} 会把这里的值集与
+     * {@code sqlite_master.sql} 里抽出来的值集逐项比对，任何一侧改了另一侧就红。
+     * 构造器与 {@link #accumulate} 的 {@code switch} 都引用它，所以不存在
+     * 「常量改了但校验没跟着改」这种中间态。
+     */
+    public static final List<String> VALID_ROLES = List.of("primary", "secondary");
+
+    /**
+     * 容量与目标区间的比较结果。
+     *
+     * <b>本枚举混了两个维度</b>：{@link #NOT_CONFIGURED} 说的是「没有参照系」，
+     * 其余四态说的是「实际量与参照系的相对位置」。所以**枚举顺序不是严重程度刻度，
+     * 禁止依赖 ordinal()**；要按量排序请显式列出那四个态。
+     */
     public enum Status {
         /** 该肌群没有配置目标区间（weekly_sets_min/max 为 NULL）。 */
         NOT_CONFIGURED,
+        /** 实际 0 组——列在训练里但一组都没做。与 NOT_CONFIGURED 是两个不同的事实。 */
         UNTRAINED,
+        /** 有训练量，但低于目标区间下限。 */
         BELOW,
+        /** 落在目标区间内（闭区间，等于下限或上限都算）。 */
         IN_RANGE,
+        /** 高于目标区间上限。 */
         ABOVE
     }
 
@@ -48,7 +71,7 @@ public final class VolumeCalculator {
      *
      * <p>所以 {@code role} 的 null 检查必须放在白名单之前：放到后面，消息会变成
      * 「未知的肌群角色: null」——那是<b>另一条</b>信息。这个顺序由
-     * {@code invalid_role_cannot_even_be_constructed} 锁死。
+     * {@code null_role_is_rejected_before_the_whitelist} 锁死。
      */
     public record Entry(long muscleId, int sets, String role) {
 
@@ -62,9 +85,9 @@ public final class VolumeCalculator {
             if (role == null) {
                 throw new IllegalArgumentException("role 不能为 null");
             }
-            if (!role.equals("primary") && !role.equals("secondary")) {
+            if (!VALID_ROLES.contains(role)) {
                 throw new IllegalArgumentException(
-                        "未知的肌群角色: " + role + "（只接受 primary / secondary）");
+                        "未知的肌群角色: " + role + "（只接受 " + String.join(" / ", VALID_ROLES) + "）");
             }
         }
     }
@@ -75,17 +98,21 @@ public final class VolumeCalculator {
     /**
      * 把一个训练里的所有贡献累加成「肌群 id → 折算组数」。
      *
-     * <p>零组的贡献**不创建键**：下游的人体图是按 {@code map.entrySet()} 渲染的，
-     * 建一个值为 0 的键会让那个肌群出现在图上。而「不在 map 里」表示未训练，
-     * 「在 map 里且为 0」表示练了 0 组——后者无法与前者区分，属于静默失效，
-     * 所以这里不给它留位置。
+     * <p>零组的贡献**不创建键**：对下游只有两种可用状态——<b>有量 / 无量</b>；
+     * 多出来的 0 值键只会让热力图多画一个不该画的热区。在 Map 层面 `containsKey`
+     * 当然分得清「不在 map 里」与「在 map 里且为 0」，分不清的是**按 `entrySet()`
+     * 渲染的下游**——所以这里不给 0 值留位置。
      *
      * @param entries 贡献列表；可以跨动作重复出现同一肌群，会累加
-     * @return 肌群 id → 折算组数；没有贡献的肌群不在 map 里（不是 0）
+     * @return 肌群 id 到折算组数的映射。三条契约：
+     *         ①**键序为首次出现序**（用 LinkedHashMap；不要改成 Map.copyOf——那会让每次启动的顺序都变，
+     *           而下游是按 entrySet() 渲染热力图的）；
+     *         ②值恒为 0.5 的整数倍（0.5 是 2 的幂，累加精确，所以容量这一路不需要舍入）；
+     *         ③**缺键表示该肌群 0 组**，调用方用 getOrDefault(id, 0.0) 读取。
      */
     public static Map<Long, Double> accumulate(List<Entry> entries) {
         Objects.requireNonNull(entries, "entries 不能为 null");
-        Map<Long, Double> out = new HashMap<>();
+        Map<Long, Double> out = new LinkedHashMap<>();
         for (Entry e : entries) {
             Objects.requireNonNull(e, "entries 中不能含 null 元素");
             double weight = switch (e.role()) {
@@ -95,10 +122,11 @@ public final class VolumeCalculator {
                 // 留在这里是因为「合法角色集」将来可能扩容（比如加 'stabilizer'），
                 // 那时若忘了改这里，容量会被**静默算成 0**——这条分支让它当场响。
                 default -> throw new IllegalArgumentException(
-                        "未知的肌群角色: " + e.role() + "（只接受 primary / secondary）");
+                        "未知的肌群角色: " + e.role() + "（只接受 "
+                                + String.join(" / ", VALID_ROLES) + "）");
             };
             if (e.sets() == 0) {
-                continue;   // 「不在 map 里」表示未训练；创建 0 值键会让下游无法区分这两态
+                continue;   // 无量的肌群不建键：多出来的 0 值键会让下游多画一个热区
             }
             out.merge(e.muscleId(), e.sets() * weight, Double::sum);
         }
@@ -125,7 +153,12 @@ public final class VolumeCalculator {
      * {@code BELOW}——因为 {@code 5 < 20} 为真——给出一个<b>看起来合理</b>的错答案。
      * 用户可以在设置页逐肌群改这个区间，打错数字完全可能，所以宁可在这里响。
      *
-     * @param sets 实际折算组数
+     * @param sets 实际折算组数；必须是有限且非负的。{@code NaN} 与任何比较都返回
+     *             {@code false}，所以它<b>同时</b>绕过下面三处比较（{@code sets <= 0} /
+     *             {@code sets < min} / {@code sets > max}），一路落到最后的
+     *             {@code return IN_RANGE}——给出「达标」这个最危险的错答案。
+     *             这条校验<b>排在 null 短路之后</b>是有意的：没配目标的肌群不该因为
+     *             实际值坏了而改抛异常
      * @param min  区间下限；不得为负。传 {@code null} 表示该肌群未设目标
      * @param max  区间上限；不得小于下限。传 {@code null} 表示该肌群未设目标。
      *             比较用的是闭区间
@@ -133,6 +166,13 @@ public final class VolumeCalculator {
     public static Status classify(double sets, Integer min, Integer max) {
         if (min == null || max == null) {
             return Status.NOT_CONFIGURED;
+        }
+        if (!(sets >= 0)) {
+            // 用 !(sets >= 0) 而不是 sets < 0：NaN 与任何比较都返回 false，
+            // 所以 NaN 会绕过 sets < 0，一路落到最后的 return IN_RANGE——
+            // 给出「达标」这个最危险的错答案。包内另三个数值入口都用了同一个套路。
+            throw new IllegalArgumentException(
+                    "sets 必须是有限且非负的组数，实际为 " + sets);
         }
         if (min < 0) {
             throw new IllegalArgumentException("区间下限不能为负: " + min);

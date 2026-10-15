@@ -33,7 +33,7 @@ backend/
     │   │   │   └── ...
     │   │   ├── repo/              # Spring Data 仓储
     │   │   ├── calc/              # ★ 三个核心计算，纯类、无 Spring 依赖
-    │   │   │   ├── Round.java     # Task 5：舍入工具（包内可见，三处计算共用）
+    │   │   │   ├── Round.java     # Task 5：舍入工具（包内可见，饮食与 1RM 两处共用）
     │   │   │   ├── Nutrition.java
     │   │   │   ├── NutritionCalculator.java
     │   │   │   ├── PortionConverter.java
@@ -1327,6 +1327,38 @@ CREATE INDEX ix_change_log_time ON change_log(changed_at);
                     collapseWhitespace("PRIMARY KEY (exercise_id, muscle_group_id)"));
         }
 
+        /**
+         * 「Java 侧白名单 == DDL 侧白名单」的防漂移测试（Task 7 质量审查轮新增）。
+         *
+         * 上面那条只钉住了 **DB 侧**（`sqlite_master.sql` 里逐字的
+         * `CHECK (role IN ('primary', 'secondary'))`）。缺的是另一半：
+         * `VolumeCalculator.Entry` 的合法角色集是**另一份手写拷贝**，某一侧改了另一侧不会红。
+         * 这条把两份值集拉在一起逐项比对（含**顺序**——DDL 里写的就是
+         * `'primary', 'secondary'`），任何一侧改动都会失败。
+         */
+        @Test
+        void role_whitelist_matches_the_ddl() {
+            String ddl = ddlOf("exercise_muscle");
+
+            // 只取 role 那一条 CHECK 的 IN (...) 值集
+            Matcher m = Pattern.compile("role\\s+IN\\s*\\(([^)]*)\\)").matcher(ddl);
+            assertThat(m.find())
+                    .as("exercise_muscle 的 DDL 里应当有 role IN (...) 形式的 CHECK：%s", ddl)
+                    .isTrue();
+            List<String> fromDdl = new ArrayList<>();
+            Matcher v = Pattern.compile("'([^']*)'").matcher(m.group(1));
+            while (v.find()) {
+                fromDdl.add(v.group(1));
+            }
+
+            assertThat(fromDdl)
+                    .as("DDL 里的合法角色集")
+                    .isNotEmpty();
+            assertThat(VolumeCalculator.VALID_ROLES)
+                    .as("Java 侧 VALID_ROLES 必须与 exercise_muscle.role 的 CHECK 逐项一致")
+                    .containsExactlyElementsOf(fromDdl);
+        }
+
         // ------------------------------------------------------------------
         // 结构查询工具
         // ------------------------------------------------------------------
@@ -1390,7 +1422,8 @@ CREATE INDEX ix_change_log_time ON change_log(changed_at);
 
 Run: `cd backend && mvn -B test -Dtest=SchemaTest`
 
-Expected: `Tests run: 8, Failures: 0, Errors: 0`（本轮修复后 SchemaTest 从 4 条变成 8 条）
+Expected: `Tests run: 9, Failures: 0, Errors: 0`（本轮修复后 SchemaTest 从 4 条变成 8 条；
+Task 7 质量审查轮又加了一条 `role_whitelist_matches_the_ddl`，8 → **9**）
 
 **但只跑 `-Dtest=SchemaTest` 是不够的**：V2 的第一行会把 `schema_probe` 删掉，而
 `MigrationTest.baseline_migration_created_probe_table` 断言的是「这张表还在」——
@@ -2206,7 +2239,11 @@ class NutritionCalculatorTest {
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("items");
         assertThatThrownBy(() -> NutritionCalculator.sum(
                 Arrays.asList(RICE_PER_100G, null)))
-                .isInstanceOf(NullPointerException.class).hasMessageContaining("null");
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("不能");
+        // 断言用「不能」而不是「null」：删掉 sum 里那行 Objects.requireNonNull(n, ...) 之后
+        // 仍然会抛 NPE，而 JDK 的消息本身**也含 "null" 字样**
+        // （Cannot invoke "com.change.calc.Nutrition.kcal()" because "n" is null），
+        // 用 "null" 断言就恒真了——实测过，它拦不住「删掉校验」的变异。
     }
 }
 ```
@@ -2300,8 +2337,10 @@ package com.change.calc;
 /**
  * 舍入工具。
  *
- * 为什么单独抽出来：饮食、训练容量、1RM 三处都需要「保留两位小数」，
- * 而它各自私有会导致三份逐字相同的拷贝——改一处就得记得改三处。
+ * 为什么单独抽出来：饮食与 1RM 两处都需要「保留两位小数」，
+ * 而它各自私有会导致两份逐字相同的拷贝——改一处就得记得改两处。
+ * 训练容量**不需要**它：那里的值恒为 0.5 的整数倍（见
+ * {@link VolumeCalculator#accumulate} 的 @return），累加与比较都是精确的。
  *
  * 为什么用 Math.round：它按「四舍五入远离零」处理 .5，
  * 且对负数对称（-1.005 → -1.01 而非 -1.00），适合营养与重量这类只关心量级的场景。
@@ -2392,6 +2431,15 @@ public final class NutritionCalculator {
 Task 8 的 `OneRepMax` fence 里已经是一份**逐字相同**的拷贝。
 到 Task 8 时第三份拷贝会被当成「既有惯例」照抄，那时统一要同时改三个已验证过的类。
 **成本窗口只在现在开着**，所以提前抽成包内可见的 `Round`。
+
+> **再更正（2026-10-15，Task 7 质量审查轮）**：上面那句「Task 7 与 Task 8 面对的是
+> 同一个小数问题」**只对 Task 8 成立**。全库 grep 实测：`VolumeCalculator` **一次都没调用**
+> `Round`，`PortionConverter.toGrams` 还明确写了「定标属于显示层，不在这里做」
+> （见 Task 6 的 C3-决定）。所以真实是**两处**（饮食 + 1RM），不是三处；
+> 训练容量不需要舍入——它的值恒为 0.5 的整数倍，累加与比较都是精确的
+> （见 `VolumeCalculator.accumulate` 的 `@return` 契约②）。
+> 抽 `Round` 的决定本身**不受影响**（两份逐字拷贝仍然值得抽，且 Task 8 那份确实存在），
+> 这里改的只是「几处」这个数字。
 
 **为什么给 `Nutrition` 加不变量校验**（实测确认过的三个失效方式，全部**静默**）：
 
@@ -3419,18 +3467,34 @@ equal?                   = false
 **M1/M2 仍然都红、M0 仍绿**。分工是：`"可用的单位"` 只管「列表出现过」（M2 下仍绿），
 `"碗、勺"` 才逐字锁住内容与顺序——两条都不能删。
 
-### F. 包内约定落纸：`package-info.java`（Minor-5，本轮新增）
+### F. 包内约定落纸：`package-info.java`（Minor-5，本轮新增；Task 7 质量审查轮扩到四条）
 
 `calc/` 有两条约定原先只活在示例里，没写下来。本轮新建
 `backend/src/main/java/com/change/calc/package-info.java`（纯 Javadoc，无代码，`{@link}` 同包自动解析、
 编译期不报错），写下：
 
-1. **顶层 record vs 嵌套 record 的判据**：作为某个操作**输入或输出的聚合值**放顶层
+1. **顶层 record vs 嵌套 record 的判据**：跨操作**复用**的聚合值放顶层
    （`Nutrition` 既用于「每 100 克基准值」也用于「一餐合计值」）；只属于**单个操作**的
-   条目类型嵌在操作类里（`PortionConverter.Unit`，以及计划里 Task 7 的 `VolumeCalculator.Entry`、
+   条目/状态嵌在操作类里（`PortionConverter.Unit`，以及计划里 Task 7 的 `VolumeCalculator.Entry`、
    Task 8 的 `OneRepMax.Set`）。
+   > **措辞更正（2026-10-15，Task 7 质量审查轮）**：原先写的是「作为某个操作**输入或输出的**
+   > 聚合值放顶层」，而例子里 `VolumeCalculator.Entry`（一个**输入**条目）恰恰嵌在操作类里，
+   > 判据与例子打着。实际判据是**「跨操作复用」vs「只属于单个操作」**，与「输入还是输出」无关。
 2. **`PortionConverter.toGrams` → `NutritionCalculator.forGrams` 的流水线契约**，
    以及「**二者的定义域必须一致**」——这正是本轮**放行条件 1** 的来源。
+
+**Task 7 质量审查轮又补了两条**（这两条原先只活在计划的 Task 9 小节与各处 Javadoc 里，
+读 `package-info` 的人看不到）：
+
+3. **公开数值入口必须显式拒绝 NaN / ±∞**（**可执行**约定）。包内惯用法两种：
+   一般输入用 `!Double.isFinite(v)`（`forGrams`、`toGrams`、`Nutrition`、`Unit`），
+   比较类场景用 `!(x <= MAX)`（NaN 与任何比较都返回 false，所以 `x > MAX` 这种写法放 NaN 过去）。
+   理由：这个包已经因为 NaN 静默变成 `0.0` / `IN_RANGE` **栽过两次**
+   （`Round.to2` 与 `VolumeCalculator.classify`）——NaN 不会崩，它给出一个看起来正常的错答案。
+4. **可空的领域配置不得兜底，必须进入类型或状态**（见 `VolumeCalculator.Status.NOT_CONFIGURED`）。
+   理由：任何兜底值都会静默说谎（三个具体失效见 Task 7 第 1 节的表）；判据是调用方
+   **分得清**「没这个配置」与「配置成 0」这两个事实。
+   这条契约原先只写在 Task 9 的小节里。
 
 外加一条贯穿的价值观：所有校验都倾向于「让它响」而不是「让它算出一个看起来合理的值」，
 因为这类缺陷的失效方式大多是**静默**的（NaN 经舍入变成 0、∞ 被饱和成大数、重复单位名取首个）。
@@ -3544,9 +3608,47 @@ class VolumeCalculatorTest {
 
     @Test
     void unknown_role_is_rejected() {
+        // ⚠️ 本测试守的是 **Entry 的白名单**，不是 accumulate 的 switch default。
+        // 实测：只删掉 Entry 的 role 白名单（让非法状态可表示）时，本测试**照旧全绿**
+        // ——异常此时由 accumulate 的 switch default 抛出，消息里有 "tertiary"。
+        // 真正守住 switch 那条纵深防线的是**组合变异体**（同时放开白名单 + 把 default
+        // 改成 0.0），那时本测试与 invalid_role_is_rejected 才会一起变红。
+        // 第 2 道防线为何保留、以及为什么它单测不可达，见计划「规格评审轮记录」第 2 节。
         assertThatThrownBy(() -> VolumeCalculator.accumulate(List.of(entry(1, 3, "tertiary"))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("tertiary");
+    }
+
+    @Test
+    void invalid_role_is_rejected() {
+        // 与 Unit 同一条思路：让非法状态不可表示，比在下游补救更早。
+        // 白名单取自 VolumeCalculator.VALID_ROLES（与 V2__training.sql 的 CHECK 两侧收口）。
+        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, 3, "tertiary"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tertiary");
+    }
+
+    @Test
+    void null_role_is_rejected_before_the_whitelist() {
+        // 顺序是有意的：若把 null 检查放到白名单之后，消息会变成「未知的肌群角色: null」
+        // ——那是**另一条**信息（分不清「没填」与「填错」）。
+        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, 3, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("role");
+    }
+
+    @Test
+    void non_positive_muscle_id_is_rejected() {
+        assertThatThrownBy(() -> new VolumeCalculator.Entry(0, 3, "primary"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("muscleId");
+    }
+
+    @Test
+    void negative_sets_on_an_entry_is_rejected() {
+        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, -1, "primary"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("sets");
     }
 
     @Test
@@ -3558,26 +3660,9 @@ class VolumeCalculatorTest {
     }
 
     @Test
-    void invalid_role_cannot_even_be_constructed() {
-        // 与 Unit 同一条思路：让非法状态不可表示，比在下游补救更早。
-        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, 3, "tertiary"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("tertiary");
-        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, 3, null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("role");
-        assertThatThrownBy(() -> new VolumeCalculator.Entry(0, 3, "primary"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("muscleId");
-        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, -1, "primary"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("sets");
-    }
-
-    @Test
     void zero_set_contribution_does_not_create_a_key() {
-        // 「不在 map 里」= 未训练；「在 map 里且为 0」= 练了 0 组。
-        // 后者无法与前者区分，而 UI 是按键渲染的，会让该肌群出现在图上。
+        // 对下游只有两种可用状态：有量 / 无量。若建了 0 值键，按 entrySet() 渲染的
+        // 热力图就会多画一个不该画的热区。
         assertThat(VolumeCalculator.accumulate(List.of(entry(1, 0, "primary")))).isEmpty();
         assertThat(VolumeCalculator.accumulate(List.of(
                 entry(1, 0, "primary"),
@@ -3606,15 +3691,32 @@ class VolumeCalculatorTest {
     }
 
     @Test
-    void rejects_inverted_or_negative_target_range() {
+    void rejects_inverted_target_range() {
         // 区间写反时会静默返回 BELOW（5 < 20 为真），给出一个看起来合理的错答案。
         assertThatThrownBy(() -> VolumeCalculator.classify(5, 20, 10))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("min=20")
                 .hasMessageContaining("max=10");
+    }
+
+    @Test
+    void rejects_negative_target_range_lower_bound() {
         assertThatThrownBy(() -> VolumeCalculator.classify(5, -1, 20))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("下限");
+    }
+
+    @Test
+    void rejects_non_finite_or_negative_sets() {
+        // NaN 会同时绕过 sets<=0 / sets<min / sets>max 三个比较，落到 return IN_RANGE，
+        // 给出「达标」这个最危险的错答案；负组数会静默变成「没练」。
+        assertThatThrownBy(() -> VolumeCalculator.classify(Double.NaN, 10, 20))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sets");
+        assertThatThrownBy(() -> VolumeCalculator.classify(-5, 10, 20))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sets");
+        // 未配目标时优先报「未配目标」，而不是因为 sets 坏掉而抛异常
+        assertThat(VolumeCalculator.classify(Double.NaN, null, null))
+                .isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
     }
 
     @Test
@@ -3627,8 +3729,11 @@ class VolumeCalculatorTest {
     }
 
     @Test
-    void missing_target_range_is_its_own_state() {
-        // 「没配目标」与「没练」是两个不同的事实。若把 null unbox 成 0：
+    void missing_target_range_is_its_own_state_and_short_circuits() {
+        // 这条测试钉两件事（原先分在两条方法里，而实测「把 null 短路挪到区间校验之后」
+        // 会让**两条同时变红**——边际内容只剩第二件，所以合并）：
+        //
+        // ①「没配目标」与「没练」是两个不同的事实。若把 null unbox 成 0：
         //   下限 0 → 「练得不够」永久消失；上限 0 → 撞上 max<min 全页抛异常；
         //   两者皆 0 → 任何训练量都判 ABOVE。
         assertThat(VolumeCalculator.classify(25, null, 20)).isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
@@ -3636,11 +3741,8 @@ class VolumeCalculatorTest {
         assertThat(VolumeCalculator.classify(0, null, null)).isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
         // 与真正的「没练」区分开
         assertThat(VolumeCalculator.classify(0, 10, 20)).isEqualTo(VolumeCalculator.Status.UNTRAINED);
-    }
-
-    @Test
-    void null_range_short_circuits_before_validation() {
-        // 未配目标时不该校验区间（否则一个 NULL 上限会变成整页异常）
+        // ② null 短路**排在区间校验之前**：`(null, 0)` 这种看起来写反的配置（max=0 < min 兜底）
+        //   不该抛异常，而应直接回报「未设目标」——否则一个 NULL 上限就足以让整页打不开。
         assertThat(VolumeCalculator.classify(5, null, 0)).isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
     }
 }
@@ -3665,7 +3767,7 @@ Expected: 编译失败，`cannot find symbol: class VolumeCalculator`
 ```java
 package com.change.calc;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -3684,12 +3786,35 @@ import java.util.Objects;
  */
 public final class VolumeCalculator {
 
+    /**
+     * 合法的肌群角色。必须与 {@code V2__training.sql} 里 {@code exercise_muscle.role}
+     * 的 {@code CHECK} 一致（DDL 原文：{@code role IN ('primary', 'secondary')}）。
+     *
+     * <p>抽成常量是为了让「Java 侧白名单」与「DDL 侧白名单」两侧**互相收口**：
+     * {@code SchemaTest.role_whitelist_matches_the_ddl} 会把这里的值集与
+     * {@code sqlite_master.sql} 里抽出来的值集逐项比对，任何一侧改了另一侧就红。
+     * 构造器与 {@link #accumulate} 的 {@code switch} 都引用它，所以不存在
+     * 「常量改了但校验没跟着改」这种中间态。
+     */
+    public static final List<String> VALID_ROLES = List.of("primary", "secondary");
+
+    /**
+     * 容量与目标区间的比较结果。
+     *
+     * <b>本枚举混了两个维度</b>：{@link #NOT_CONFIGURED} 说的是「没有参照系」，
+     * 其余四态说的是「实际量与参照系的相对位置」。所以**枚举顺序不是严重程度刻度，
+     * 禁止依赖 ordinal()**；要按量排序请显式列出那四个态。
+     */
     public enum Status {
         /** 该肌群没有配置目标区间（weekly_sets_min/max 为 NULL）。 */
         NOT_CONFIGURED,
+        /** 实际 0 组——列在训练里但一组都没做。与 NOT_CONFIGURED 是两个不同的事实。 */
         UNTRAINED,
+        /** 有训练量，但低于目标区间下限。 */
         BELOW,
+        /** 落在目标区间内（闭区间，等于下限或上限都算）。 */
         IN_RANGE,
+        /** 高于目标区间上限。 */
         ABOVE
     }
 
@@ -3713,7 +3838,7 @@ public final class VolumeCalculator {
      *
      * <p>所以 {@code role} 的 null 检查必须放在白名单之前：放到后面，消息会变成
      * 「未知的肌群角色: null」——那是<b>另一条</b>信息。这个顺序由
-     * {@code invalid_role_cannot_even_be_constructed} 锁死。
+     * {@code null_role_is_rejected_before_the_whitelist} 锁死。
      */
     public record Entry(long muscleId, int sets, String role) {
 
@@ -3727,9 +3852,9 @@ public final class VolumeCalculator {
             if (role == null) {
                 throw new IllegalArgumentException("role 不能为 null");
             }
-            if (!role.equals("primary") && !role.equals("secondary")) {
+            if (!VALID_ROLES.contains(role)) {
                 throw new IllegalArgumentException(
-                        "未知的肌群角色: " + role + "（只接受 primary / secondary）");
+                        "未知的肌群角色: " + role + "（只接受 " + String.join(" / ", VALID_ROLES) + "）");
             }
         }
     }
@@ -3740,17 +3865,21 @@ public final class VolumeCalculator {
     /**
      * 把一个训练里的所有贡献累加成「肌群 id → 折算组数」。
      *
-     * <p>零组的贡献**不创建键**：下游的人体图是按 {@code map.entrySet()} 渲染的，
-     * 建一个值为 0 的键会让那个肌群出现在图上。而「不在 map 里」表示未训练，
-     * 「在 map 里且为 0」表示练了 0 组——后者无法与前者区分，属于静默失效，
-     * 所以这里不给它留位置。
+     * <p>零组的贡献**不创建键**：对下游只有两种可用状态——<b>有量 / 无量</b>；
+     * 多出来的 0 值键只会让热力图多画一个不该画的热区。在 Map 层面 `containsKey`
+     * 当然分得清「不在 map 里」与「在 map 里且为 0」，分不清的是**按 `entrySet()`
+     * 渲染的下游**——所以这里不给 0 值留位置。
      *
      * @param entries 贡献列表；可以跨动作重复出现同一肌群，会累加
-     * @return 肌群 id → 折算组数；没有贡献的肌群不在 map 里（不是 0）
+     * @return 肌群 id 到折算组数的映射。三条契约：
+     *         ①**键序为首次出现序**（用 LinkedHashMap；不要改成 Map.copyOf——那会让每次启动的顺序都变，
+     *           而下游是按 entrySet() 渲染热力图的）；
+     *         ②值恒为 0.5 的整数倍（0.5 是 2 的幂，累加精确，所以容量这一路不需要舍入）；
+     *         ③**缺键表示该肌群 0 组**，调用方用 getOrDefault(id, 0.0) 读取。
      */
     public static Map<Long, Double> accumulate(List<Entry> entries) {
         Objects.requireNonNull(entries, "entries 不能为 null");
-        Map<Long, Double> out = new HashMap<>();
+        Map<Long, Double> out = new LinkedHashMap<>();
         for (Entry e : entries) {
             Objects.requireNonNull(e, "entries 中不能含 null 元素");
             double weight = switch (e.role()) {
@@ -3760,10 +3889,11 @@ public final class VolumeCalculator {
                 // 留在这里是因为「合法角色集」将来可能扩容（比如加 'stabilizer'），
                 // 那时若忘了改这里，容量会被**静默算成 0**——这条分支让它当场响。
                 default -> throw new IllegalArgumentException(
-                        "未知的肌群角色: " + e.role() + "（只接受 primary / secondary）");
+                        "未知的肌群角色: " + e.role() + "（只接受 "
+                                + String.join(" / ", VALID_ROLES) + "）");
             };
             if (e.sets() == 0) {
-                continue;   // 「不在 map 里」表示未训练；创建 0 值键会让下游无法区分这两态
+                continue;   // 无量的肌群不建键：多出来的 0 值键会让下游多画一个热区
             }
             out.merge(e.muscleId(), e.sets() * weight, Double::sum);
         }
@@ -3790,7 +3920,12 @@ public final class VolumeCalculator {
      * {@code BELOW}——因为 {@code 5 < 20} 为真——给出一个<b>看起来合理</b>的错答案。
      * 用户可以在设置页逐肌群改这个区间，打错数字完全可能，所以宁可在这里响。
      *
-     * @param sets 实际折算组数
+     * @param sets 实际折算组数；必须是有限且非负的。{@code NaN} 与任何比较都返回
+     *             {@code false}，所以它<b>同时</b>绕过下面三处比较（{@code sets <= 0} /
+     *             {@code sets < min} / {@code sets > max}），一路落到最后的
+     *             {@code return IN_RANGE}——给出「达标」这个最危险的错答案。
+     *             这条校验<b>排在 null 短路之后</b>是有意的：没配目标的肌群不该因为
+     *             实际值坏了而改抛异常
      * @param min  区间下限；不得为负。传 {@code null} 表示该肌群未设目标
      * @param max  区间上限；不得小于下限。传 {@code null} 表示该肌群未设目标。
      *             比较用的是闭区间
@@ -3798,6 +3933,13 @@ public final class VolumeCalculator {
     public static Status classify(double sets, Integer min, Integer max) {
         if (min == null || max == null) {
             return Status.NOT_CONFIGURED;
+        }
+        if (!(sets >= 0)) {
+            // 用 !(sets >= 0) 而不是 sets < 0：NaN 与任何比较都返回 false，
+            // 所以 NaN 会绕过 sets < 0，一路落到最后的 return IN_RANGE——
+            // 给出「达标」这个最危险的错答案。包内另三个数值入口都用了同一个套路。
+            throw new IllegalArgumentException(
+                    "sets 必须是有限且非负的组数，实际为 " + sets);
         }
         if (min < 0) {
             throw new IllegalArgumentException("区间下限不能为负: " + min);
@@ -3825,10 +3967,17 @@ Expected: `Tests run: 13, Failures: 0, Errors: 0`
 
 Run: `cd backend && mvn -B test`
 
-Expected: **`Tests run: 61, Failures: 0, Errors: 0`**（`fb50b26` 的 59 + 本轮 2）。
-逐项应为：`NutritionCalculatorTest` 13、`PortionConverterTest` 15、`VolumeCalculatorTest` 13、
-`SchemaTest` 8、`MigrationTest` 5、`DataDirectoryInitializerTest` 3、
+Expected: **`Tests run: 66, Failures: 0, Errors: 0`**（质量审查轮结束时实测值）。
+逐项应为：`NutritionCalculatorTest` 13、`PortionConverterTest` 15、`VolumeCalculatorTest` 17、
+`SchemaTest` 9、`MigrationTest` 5、`DataDirectoryInitializerTest` 3、
 `ChangeApplicationTests` 2、`TrainingRepoTest` 2。
+（**61 → 66 的账**：规格评审轮结束时是 61；Task 7 质量审查轮把
+`invalid_role_cannot_even_be_constructed`（4 条不变量挤在一个方法里）按不变量拆成 4 条，
+并把 `rejects_inverted_or_negative_target_range`（2 条）拆成 2 条 → 净 **+4**，
+外加一条新的 `rejects_non_finite_or_negative_sets`（Important-1）→ **+1**，
+再把两条重叠的 null 区间测试合并 → **−1**，共 13 → **17**；
+`SchemaTest` 加一条角色白名单防漂移测试 → 8 → **9**。新增的是**测试方法个数**，
+所有既有断言的期望值一个都没动。以 `mvn` 的实际输出为准。）
 
 - [x] **Step 5: 提交**
 
@@ -3849,6 +3998,25 @@ git commit -F <提交信息文件>
 
 提交信息说清五件事：把「未设目标」做成第三态（附三种 unbox 兜底的失效）、勾选 Task 7 的复选框、
 同步两个 fence、修 4 处事实性写错、给算例测试加 `containsOnlyKeys`。
+
+- [x] **Step 7: 提交（Task 7 质量审查轮修复）**
+
+```bash
+git add backend/src/main/java/com/change/calc/VolumeCalculator.java \
+        backend/src/main/java/com/change/calc/Round.java \
+        backend/src/main/java/com/change/calc/package-info.java \
+        backend/src/test/java/com/change/calc/VolumeCalculatorTest.java \
+        backend/src/test/java/com/change/calc/NutritionCalculatorTest.java \
+        backend/src/test/java/com/change/SchemaTest.java \
+        docs/superpowers/plans/2026-10-14-change-01-foundation.md
+git commit -F <提交信息文件>
+```
+
+提交信息说清九件事：补 `classify` 的 `sets` 守卫（附 `NaN → IN_RANGE` 的实测）、
+`accumulate` 换 `LinkedHashMap` 并写清三条返回契约、`Status` 补枚举语义、
+修隔壁文件的同类恒真断言、`Round` / `package-info` 的过期表述、`skip-zero` 理由改准、
+测试拆分（M9）、新增角色白名单 ↔ DDL 的防漂移测试、`package-info` 补两条约定。
+逐条依据见文末「**Task 7 质量审查轮记录**」。
 
 ### 规格评审轮记录
 
@@ -3887,13 +4055,21 @@ git commit -F <提交信息文件>
 1. **装箱是刻意的**：让「没配目标」在类型上就表示得出，服务层没有机会 unbox、也就没有机会兜底。
    既有调用 `classify(0, 10, 20)` 走**自动装箱**，既有 10 条 classify 断言行**逐字未改**。
 2. **`NOT_CONFIGURED` 与 `UNTRAINED` 是两个不同的事实**：前者「没设目标」，后者「没练」。
-   两者同时被 `missing_target_range_is_its_own_state` 断言到。
-3. **null 短路在校验之前**，由 `null_range_short_circuits_before_validation` 锁死
-   （`classify(5, null, 0)` 返回 `NOT_CONFIGURED` 而不是抛 `max < min`）。
+   两者同时被 `missing_target_range_is_its_own_state_and_short_circuits` 断言到。
+3. **null 短路在校验之前**，由同一条 `missing_target_range_is_its_own_state_and_short_circuits`
+   锁死（`classify(5, null, 0)` 返回 `NOT_CONFIGURED` 而不是抛 `max < min`）。
 4. **不动 schema**：`muscle_group` 的两列**不加 `NOT NULL`**——NULL 正是「未设目标」的表达。
 
 **本轮新增 2 条测试**（已进 fence）：`missing_target_range_is_its_own_state`、
 `null_range_short_circuits_before_validation`。单测 11 → **13**，全量 59 → **61**。
+
+> **后续更正（2026-10-15，Task 7 质量审查轮）**：上面这两条**已合并成一条**
+> `missing_target_range_is_its_own_state_and_short_circuits`。理由是审查的实测：
+> 把 null 短路挪到区间校验之后，**两条同时变红**——「守短路顺序」这件事第 2 条
+> （旧名 `null_range_short_circuits_before_validation`）已经覆盖，
+> 它的边际内容只剩「`(null, 0)` 这种看起来写反的配置不抛异常」，所以合并成一条并在注释里
+> 点明它同时钉两件事。（当时的 13 这个数字因此不变；本轮的 13 → 17 另有其他来源，
+> 见 Step 4b 的账。）
 
 **破坏性评估**：全仓**目前没有任何生产调用方**（`classify(` 只被 `VolumeCalculatorTest` 调用），
 UI 与服务层（Task 9）还没写，所以给 `Status` 加第五个值不会打到任何既有 `switch`。
@@ -3912,6 +4088,23 @@ UI 与服务层（Task 9）还没写，所以给 `Status` 加第五个值不会�
 
 **所以 `default` 分支与那条测试都保留**（分支承载穷尽性、测试守白名单），但不要再以为
 `unknown_role_is_rejected` 在守 `switch`——守它的是上面那个**组合**变异体。
+
+**Task 7 质量审查轮的判定（保留 + 加注释，不删）：**
+
+- 审查实测复核了上表：**只**删掉 `Entry` 的角色白名单时，**只有**
+  `invalid_role_cannot_even_be_constructed` 变红，`unknown_role_is_rejected` **照旧全绿**
+  （异常此时由 `switch default` 抛出，消息里同样有 `tertiary`）——所以旧名「rejected」
+  没错，错的是**以为它在守 switch**。
+- 审查给出两条路：删掉它、或在注释里写明它实际测什么。**本轮选择保留 + 加注释**，且
+  **不改名**，理由是审查自己给的表格里那一行：「组合变异体下**两条同时变红**」。
+  既然这两条在组合变异体下有**相同的检测力**、又各有一个单点的 `Entry` 不变量，
+  删掉一条只会让「非法角色不可表示」这一件事少一个入口断言，换不来任何覆盖面。
+  真正有害的**从来不是这条测试，而是那段误导性的注释**，所以治注释。
+  （原本建议的改写 `accumulate_defends_in_depth_with_its_own_message` 反而更差：
+  它构造 `new Entry(1, 3, "tertiary")` 再断言消息里含 `未知的肌群角色` 与 `tertiary`，
+  与 `invalid_role_is_rejected` **逐字等价**，等于换了个名字的重复测试。）
+- 结论：这条测试**单测不可达**第二道防线，只有组合变异体才杀得掉；它守的是白名单，
+  这一点现在写在测试方法的注释里，也写在 `VolumeCalculator.Entry` 的 Javadoc 里。
 
 #### 3. `bench_press_example_from_the_design_doc` 补 `containsOnlyKeys`
 
@@ -3983,6 +4176,19 @@ UI 与服务层（Task 9）还没写，所以给 `Status` 加第五个值不会�
    用户打错数字应该在**保存那一刻**被告知，而不是几天后整页打不开。
 4. **schema 观察**：`min = max = 0` 时任何 `sets > 0` 都判 `ABOVE`（`sets == 0` 判 `UNTRAINED`），
    所以「不统计这个肌群」**不该**用 0–0 表达，而应该用 **NULL**（即 `NOT_CONFIGURED`）。
+5. **（Task 7 质量审查轮补）`weekly_sets_min` / `weekly_sets_max` 必须成对保存。**
+   设置页保存时拒绝只有一边的配置。读到半个区间视为数据损坏——服务层必须**明确让它响**
+   （或明确显示「配置不完整」），**不得静默当成「未设目标」**。
+   *为什么补这一条*：schema 允许「只配下限」「只配上限」两种**真实**状态（两列各自可空、
+   无成对约束），而 `classify(25, 10, null)` 与 `classify(25, null, 20)` 现在都返回
+   `NOT_CONFIGURED`——等于把「配了一半」这个真实状态**并进了另一个标签**，
+   而用户只填了下限时应用却告诉他「未设目标」。这是本轮审查的 **Important-2**，
+   **本轮不改代码**（改签名要动 `classify`，超出本轮「只加一行守卫」的范围），
+   在 Task 9 写设置页时收口即可。
+6. **（同上的备选，等 Task 9 再定）** 把区间收成一个
+   `record TargetRange(int min, int max)`、`classify(double sets, TargetRange range)`：
+   这样「半个区间」变成**不可表示**的状态，且校验有了落脚点（构造即校验）。
+   现在的 `Integer` 版本保留，因为 `TargetRange` 要多一个类型、调用方多一步构造。
 
 ---
 
@@ -4951,3 +5157,90 @@ cd backend && mvn -B test
 ## 下一步
 
 计划 1 完成后进入 **计划 2：动作库导入与肌群映射**。它需要本计划产出的 `exercise` / `muscle_group` / `exercise_muscle` 三张表与 `ExerciseRepo`。
+
+---
+
+# Task 7 质量审查轮记录（2026-10-15）
+
+> 本节记 **Task 7 的代码质量审查修复**。审查结论：0 Critical / 2 Important / 9 Minor，
+> 批准。改动全部落在 `calc/` 包与 `SchemaTest`，**不动迁移文件、`application.yml`、`pom.xml`、`spike/`**。
+> 测试从 61 → **66**（新增测试方法 5 个、拆出 4 个，见 Step 4b 的账）。
+
+## Important-1：`classify` 补 `sets` 守卫（已改代码）
+
+审查实测：
+
+| 调用 | 改前 | 改后 |
+|---|---|---|
+| `classify(NaN, 10, 20)` | **`IN_RANGE`** | 抛 `IllegalArgumentException: sets 必须是有限且非负的组数，实际为 NaN` |
+| `classify(-5, 10, 20)` | `UNTRAINED`（负组数静默变成「没练」） | 抛 `IllegalArgumentException: … 实际为 -5.0` |
+| `classify(NaN, null, null)` | `NOT_CONFIGURED` | `NOT_CONFIGURED`（**不变**——短路排在守卫之前） |
+
+`NaN → IN_RANGE` 是最危险的一态（「达标」绿）。包内另外三个数值入口都拒 NaN
+（`NutritionCalculator.forGrams`、`Nutrition` 紧凑构造器、`PortionConverter.toGrams`，
+后者还专门用 `!(grams <= MAX_GRAMS)` 的写法吃 NaN）——**只有 `classify` 破了这个口径**。
+
+改法：在 `min == null || max == null` 短路**之后**、区间校验**之前**加一行守卫，
+并把这个**相对顺序**用 `rejects_non_finite_or_negative_sets` 的最后一条断言钉住
+（`classify(Double.NaN, null, null) == NOT_CONFIGURED`：没配目标的肌群不该因为实际值坏了而改抛异常）。
+
+## Important-2：「半个区间」的口径（只写进计划，见 Task 9 约定第 5/6 条）
+
+`classify(25, 10, null)` 与 `classify(25, null, 20)` 都返回 `NOT_CONFIGURED`，
+而 schema 允许「只配下限」「只配上限」两种**真实**状态。详见上面新增的 Task 9 约定
+第 5 条（必须成对保存）与第 6 条（`TargetRange` 备选）。
+
+## Minor 逐条
+
+| # | 位置 | 改法 | 依据（审查实测） |
+|---|---|---|---|
+| M1 | `accumulate` 的 Javadoc + 返回类型实现 | `HashMap` → `LinkedHashMap`；`@return` 写清三条契约（①键序为首次出现序 ②值恒为 0.5 的整数倍 ③缺键 = 0 组）。**返回类型不动** | 审查实测：`HashMap` 是哈希序（既非插入序也非 id 序）；换 `Map.copyOf` 则**连跑 4 次 JVM 得到 4 个不同顺序**，而下游按 `entrySet()` 渲染热力图，**顺序用户可见**。`LinkedHashMap` 与 `PortionConverter.index` 同一口径 |
+| M2 | `Status` | 纯注释：加枚举级 Javadoc（**混了两个维度、禁止依赖 `ordinal()`**）+ 四态各一行说明（尤其 `sets == 0` 是 `UNTRAINED` 而非 `BELOW`）。零代码改动 | `values()` 实测是 `NOT_CONFIGURED(0), UNTRAINED(1), BELOW(2), IN_RANGE(3), ABOVE(4)`——不同维度的态插在「训练量从少到多」的四态前面，写「至少 BELOW」会把「未设目标」算得比「没练」还轻 |
+| M3 | `VolumeCalculatorTest.unknown_role_is_rejected` | **保留 + 加注释说明它实际测什么**（不改名，但注释点明它不守 `switch`）。**理由见下方专节** | 审查实测：只删 `Entry` 的白名单（让非法状态可表示），13 条里**只有** `invalid_role_cannot_even_be_constructed` 变红 |
+| M4 | 两条 null 区间测试 | 合并成 `missing_target_range_is_its_own_state_and_short_circuits`，注释里点明它同时钉两件事 | 审查实测：把 null 短路挪到区间校验之后，**两条同时变红**——短路顺序已被前者覆盖，后者边际内容只剩「`(null, 0)` 不炸」 |
+| M5 | `NutritionCalculatorTest:133` | `hasMessageContaining("null")` → `hasMessageContaining("不能")` + 注释 | 删掉 `sum` 里那行 `Objects.requireNonNull(n, ...)` 后，该文件 **13/13 仍全绿**——JDK 的 NPE 消息（`Cannot invoke "…Nutrition.kcal()" because "n" is null`）本身就含 `null` 字样 |
+| M6 | `Round.java` 类注释 + 文件树 + Step 3b 说明 | 「饮食、训练容量、1RM 三处」→「饮食与 1RM 两处」+ 一句「训练容量不需要：值恒为 0.5 的整数倍」 | 全库 grep：`VolumeCalculator` **一次都没调用** `Round`；`PortionConverter:49-51` 还写了「定标属于显示层，不在这里做」 |
+| M7 | `package-info.java` | 「后续的 `VolumeCalculator.Entry`」→ `{@link PortionConverter.Unit}` / `{@link VolumeCalculator.Entry}` / 后续的 `OneRepMax.Set` | `Entry` 已落地 |
+| M8 | `accumulate` 的 skip-zero 理由 + 对应测试注释 | 换成「对下游只有两种可用状态：有量 / 无量；多出来的 0 值键只会多画一个不该画的热区」 | 「在 map 里且为 0」与「不在 map 里」在 **Map 层面** `containsKey` 分得清清楚楚；分不清的是**按 `entrySet()` 渲染的下游** |
+| M9 | `invalid_role_cannot_even_be_constructed`（4 个不变量）、`rejects_inverted_or_negative_target_range`（2 个） | 按不变量名拆成 4 条 + 2 条（纯加法，**不碰任何断言的期望值**） | 一个方法塞多个不变量，失败时只能靠行号分辨 |
+
+### M3 的判定：为什么保留 `unknown_role_is_rejected` 而不是删掉或改名
+
+审查给了两条路（删掉、或改名 + 注释写明它不守 `switch`），并说「更好的做法是删掉」。
+本轮**判定为保留 + 加注释、不改名**，依据是审查自己那张表里的一行：
+
+| 事实 | 实测 |
+|---|---|
+| 只删 `Entry` 白名单 | 只有 `invalid_role_cannot_even_be_constructed` 变红 |
+| **组合**变异体（放开白名单 + `default` 改成 `0.0`） | `unknown_role_is_rejected` 与 `invalid_role_cannot_even_be_constructed` **双双变红** |
+
+既然两条在组合变异体下检测力相同、又各自绑定一个 `Entry` 不变量，删掉一条只会让
+「非法角色不可表示」少一个入口断言，覆盖面**一点不减**。真正有害的是那段误导性注释。
+另外，审查另一处建议的替代写法 `accumulate_defends_in_depth_with_its_own_message`
+构造的是 `new Entry(1, 3, "tertiary")` 并断言消息含 `未知的肌群角色` 与 `tertiary`，
+与 `invalid_role_is_rejected` **逐字等价**——那是换名字的重复测试，比现状更差。
+
+## 防漂移测试：Java 白名单 ↔ DDL 白名单（已改代码）
+
+`SchemaTest:289-291` 已经逐字断言了 `sqlite_master.sql` 里的
+`CHECK (role IN ('primary', 'secondary'))`，**DB 侧钉死了**；缺的是「Java 侧那份手写拷贝
+== DDL 里那一串」。改法：把 `VolumeCalculator.Entry` 的合法角色集暴露成常量
+（**不改枚举、不动任何签名**）：
+
+```java
+    /** 合法的肌群角色。必须与 V2__training.sql 里 exercise_muscle.role 的 CHECK 一致。 */
+    public static final List<String> VALID_ROLES = List.of("primary", "secondary");
+```
+
+构造器与 `accumulate` 的 `switch` 都引用它；`SchemaTest.role_whitelist_matches_the_ddl`
+从 `ddlOf("exercise_muscle")` 抽出 `role IN (...)` 的值集，与 `VALID_ROLES` **逐项 + 按序**比对。
+两侧双向收口：任何一侧改了、或顺序换了，另一侧就红。
+
+## `package-info.java`：补两条约定 + 修一处措辞
+
+见上面 F 节的第 3/4 条与那条措辞更正：约定三（公开数值入口必须显式拒绝 NaN / ±∞，
+给出 `!Double.isFinite(v)` 与 `!(x <= MAX)` 两种惯用法，理由是已因 NaN 栽过两次）、
+约定四（可空的领域配置不得兜底，必须进入类型或状态）、
+以及约定一的判据从「输入或输出的聚合值」改成「**跨操作复用** vs 只属于单个操作」
+（原措辞与 `Entry` 这个**输入**条目嵌在操作类里的例子打着）。
+

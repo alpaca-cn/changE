@@ -130,6 +130,10 @@ class NutritionCalculatorTest {
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("items");
         assertThatThrownBy(() -> NutritionCalculator.sum(
                 Arrays.asList(RICE_PER_100G, null)))
-                .isInstanceOf(NullPointerException.class).hasMessageContaining("null");
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("不能");
+        // 断言用「不能」而不是「null」：删掉 sum 里那行 Objects.requireNonNull(n, ...) 之后
+        // 仍然会抛 NPE，而 JDK 的消息本身**也含 "null" 字样**
+        // （Cannot invoke "com.change.calc.Nutrition.kcal()" because "n" is null），
+        // 用 "null" 断言就恒真了——实测过，它拦不住「删掉校验」的变异。
     }
 }

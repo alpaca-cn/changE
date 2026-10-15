@@ -1,14 +1,18 @@
 package com.change;
 
+import com.change.calc.VolumeCalculator;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -366,6 +370,42 @@ class SchemaTest {
                         .contains(collapseWhitespace("INTEGER PRIMARY KEY AUTOINCREMENT")));
         assertThat(ddlOf("exercise_muscle")).contains(
                 collapseWhitespace("PRIMARY KEY (exercise_id, muscle_group_id)"));
+    }
+
+    /**
+     * 「Java 侧白名单 == DDL 侧白名单」的防漂移测试。
+     *
+     * 上面那条只钉住了 **DB 侧**（`sqlite_master.sql` 里逐字的
+     * `CHECK (role IN ('primary', 'secondary'))`）。缺的是另一半：
+     * `VolumeCalculator.Entry` 的合法角色集是**另一份手写拷贝**，某一侧改了另一侧不会红。
+     * 这条把两份值集拉在一起逐项比对（含**顺序**——DDL 里写的就是
+     * `'primary', 'secondary'`），任何一侧改动都会失败。
+     *
+     * 将来若合法的肌群角色扩容（比如加 `'stabilizer'`），**两处都要改**：
+     * `V2__training.sql` 的 CHECK 与 `VolumeCalculator.VALID_ROLES`。迁移一旦发布
+     * 就不能再原地改（见本类顶部的说明），所以那种扩容只能新加一份迁移去重建该列的约束。
+     */
+    @Test
+    void role_whitelist_matches_the_ddl() {
+        String ddl = ddlOf("exercise_muscle");
+
+        // 只取 role 那一条 CHECK 的 IN (...) 值集
+        Matcher m = Pattern.compile("role\\s+IN\\s*\\(([^)]*)\\)").matcher(ddl);
+        assertThat(m.find())
+                .as("exercise_muscle 的 DDL 里应当有 role IN (...) 形式的 CHECK：%s", ddl)
+                .isTrue();
+        List<String> fromDdl = new ArrayList<>();
+        Matcher v = Pattern.compile("'([^']*)'").matcher(m.group(1));
+        while (v.find()) {
+            fromDdl.add(v.group(1));
+        }
+
+        assertThat(fromDdl)
+                .as("DDL 里的合法角色集")
+                .isNotEmpty();
+        assertThat(VolumeCalculator.VALID_ROLES)
+                .as("Java 侧 VALID_ROLES 必须与 exercise_muscle.role 的 CHECK 逐项一致")
+                .containsExactlyElementsOf(fromDdl);
     }
 
     // ------------------------------------------------------------------

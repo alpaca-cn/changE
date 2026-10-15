@@ -56,9 +56,47 @@ class VolumeCalculatorTest {
 
     @Test
     void unknown_role_is_rejected() {
+        // ⚠️ 本测试守的是 **Entry 的白名单**，不是 accumulate 的 switch default。
+        // 实测：只删掉 Entry 的 role 白名单（让非法状态可表示）时，本测试**照旧全绿**
+        // ——异常此时由 accumulate 的 switch default 抛出，消息里有 "tertiary"。
+        // 真正守住 switch 那条纵深防线的是**组合变异体**（同时放开白名单 + 把 default
+        // 改成 0.0），那时本测试与 invalid_role_is_rejected 才会一起变红。
+        // 第 2 道防线为何保留、以及为什么它单测不可达，见计划「规格评审轮记录」第 2 节。
         assertThatThrownBy(() -> VolumeCalculator.accumulate(List.of(entry(1, 3, "tertiary"))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("tertiary");
+    }
+
+    @Test
+    void invalid_role_is_rejected() {
+        // 与 Unit 同一条思路：让非法状态不可表示，比在下游补救更早。
+        // 白名单取自 VolumeCalculator.VALID_ROLES（与 V2__training.sql 的 CHECK 两侧收口）。
+        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, 3, "tertiary"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tertiary");
+    }
+
+    @Test
+    void null_role_is_rejected_before_the_whitelist() {
+        // 顺序是有意的：若把 null 检查放到白名单之后，消息会变成「未知的肌群角色: null」
+        // ——那是**另一条**信息（分不清「没填」与「填错」）。
+        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, 3, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("role");
+    }
+
+    @Test
+    void non_positive_muscle_id_is_rejected() {
+        assertThatThrownBy(() -> new VolumeCalculator.Entry(0, 3, "primary"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("muscleId");
+    }
+
+    @Test
+    void negative_sets_on_an_entry_is_rejected() {
+        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, -1, "primary"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("sets");
     }
 
     @Test
@@ -70,26 +108,9 @@ class VolumeCalculatorTest {
     }
 
     @Test
-    void invalid_role_cannot_even_be_constructed() {
-        // 与 Unit 同一条思路：让非法状态不可表示，比在下游补救更早。
-        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, 3, "tertiary"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("tertiary");
-        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, 3, null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("role");
-        assertThatThrownBy(() -> new VolumeCalculator.Entry(0, 3, "primary"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("muscleId");
-        assertThatThrownBy(() -> new VolumeCalculator.Entry(1, -1, "primary"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("sets");
-    }
-
-    @Test
     void zero_set_contribution_does_not_create_a_key() {
-        // 「不在 map 里」= 未训练；「在 map 里且为 0」= 练了 0 组。
-        // 后者无法与前者区分，而 UI 是按键渲染的，会让该肌群出现在图上。
+        // 对下游只有两种可用状态：有量 / 无量。若建了 0 值键，按 entrySet() 渲染的
+        // 热力图就会多画一个不该画的热区。
         assertThat(VolumeCalculator.accumulate(List.of(entry(1, 0, "primary")))).isEmpty();
         assertThat(VolumeCalculator.accumulate(List.of(
                 entry(1, 0, "primary"),
@@ -118,15 +139,32 @@ class VolumeCalculatorTest {
     }
 
     @Test
-    void rejects_inverted_or_negative_target_range() {
+    void rejects_inverted_target_range() {
         // 区间写反时会静默返回 BELOW（5 < 20 为真），给出一个看起来合理的错答案。
         assertThatThrownBy(() -> VolumeCalculator.classify(5, 20, 10))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("min=20")
                 .hasMessageContaining("max=10");
+    }
+
+    @Test
+    void rejects_negative_target_range_lower_bound() {
         assertThatThrownBy(() -> VolumeCalculator.classify(5, -1, 20))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("下限");
+    }
+
+    @Test
+    void rejects_non_finite_or_negative_sets() {
+        // NaN 会同时绕过 sets<=0 / sets<min / sets>max 三个比较，落到 return IN_RANGE，
+        // 给出「达标」这个最危险的错答案；负组数会静默变成「没练」。
+        assertThatThrownBy(() -> VolumeCalculator.classify(Double.NaN, 10, 20))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sets");
+        assertThatThrownBy(() -> VolumeCalculator.classify(-5, 10, 20))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sets");
+        // 未配目标时优先报「未配目标」，而不是因为 sets 坏掉而抛异常
+        assertThat(VolumeCalculator.classify(Double.NaN, null, null))
+                .isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
     }
 
     @Test
@@ -139,8 +177,11 @@ class VolumeCalculatorTest {
     }
 
     @Test
-    void missing_target_range_is_its_own_state() {
-        // 「没配目标」与「没练」是两个不同的事实。若把 null unbox 成 0：
+    void missing_target_range_is_its_own_state_and_short_circuits() {
+        // 这条测试钉两件事（原先分在两条方法里，而实测「把 null 短路挪到区间校验之后」
+        // 会让**两条同时变红**——边际内容只剩第二件，所以合并）：
+        //
+        // ①「没配目标」与「没练」是两个不同的事实。若把 null unbox 成 0：
         //   下限 0 → 「练得不够」永久消失；上限 0 → 撞上 max<min 全页抛异常；
         //   两者皆 0 → 任何训练量都判 ABOVE。
         assertThat(VolumeCalculator.classify(25, null, 20)).isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
@@ -148,11 +189,8 @@ class VolumeCalculatorTest {
         assertThat(VolumeCalculator.classify(0, null, null)).isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
         // 与真正的「没练」区分开
         assertThat(VolumeCalculator.classify(0, 10, 20)).isEqualTo(VolumeCalculator.Status.UNTRAINED);
-    }
-
-    @Test
-    void null_range_short_circuits_before_validation() {
-        // 未配目标时不该校验区间（否则一个 NULL 上限会变成整页异常）
+        // ② null 短路**排在区间校验之前**：`(null, 0)` 这种看起来写反的配置（max=0 < min 兜底）
+        //   不该抛异常，而应直接回报「未设目标」——否则一个 NULL 上限就足以让整页打不开。
         assertThat(VolumeCalculator.classify(5, null, 0)).isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
     }
 }
