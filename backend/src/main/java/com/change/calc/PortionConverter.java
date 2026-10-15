@@ -44,8 +44,20 @@ public final class PortionConverter {
     }
 
     /**
-     * @param amount 份量数值
+     * 把份量折成克数。
+     *
+     * 返回的是**未定标的原始乘积**：定标（两位小数）属于显示层，不在这里做——
+     * 先舍再累加会引入有方向性的系统偏差，而且会让「份量录入」与「直接填克数」
+     * 两条路径显示的热量不再一致（见 package-info 的约定二）。
+     *
+     * @param amount 份量数值；必须为正——{@code meal_item.amount} 是
+     *               {@code CHECK (amount > 0)}，0 克份量的记录注定写不进去，
+     *               在这里拒绝它只是把失败提前到录入那一刻
      * @param unit   单位名；传 null（或空串/纯空白）表示 amount 本身就是克数
+     * @param units  该食物的份量单位表；仅当 unit 需要查表时使用
+     * @return 克数；上界与 {@link NutritionCalculator#forGrams} 共用
+     *         {@link NutritionCalculator#MAX_GRAMS}，上游放行、下游拒绝的缝隙会
+     *         产生「份量存得下、热量算不出来」的记录
      */
     public static double toGrams(double amount, String unit, List<Unit> units) {
         // NaN < 0 是 false，所以少了这条有限性校验的话 NaN 会一路流到 forGrams：
@@ -54,8 +66,9 @@ public final class PortionConverter {
         if (!Double.isFinite(amount)) {
             throw new IllegalArgumentException("amount 必须是有限值，实际为 " + amount);
         }
-        if (amount < 0) {
-            throw new IllegalArgumentException("amount 不能为负: " + amount);
+        // 对齐 schema：meal_item.amount 是 CHECK (amount > 0)，与 Unit.grams 的 grams <= 0 同一口径。
+        if (amount <= 0) {
+            throw new IllegalArgumentException("amount 必须为正: " + amount);
         }
         if (unit == null || unit.isBlank()) {
             return amount;
@@ -67,7 +80,14 @@ public final class PortionConverter {
                     "未知的份量单位「" + unit + "」；该食物可用的单位: "
                             + String.join("、", idx.keySet()));
         }
-        return amount * gramsPerUnit;
+        double grams = amount * gramsPerUnit;
+        if (!(grams <= NutritionCalculator.MAX_GRAMS)) {
+            // 写成 !(grams <= MAX) 而不是 grams > MAX，是因为 NaN 与 > 比较恒为 false。
+            // 本类已有的 NaN 处理用的是同一个套路。
+            throw new IllegalArgumentException(
+                    "换算后的克数超出单次录入上限 " + NutritionCalculator.MAX_GRAMS + ": " + grams);
+        }
+        return grams;
     }
 
     /**

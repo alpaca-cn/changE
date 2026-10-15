@@ -40,13 +40,14 @@ class PortionConverterTest {
         assertThatThrownBy(() -> PortionConverter.toGrams(1, "碗半", RICE_UNITS))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("碗半")
-                // 整段列表：光断言 "碗" 是恒真的（非法输入 "碗半" 里就有它），
-                // 断言 "勺" 也只能挡住「列表被整个删掉」，挡不住「列表只剩一种」。
-                .hasMessageContaining("可用的单位: 碗、勺");
+                // 拆成两条：断言整段提示文本（含全角冒号与空格）会跟实现措辞串在一起，
+                // 改一个空格两边一起红。这里锁的是「列表出现过」与「列表内容与顺序」两件事。
+                .hasMessageContaining("可用的单位")
+                .hasMessageContaining("碗、勺");
     }
 
     @Test
-    void three_conversion_paths_agree() {
+    void three_entry_paths_yield_the_same_grams() {
         // 这是设计文档里点名的必测边界：三种录入路径结果必须一致
         double byBowl   = PortionConverter.toGrams(1, "碗", RICE_UNITS);       // 1 碗
         double bySpoon  = PortionConverter.toGrams(10, "勺", RICE_UNITS);      // 10 勺
@@ -60,7 +61,7 @@ class PortionConverterTest {
     void decimal_amounts_agree_within_tolerance() {
         // 逐位相等只在「份量是 2 的幂」时成立：0.07 碗 × 150 = 10.500000000000002，
         // 而直接录 10.5 克得到 10.5——差 1 ulp。这里锁的是真实不变量（近似相等），
-        // 逐位相等那条由 three_conversion_paths_agree 覆盖（它在整数份量下成立）。
+        // 逐位相等那条由 three_entry_paths_yield_the_same_grams 覆盖（它在整数份量下成立）。
         assertThat(PortionConverter.toGrams(0.07, "碗", RICE_UNITS))
                 .isCloseTo(10.5, within(1e-9));
         assertThat(PortionConverter.toGrams(1.11, "勺", RICE_UNITS))
@@ -68,7 +69,17 @@ class PortionConverterTest {
     }
 
     @Test
-    void builds_unit_index_from_rows() {
+    void rejects_conversions_above_the_single_entry_limit() {
+        // 上游无上限、下游 forGrams 有 MAX_GRAMS=5000，缝隙会让
+        // 「份量存得下、热量算不出来」的记录落库（meal_item 两头都收）。
+        assertThat(PortionConverter.toGrams(33.33, "碗", RICE_UNITS)).isEqualTo(4999.5);
+        assertThatThrownBy(() -> PortionConverter.toGrams(33.34, "碗", RICE_UNITS))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("5000");
+    }
+
+    @Test
+    void index_maps_each_unit_name_to_its_grams() {
         Map<String, Double> idx = PortionConverter.index(RICE_UNITS);
         assertThat(idx).containsEntry("碗", 150.0).containsEntry("勺", 15.0);
     }
@@ -109,6 +120,14 @@ class PortionConverterTest {
     void index_rejects_null_list() {
         assertThatThrownBy(() -> PortionConverter.index(null))
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("units");
+    }
+
+    @Test
+    void rejects_zero_amount_aligning_with_schema() {
+        // meal_item.amount 是 CHECK (amount > 0)，0 克份量的记录注定写不进去；
+        // 让 toGrams 当它合法只会把失败推迟到落库那一刻。Unit.grams 用的是同一个口径。
+        assertThatThrownBy(() -> PortionConverter.toGrams(0, "碗", RICE_UNITS))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("amount");
     }
 
     @Test

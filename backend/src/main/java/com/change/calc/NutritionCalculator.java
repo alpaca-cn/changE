@@ -22,6 +22,11 @@ public final class NutritionCalculator {
     }
 
     public static Nutrition forGrams(Nutrition per100g, double grams) {
+        // NaN 会同时绕过 < 0 与 > MAX_GRAMS 两个判断，一路走到 Round.to2 变成 0.0
+        // ——「一餐安静地显示 0 kcal」。这条校验与 Nutrition 紧凑构造器的口径一致。
+        if (!Double.isFinite(grams)) {
+            throw new IllegalArgumentException("grams 必须是有限值，实际为 " + grams);
+        }
         if (grams < 0) {
             throw new IllegalArgumentException("grams 不能为负: " + grams);
         }

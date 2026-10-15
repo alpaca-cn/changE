@@ -87,6 +87,16 @@ class NutritionCalculatorTest {
     }
 
     @Test
+    void rejects_non_finite_grams() {
+        // NaN 会同时绕过 < 0 与 > MAX_GRAMS 两个判断，一路走到 Round.to2
+        // 变成 0.0——「一餐安静地显示 0 kcal」。
+        assertThatThrownBy(() -> NutritionCalculator.forGrams(RICE_PER_100G, Double.NaN))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("grams");
+        assertThatThrownBy(() -> NutritionCalculator.forGrams(RICE_PER_100G, Double.POSITIVE_INFINITY))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("grams");
+    }
+
+    @Test
     void rejects_non_finite_and_negative_nutrition() {
         // NaN 经 round2 会变成 0.0（一餐安静地显示 0 kcal）；
         // ∞ 会被饱和成 9.2e16。两者都必须在构造时就拦住。

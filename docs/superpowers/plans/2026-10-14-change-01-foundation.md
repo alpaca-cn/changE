@@ -2163,6 +2163,16 @@ class NutritionCalculatorTest {
     }
 
     @Test
+    void rejects_non_finite_grams() {
+        // NaN 会同时绕过 < 0 与 > MAX_GRAMS 两个判断，一路走到 Round.to2
+        // 变成 0.0——「一餐安静地显示 0 kcal」。
+        assertThatThrownBy(() -> NutritionCalculator.forGrams(RICE_PER_100G, Double.NaN))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("grams");
+        assertThatThrownBy(() -> NutritionCalculator.forGrams(RICE_PER_100G, Double.POSITIVE_INFINITY))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("grams");
+    }
+
+    @Test
     void rejects_non_finite_and_negative_nutrition() {
         // NaN 经 round2 会变成 0.0（一餐安静地显示 0 kcal）；
         // ∞ 会被饱和成 9.2e16。两者都必须在构造时就拦住。
@@ -2333,6 +2343,11 @@ public final class NutritionCalculator {
     }
 
     public static Nutrition forGrams(Nutrition per100g, double grams) {
+        // NaN 会同时绕过 < 0 与 > MAX_GRAMS 两个判断，一路走到 Round.to2 变成 0.0
+        // ——「一餐安静地显示 0 kcal」。这条校验与 Nutrition 紧凑构造器的口径一致。
+        if (!Double.isFinite(grams)) {
+            throw new IllegalArgumentException("grams 必须是有限值，实际为 " + grams);
+        }
         if (grams < 0) {
             throw new IllegalArgumentException("grams 不能为负: " + grams);
         }
@@ -2423,7 +2438,8 @@ Task 8 的 `OneRepMax` fence 里已经是一份**逐字相同**的拷贝。
 
 Run: `cd backend && mvn -B test -Dtest=NutritionCalculatorTest`
 
-Expected: `Tests run: 12, Failures: 0, Errors: 0`（8 + 质量审查轮新增 4 条）
+Expected: `Tests run: 13, Failures: 0, Errors: 0`（8 + 质量审查轮新增 4 条 + 本轮 Minor-2 的 1 条）
+（**本轮新增**：`rejects_non_finite_grams`——`forGrams` 补上有限性校验，关掉 Task 5 的欠账，见「遗留」。）
 
 **实测（2026-10-15）**：`Tests run: 6, Failures: 0, Errors: 0, Skipped: 0`，
 耗时 **0.115 s**——纯类、无 Spring 上下文，符合「`calc/` 不依赖框架」的设计意图
@@ -2441,6 +2457,11 @@ Expected: `Tests run: 12, Failures: 0, Errors: 0`（8 + 质量审查轮新增 4 
 > `sum_rejects_null_list_and_null_elements`。
 > **既有 26 条断言行逐字未动**（用脚本对比 HEAD 版本与当前版本的断言行集合：
 > HEAD 的 26 行全部原样保留，新增的 18 行全部来自上述 4 个新方法）。
+>
+> **三补记（2026-10-15，Task 6 质量审查放行轮）**：`forGrams` 补上有限性校验后，
+> 该文件为 **13 条**（12 + `rejects_non_finite_grams`）。上面的 `Tests run: 12` 与
+> M3′/M7′/M10′ 表里的 `Tests run: 12` 都是**当时那一次**的实测记录，**不改写历史**；
+> 需要引用**当前**条数时用 13。
 
 **Step 4b（原始计划没有，为回答「有没有恒真断言」而补做）：变异测试**
 
@@ -2539,7 +2560,9 @@ git commit -m "feat: 热量计算（每 100 克基准 + 实时换算），含份
 
 Run: `cd backend && mvn -B clean test`
 
-Expected（质量审查轮更新后）: `Tests run: 32, Failures: 0, Errors: 0`
+Expected（质量审查轮更新后）: `Tests run: 33, Failures: 0, Errors: 0`
+（**本轮再更新**：Task 6 轮给 `forGrams` 补了 `rejects_non_finite_grams`，本任务贡献从 12 条变 13 条，
+故 32 → 33。下面的 26 / 28 / 32 都是历次实测记录，保留原样。）
 
 **实测（2026-10-15）**：`Tests run: 26, Failures: 0, Errors: 0, Skipped: 0`——
 **26 = 原 20 + 本任务 6**，与预期一致。六个测试类逐项：
@@ -2561,6 +2584,10 @@ Expected（质量审查轮更新后）: `Tests run: 32, Failures: 0, Errors: 0`
 `NutritionCalculatorTest` **12**、`SchemaTest` 8、`MigrationTest` 5、
 `DataDirectoryInitializerTest` 3、`ChangeApplicationTests` 2、`TrainingRepoTest` 2。
 **新增的 4 条全是新方法，既有期望值一个都没改。**
+（**⚠️ 这一条里的 `NutritionCalculatorTest` 12 与上面那条 Expected 的 32，是**当时**的记录；
+Task 6 质量审查放行轮给它补了 `rejects_non_finite_grams`，所以当前是 **13** 与 **33**——
+`Test 6` 的 Step 5 早就按 12 写了总数，是本文件内部两个数字对不上 45 的那处笔误的来源，
+本轮一并按实测订正，见 Task 6 Step 5。）
 
 ### 期望值独立核算（不照抄，用 IEEE-754 逐位验证）
 
@@ -2715,12 +2742,20 @@ M17 让两份量同值，第 31 行的 `oneAndHalf == 261.0` 先红，**第 32 �
 **建议保留**（它是意图声明，不是检测手段）。本次仍**不改测试的期望值**，
 只补了两个测试方法与 `sums_a_meal` 的 4 行断言。
 
+> **补记（2026-10-15，Task 6 质量审查放行轮）**：本任务记在 Task 6「遗留」里的那条欠账
+> **`forGrams(grams = NaN)` 放行 NaN**（`NaN < 0` 与 `NaN > MAX_GRAMS` 都是 `false`）
+> **本轮已关**：`forGrams` 开头补了 `if (!Double.isFinite(grams)) throw …`
+> （放在上限校验之前），配套测试 `rejects_non_finite_grams`。
+> **只加这一条校验，`Round.to2` 与六个分量的换算都没碰。**
+> 本任务 Step 4 / Step 5 的条数随之从 12 → 13、32 → 33。
+
 ---
 
 ## Task 6: 份量单位换算（核心）
 
 **Files:**
 - Create: `backend/src/main/java/com/change/calc/PortionConverter.java`
+- Create: `backend/src/main/java/com/change/calc/package-info.java`（质量审查轮新增：把两条只活在示例里的包内约定写下来，见 F）
 - Test: `backend/src/test/java/com/change/calc/PortionConverterTest.java`
 
 - [x] **Step 1: 写失败的测试**
@@ -2768,13 +2803,14 @@ class PortionConverterTest {
         assertThatThrownBy(() -> PortionConverter.toGrams(1, "碗半", RICE_UNITS))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("碗半")
-                // 整段列表：光断言 "碗" 是恒真的（非法输入 "碗半" 里就有它），
-                // 断言 "勺" 也只能挡住「列表被整个删掉」，挡不住「列表只剩一种」。
-                .hasMessageContaining("可用的单位: 碗、勺");
+                // 拆成两条：断言整段提示文本（含全角冒号与空格）会跟实现措辞串在一起，
+                // 改一个空格两边一起红。这里锁的是「列表出现过」与「列表内容与顺序」两件事。
+                .hasMessageContaining("可用的单位")
+                .hasMessageContaining("碗、勺");
     }
 
     @Test
-    void three_conversion_paths_agree() {
+    void three_entry_paths_yield_the_same_grams() {
         // 这是设计文档里点名的必测边界：三种录入路径结果必须一致
         double byBowl   = PortionConverter.toGrams(1, "碗", RICE_UNITS);       // 1 碗
         double bySpoon  = PortionConverter.toGrams(10, "勺", RICE_UNITS);      // 10 勺
@@ -2788,7 +2824,7 @@ class PortionConverterTest {
     void decimal_amounts_agree_within_tolerance() {
         // 逐位相等只在「份量是 2 的幂」时成立：0.07 碗 × 150 = 10.500000000000002，
         // 而直接录 10.5 克得到 10.5——差 1 ulp。这里锁的是真实不变量（近似相等），
-        // 逐位相等那条由 three_conversion_paths_agree 覆盖（它在整数份量下成立）。
+        // 逐位相等那条由 three_entry_paths_yield_the_same_grams 覆盖（它在整数份量下成立）。
         assertThat(PortionConverter.toGrams(0.07, "碗", RICE_UNITS))
                 .isCloseTo(10.5, within(1e-9));
         assertThat(PortionConverter.toGrams(1.11, "勺", RICE_UNITS))
@@ -2796,7 +2832,17 @@ class PortionConverterTest {
     }
 
     @Test
-    void builds_unit_index_from_rows() {
+    void rejects_conversions_above_the_single_entry_limit() {
+        // 上游无上限、下游 forGrams 有 MAX_GRAMS=5000，缝隙会让
+        // 「份量存得下、热量算不出来」的记录落库（meal_item 两头都收）。
+        assertThat(PortionConverter.toGrams(33.33, "碗", RICE_UNITS)).isEqualTo(4999.5);
+        assertThatThrownBy(() -> PortionConverter.toGrams(33.34, "碗", RICE_UNITS))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("5000");
+    }
+
+    @Test
+    void index_maps_each_unit_name_to_its_grams() {
         Map<String, Double> idx = PortionConverter.index(RICE_UNITS);
         assertThat(idx).containsEntry("碗", 150.0).containsEntry("勺", 15.0);
     }
@@ -2837,6 +2883,14 @@ class PortionConverterTest {
     void index_rejects_null_list() {
         assertThatThrownBy(() -> PortionConverter.index(null))
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("units");
+    }
+
+    @Test
+    void rejects_zero_amount_aligning_with_schema() {
+        // meal_item.amount 是 CHECK (amount > 0)，0 克份量的记录注定写不进去；
+        // 让 toGrams 当它合法只会把失败推迟到落库那一刻。Unit.grams 用的是同一个口径。
+        assertThatThrownBy(() -> PortionConverter.toGrams(0, "碗", RICE_UNITS))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("amount");
     }
 
     @Test
@@ -2909,8 +2963,20 @@ public final class PortionConverter {
     }
 
     /**
-     * @param amount 份量数值
+     * 把份量折成克数。
+     *
+     * 返回的是**未定标的原始乘积**：定标（两位小数）属于显示层，不在这里做——
+     * 先舍再累加会引入有方向性的系统偏差，而且会让「份量录入」与「直接填克数」
+     * 两条路径显示的热量不再一致（见 package-info 的约定二）。
+     *
+     * @param amount 份量数值；必须为正——{@code meal_item.amount} 是
+     *               {@code CHECK (amount > 0)}，0 克份量的记录注定写不进去，
+     *               在这里拒绝它只是把失败提前到录入那一刻
      * @param unit   单位名；传 null（或空串/纯空白）表示 amount 本身就是克数
+     * @param units  该食物的份量单位表；仅当 unit 需要查表时使用
+     * @return 克数；上界与 {@link NutritionCalculator#forGrams} 共用
+     *         {@link NutritionCalculator#MAX_GRAMS}，上游放行、下游拒绝的缝隙会
+     *         产生「份量存得下、热量算不出来」的记录
      */
     public static double toGrams(double amount, String unit, List<Unit> units) {
         // NaN < 0 是 false，所以少了这条有限性校验的话 NaN 会一路流到 forGrams：
@@ -2919,8 +2985,9 @@ public final class PortionConverter {
         if (!Double.isFinite(amount)) {
             throw new IllegalArgumentException("amount 必须是有限值，实际为 " + amount);
         }
-        if (amount < 0) {
-            throw new IllegalArgumentException("amount 不能为负: " + amount);
+        // 对齐 schema：meal_item.amount 是 CHECK (amount > 0)，与 Unit.grams 的 grams <= 0 同一口径。
+        if (amount <= 0) {
+            throw new IllegalArgumentException("amount 必须为正: " + amount);
         }
         if (unit == null || unit.isBlank()) {
             return amount;
@@ -2932,7 +2999,14 @@ public final class PortionConverter {
                     "未知的份量单位「" + unit + "」；该食物可用的单位: "
                             + String.join("、", idx.keySet()));
         }
-        return amount * gramsPerUnit;
+        double grams = amount * gramsPerUnit;
+        if (!(grams <= NutritionCalculator.MAX_GRAMS)) {
+            // 写成 !(grams <= MAX) 而不是 grams > MAX，是因为 NaN 与 > 比较恒为 false。
+            // 本类已有的 NaN 处理用的是同一个套路。
+            throw new IllegalArgumentException(
+                    "换算后的克数超出单次录入上限 " + NutritionCalculator.MAX_GRAMS + ": " + grams);
+        }
+        return grams;
     }
 
     /**
@@ -2963,20 +3037,26 @@ public final class PortionConverter {
 
 Run: `cd backend && mvn -B test -Dtest=PortionConverterTest`
 
-Expected: `Tests run: 13, Failures: 0, Errors: 0`
-（原计划是 7；本轮按质量审查要求补了 A4 的 4 条校验测试：`rejects_non_finite_or_negative_amount`、
+Expected: `Tests run: 16, Failures: 0, Errors: 0`
+（原计划是 7；质量审查轮补了 A4 的 4 条校验测试：`rejects_non_finite_or_negative_amount`、
 `rejects_invalid_unit_definitions`、`blank_unit_is_treated_as_grams`、`index_rejects_null_list`；
-本轮修恒真断言时又补了 2 条：`decimal_amounts_agree_within_tolerance`、
-`index_rejects_duplicate_unit_names`，共 11 → 13。）
+修恒真断言时又补了 2 条：`decimal_amounts_agree_within_tolerance`、
+`index_rejects_duplicate_unit_names`；本轮关放行条件与 3 条 Minor 时再补 3 条：
+`rejects_conversions_above_the_single_entry_limit`（放行条件 1）、
+`rejects_zero_amount_aligning_with_schema`（Minor-3）、
+以及把 `unknown_unit_is_rejected_with_a_useful_message` 的整段断言拆成两条（Minor-4b，条数不变）。共 7 → 11 → 13 → 16。）
 
 - [x] **Step 5: 全量回归**
 
 Run: `cd backend && mvn -B test`
 
-Expected: **`Tests run: 45, Failures: 0, Errors: 0`**（原 32 + 本任务 13）。
-逐项应为：`NutritionCalculatorTest` 12、`PortionConverterTest` 13、
+Expected: **`Tests run: 48, Failures: 0, Errors: 0`**（原 32 + 本任务 16）。
+逐项应为：`NutritionCalculatorTest` 13、`PortionConverterTest` 16、
 `SchemaTest` 8、`MigrationTest` 5、`DataDirectoryInitializerTest` 3、
 `ChangeApplicationTests` 2、`TrainingRepoTest` 2。
+（**本轮实际为 48，而不是任务书写明的 49**：那个 49 是按「`NutritionCalculatorTest` 原本 12 条」
+推的，实测该文件在本轮之前就已经是 13 条——所以 45 = 13 + 12 + 8 + 5 + 3 + 2 + 2，
+新增 4 条后是 13 + 16 + 8 + 5 + 3 + 2 + 2 = **48**。以 `mvn` 的实际输出为准。）
 
 - [x] **Step 6: 提交**
 
@@ -2988,40 +3068,70 @@ git commit -m "feat: 份量单位换算，含「三种录入路径结果一致�
 ### A. 校验标准（与 Task 5 同一套，本轮已落地）
 
 按 Task 5 确立的标准，第一轮在 `PortionConverter` 上补了 4 处（均为**新增**，未改任何既有期望值）；
-本轮（修恒真断言）又补了 2 条测试、改了 1 条既有断言与 3 处注释，并按下文审查实测修正了 A1/A2 的说明：
+修恒真断言轮又补了 2 条测试、改了 1 条既有断言与 3 处注释，并按下文审查实测修正了 A1/A2 的说明；
+**本轮（质量审查放行）**再补 2 处：`toGrams` 的乘积上界（**放行条件 1**，见 A2-补）与
+`amount` 口径从 `>= 0` 放行收紧成 `<= 0` 抛（**Minor-3**，见 A2 的边界）：
 
 | # | 位置 | 加的是什么 | 为什么 |
 | --- | --- | --- | --- |
 | A1 | `Unit` 紧凑构造器 | `name` 非空、`grams` 有限且 `> 0` | 把对象层对齐到 `food_portion` 的既有 schema（`unit_name NOT NULL`、`grams REAL NOT NULL CHECK (grams > 0)`）。**它校验的是值，不校验名字唯一性**——名字唯一由 DB 的 `ux_food_portion` 保证，而那个约束管不到手工拼的列表，所以 Java 侧的第二道防线是本轮新加的「`index()` 检出重复即抛异常」 |
-| A2 | `toGrams` 的 `amount` | `Double.isFinite` + 非负 | `NaN < 0` 是 `false`，不拦则一路流到 `forGrams`：`Math.round(NaN)` 是 `0` ⇒ `Round.to2(NaN)` 是 `0.0`，最终**静默显示 0 kcal**（比显示 NaN 更糟，见下） |
+| A2 | `toGrams` 的 `amount` | `Double.isFinite` + **正数**（`amount <= 0` 即抛） | `NaN < 0` 是 `false`，不拦则一路流到 `forGrams`：`Math.round(NaN)` 是 `0` ⇒ `Round.to2(NaN)` 是 `0.0`，最终**静默显示 0 kcal**（比显示 NaN 更糟，见下）。正数口径对齐 `meal_item.amount CHECK (amount > 0)`，与 `Unit.grams` 的 `grams <= 0` 同一套 |
+| A2-补 | `toGrams` 的**乘积** | `!(grams <= NutritionCalculator.MAX_GRAMS)` 即抛，**与下游共用同一个常量** | **放行条件 1**：上游原本只有下界，下游 `forGrams` 有 `MAX_GRAMS = 5000`，中间那条缝隙能让「份量存得下、热量算不出来」的记录落库（`meal_item` 两头都收，见下） |
 | A3 | `index` 的 `units` | `Objects.requireNonNull` | 与 `sum(items)` 同一套写法 |
-| A4 | 测试 | 第一轮 4 条 + 本轮 2 条（见 Step 1） | 单测 7 → 11 → 13，全量 32 → 43 → 45 |
+| A4 | 测试 | 第一轮 4 条 + 修断言轮 2 条 + 本轮 3 条（见 Step 1） | 单测 7 → 11 → 13 → 16，全量 32 → 43 → 45 → 48 |
 
 **A1 不挡合法场景的第一个证据**：`food_portion.grams` 上本来就有 `CHECK (grams > 0)` 与 `NOT NULL`，
 所以「某个单位暂时没称过、先记 0 克」在 **DB 层就已经不可能**。Java 侧这道校验是把对象层对齐到既有 schema，
 不是新增限制——DB 愿意接受的每一行，`Unit` 也都接受。
 
-**A2 的边界**：`0 * 15 = 0.0` 是有限值，所以 **`amount = 0`（份量填 0）在 `toGrams` 这一层仍然走得通、不被拦**；
-被 A1 拦下的是 `new Unit("勺", 0)`，也就是「某个单位先记 0 克」——**两者是不同的东西，不要混**
-（`grams = 0` 正是 A1 里刚宣布要拒掉的那个值）。再往前一步，`meal_item.amount` 自己有
-`CHECK (amount > 0)`，所以 `amount = 0` 到落库那一步仍会被 DB 拦下。
-另外本轮**只**改 `PortionConverter`，`NutritionCalculator.forGrams(grams = NaN)` 那条同源缺陷仍在，见下方「遗留」。
+**A2 的边界（本轮 Minor-3 已改）**：原实现在 `amount` 上是 `>= 0` 放行，即
+`toGrams(0, "碗", units) = 0.0` 走得通，而 `meal_item.amount` 是 `CHECK (amount > 0)`，
+落库时必然被拒——**同一层校验两种口径**，且把失败推迟到落库那一刻。
+**本轮改为 `amount <= 0` 即抛**（`amount 必须为正: 0.0`），与 `Unit.grams` 的
+`grams <= 0` 同理、同口径：DB 愿意接受的 `amount`，`toGrams` 都接受；被 `toGrams` 拦下的值在 DB 侧同样进不去。
+`toGrams(150, null, units)` 这类正常路径不受影响（`150 > 0`）。
+**没有「先占位、稍后填量」的合法场景被挡**：`meal_item.amount` 是 `NOT NULL CHECK (amount > 0)`，
+这样的草稿行本来就写不进库（与 A1 拒掉 `grams = 0` 是同一条理由）。
 
-**A2 的硬价值（审查实测，比它自己写的理由更硬）**——它拦下的两个值在 DB 层的待遇并不一样：
+**A2 的真实价值（审查实测，本轮按实测口径下调）**——它挡的是「**NaN 静默变 0 kcal**」那一半：
 
-| 写入 `meal_item.grams` | DB 的反应（用 V3/V4 真实迁移建库实测） |
+| 实测项 | 结果 |
 | --- | --- |
-| `NaN` | **REJECTED**: `NOT NULL constraint failed: meal_item.grams`（SQLite 把 NaN 存成 NULL） |
-| `+Infinity` | **accepted**，落库为 `inf`（`CHECK (grams > 0)` 判 `+inf > 0` 为真，**放行**） |
+| DB 对 `NaN` | **REJECTED**：`NOT NULL constraint failed: meal_item.grams`（SQLite 把 NaN 存成 NULL） |
+| DB 对 `+Infinity` | **ACCEPTED**，落库为 `Inf`（`CHECK (grams > 0)` 判 `+inf > 0` 为真，放行） |
+| `forGrams(RICE, Infinity)` | **REJECTED**：`grams 超出上限 5000.0: Infinity` |
 
-也就是说：DB 自己堵住了 NaN，却**放行 `+Infinity`**，而 A2 恰好补上了这一格。
-没有 A2 的话，一个无限大的份量会顺利落库，再以 `inf` 的形式变成热量显示出来。
+**「DB 拒 NaN 却放行 +Infinity」这条静态对比仍然复现，但它撑不起原先那个结论**，两点修正：
 
-**但 A2 只挡住了「输入是无限/NaN」这一半**：它校验的是**入参 `amount`**，不是**乘积**。
-实测 `toGrams(1e307, "碗", units)` 通过校验后 `1e307 * 150.0` 溢出成 `+Infinity`
-（`1e307`、`1e308`、`Double.MAX_VALUE` 都放行并返回 `Infinity`），于是那一格 DB 照样收得下。
-要彻底堵住得给 `amount` 设上限（`NutritionCalculator.MAX_GRAMS` 那类）或在返回前校验乘积——
-超出本任务范围，记在这里留给 Task 4 / Task 9。
+1. **持久化层看不出差别**：SQLite 把 `10.500000000000002` 序列化成 `10.5`（15 位有效数字），
+   `+Infinity` 写进去读出来是 `Inf`。所以「意图相同的记录存了不同克数」这条**只在位模式上成立**，
+   在任何现实读取侧都不成立。DB 对这两个值的不同待遇，不是「A2 补上了一格」的证据。
+2. **`Infinity` 到不了显示层**：`MAX_GRAMS` 那条校验**意外兼任了有限性校验**——实测
+   `forGrams(RICE, Infinity)` 抛 `grams 超出上限 5000.0: Infinity`。所以原先那句
+   「一个无限大的份量会顺利落库，再以 `inf` 的形式变成热量显示出来」**是错的**：它落得进库，
+   但显示那一侧会先抛。
+
+**所以 A2 真正守住的是另一半**：`NaN` 经 `Math.round(NaN)` ⇒ `Round.to2(NaN)` = `0.0`，
+即「**一餐安静地显示 0 kcal**」——这一半是真的，DB 也拦不住（`sum` / `forGrams` 的直接调用方
+根本不经过 DB），而且**失效方式是静默的**（0 看起来完全正常，NaN 一眼能看出坏了）。
+**原先把它拔高成「堵住了 ∞ 落库后变成热量显示」是把价值放错了地方**，本轮按实测口径改正。
+
+**A2-补：缝隙是「静默的持久化缺陷」，不是当前故障——本轮已堵**（放行条件 1）。
+实跑（`RICE_UNITS` = 碗 150 / 勺 15）：
+
+| 输入 | 换算后克数 | 本轮之前 | 本轮之后 |
+| --- | --- | --- | --- |
+| `toGrams(33.33, "碗", units)` | `4999.5` | 放行 | 放行（`isEqualTo(4999.5)` 锁住边界内侧） |
+| `toGrams(33.34, "碗", units)` | `5001.000000000001` | **放行 ⇒ 下游 `forGrams` 拒绝** | **上游即抛**：`换算后的克数超出单次录入上限 5000.0: 5001.000000000001` |
+| `toGrams(1e307, "碗", units)` | `Infinity`（乘法溢出） | 放行 ⇒ 落库为 `Inf` | **上游即抛**：`…上限 5000.0: Infinity` |
+
+**为什么是「真故障缝隙」而不是纸面担忧**：`meal_item` 的 schema 两头都收——
+`gram` 侧 `grams REAL NOT NULL CHECK (grams > 0)` 对 `5001` 无异议、`amount REAL NOT NULL CHECK (amount > 0)`
+对 `33.34` 也无异议（审查用 V4 原文 DDL 实跑确认 `ACCEPTED`）。于是这条记录**可以被持久化**；
+而铁律是「热量永远实时算」，读取路径**只有** `forGrams` 一条、没有 kcal 快照兜底，
+一抛就是整个餐记录页打不开。当前全仓无生产调用方，所以它是**潜伏**而非现存故障——
+但那正是要在有调用方之前堵上的原因。上表第三行（溢出成 `Infinity`）是同一个缝隙的另一半，
+原先在 A2 末尾被记为「超出本任务范围」，本轮一并堵上。
 
 **顺带纠正一处写错的后果**：原文写「NaN 会一路流成**热量显示 NaN**」，实测**是错的**——
 `forGrams(per100, NaN)` 返回**全 0**（`Round.to2(NaN)` = `Math.round(NaN * 100.0) / 100.0` = `0 / 100.0` = `0.0`）。
@@ -3125,7 +3235,7 @@ IEEE-754 的乘法在积可精确表示时返回精确值。穷举 `1..20 × 1..
 
 **结论：这不是「结构性稳健」，是「数据碰巧稳健」——而那份「碰巧」比原文以为的窄得多。**
 
-**C3：不要往 `toGrams` 里加舍入——加在它里面会错，真正的舍入该落在克数落库/显示处。**
+**C3：不要往 `toGrams` 里加舍入；定标只落在显示层——这是本轮定下的决定，不是待办。**
 
 - **不该在 `toGrams` 加舍入**：它返回的是「克数」这个**物理量**，还会被 `sum` 之类聚合。
   先舍到 2 位再累加会引入**系统性偏差**（每餐 5 条各差 ±0.005，方向可能一致）。
@@ -3152,12 +3262,52 @@ IEEE-754 的乘法在积可精确表示时返回精确值。穷举 `1..20 × 1..
   实测里 0.3 克正好是这种边界值（`116 * 0.3 / 100` 精确等于 `0.348`，落在 `round(34.8)` 的平局附近），
   所以我在验证时确实看到了两条路径给出 `0.35` 而第三条给出 `3.48` 的差异——
   **那不是 1 ulp 的问题，是 `0.3 g` 与 `3 g` 本来就是不同的量**（见上表 `1 碗` 那一行）。
-- **真正该定标的位置是「克数落库/显示处」，不是换算函数**：`meal_item.grams` 是
-  `REAL NOT NULL CHECK (grams > 0)`（V4 第 35 行），1 ulp 的差会被**原样持久化**；
-  而 `Round.to2` 目前只用在小数值（kcal 等）上，**没有用在克数上**。
-  **→ 记为留给后续任务的待办**：Task 4 的饮食录入 / Task 9 的服务层在写 `meal_item` 之前
-  对**克数**做一次定标（或在读取侧统一格式化），好让「1 碗」与「150 克」在库里落到同一个值。
-- **测试处置（本轮已落地）**：`three_conversion_paths_agree` 的两条 `isEqualTo` **保留**——
+
+#### C3-决定：克数**只在显示层定标**（本条取代原先「记为待办」的写法）
+
+原文把「定标」记成留给 Task 4 / Task 9 的**待办**，那是**放行条件 2** 指出的问题：
+留下待办，Task 9 的实现者就会照做，而**照做有害**。下面是审查实测的三条依据与本轮定下的决定。
+
+**实测依据**
+
+| 实测项 | 结果 |
+| --- | --- |
+| SQLite 把 `10.500000000000002` 写成文本 | `10.5`（15 位有效数字把 1 ulp 抹平） |
+| 给克数定标后 kcal 发生变化的频率 | **5.10%–32.67%**（150 kcal/100g 上 **22.17%**） |
+| 100 万行按克求和累积的噪声 | **1.86e-9 g**（顶到第 2 位小数需约 10¹⁴ 行） |
+
+**决定**
+
+- **(a) `toGrams` 返回前定标 —— 最坏。** 会把整个包的算术口径从「精确」降成「两位」；
+  `sum` 之类聚合要的是原始量，**先舍再累加是有方向性的系统偏差**。
+- **(b) 落库前定标（服务层）—— 看似合理，实测有害。** 会把用户**真实录入的量**移动最多 `0.005 g`，
+  并在上面那个 **5.10%–32.67%** 的情形里把 kcal 一起移动 `0.01`。
+  更糟的是它**制造**不一致：写进库的 `grams` 与页面当场显示的热量来自**不同的数**
+  （库 `10.5`、页面按 `10.500000000000002` 算）——本来是「同一个数分两次算」，定标把它变成「两个数各算各的」。
+- **(c) 只在显示层定标 —— 唯一无代价的选项，本轮选定它。**
+  定标要解决的**唯一症状**是格式：`Double.toString(10.500000000000002)` 会渲染成
+  `"10.500000000000002 g"`（本轮实测确认，见下），那是**格式化层**的事。
+  **给 Task 9 实现者的指令**：在渲染层（DTO / 前端格式化）统一格式化克数，
+  **不要**在服务层往 `meal_item.grams` 里写定标后的值。
+
+**「意图相同的记录存了不同克数」实测无害**，四条理由：
+
+1. **持久化层自己就抹平了**：SQLite 用 15 位有效数字把 `10.500000000000002` 序列化成 `10.5`，
+   而且**任何**从库里读回的计算只可能拿到被抹平的那个数——「存了不同克数」在现实读取侧不存在。
+2. **按克求和**：100 万行累积噪声 `1.86e-9 g`，要顶到第 2 位小数需要约 10¹⁴ 行。
+3. **显示**：两位格式化直接吃掉。
+4. **唯一敏感路径是 `forGrams`，而它用同一个原始 double 算**，所以三条录入路径显示**同一个** kcal
+   （实测 `0.07 碗` 与 `10.5 克` 都渲染 `15.75`）——**定标反而会打破这个一致性**。
+
+**本轮实测（格式症状确实存在，所以 (c) 不是「什么都不用做」）**：
+
+```text
+0.07 * 150.0            = 10.500000000000002   (Double.toString)
+direct gram entry 10.5   = 10.5
+equal?                   = false
+```
+
+- **测试处置（本轮已落地）**：`three_entry_paths_yield_the_same_grams` 的两条 `isEqualTo` **保留**——
   实测有检测力（把 `toGrams` 的乘法去掉后它们都会红，见 D 的专项回答），且逐位一致在整数份量下确实成立。
   另外**新增** `decimal_amounts_agree_within_tolerance`（`isCloseTo(..., within(1e-9))`），
   把「小数份量下近似相等」这条**真实不变量**也写进套件——否则「脆弱性可达」这件事在测试里毫无痕迹。
@@ -3175,15 +3325,29 @@ IEEE-754 的乘法在积可精确表示时返回精确值。穷举 `1..20 × 1..
 | 2 | `converts_fractional_units` | 小数份量被截断成整数（1.5 → 1） | ✅ 有检测力，且是唯一覆盖小数份量的方法 |
 | 3 | `converts_spoon_to_grams` | 「所有单位都按第一个单位算」——**只有它能抓** | ✅ 有检测力，且不可替代 |
 | 4 | `null_unit_means_amount_is_already_grams` | 把 `null` 当未知单位抛异常 | ✅ 有检测力（它是 `isBlank` 分支中 `null` 那一半） |
-| 5 | `unknown_unit_is_rejected_with_a_useful_message` | 见下方拆解 | ✅ **本轮已修**：第 3 条断言原来恒真（见 E），改成断言整段列表后 M1/M2 双杀（实测） |
-| 6 | `builds_unit_index_from_rows` | `index` 返回空表 / 少了某个条目（实测：空表下红） | ✅ 有检测力 |
-| 7 | `three_conversion_paths_agree` | 见下方专项 | ✅ 两条断言都有检测力（**实测推翻了我的预判**）；本轮另加第 12 条覆盖小数份量 |
+| 5 | `unknown_unit_is_rejected_with_a_useful_message` | 见下方拆解 | ✅ **本轮已修两遍**：第 3 条断言原来恒真（见 E），改成断言整段列表后 M1/M2 双杀（实测）；**本轮（Minor-4b）再把整段断言拆成两条**——`hasMessageContaining("可用的单位: 碗、勺")` 里的 `"可用的单位: "` 与实现里的拼接文本逐字相同（含那个全角冒号与空格），改一个空格两边一起红。拆成 `("可用的单位")` + `("碗、勺")` 后**重新实测 M1/M2 仍然双杀**（见下） |
+| 6 | `index_maps_each_unit_name_to_its_grams`（原 `builds_unit_index_from_rows`） | `index` 返回空表 / 少了某个条目（实测：空表下红） | ✅ 有检测力 |
+| 7 | `three_entry_paths_yield_the_same_grams`（原 `three_conversion_paths_agree`） | 见下方专项 | ✅ 两条断言都有检测力（**实测推翻了我的预判**）；本轮另加第 12 条覆盖小数份量 |
 | 8 | `rejects_non_finite_or_negative_amount` | 去掉 A2 的任一半 | ✅ 有检测力；只有它覆盖 `amount` 的有限性 |
 | 9 | `rejects_invalid_unit_definitions` | 去掉 A1 的任一半 | ✅ 有检测力；`grams` 三条里 `0` 那条最关键（锁住 `> 0` 而非 `>= 0`） |
 | 10 | `blank_unit_is_treated_as_grams` | 把空白当未知单位报错 | ⚠️ **近乎恒真**：实测「完全不换算」的实现下 `toGrams(150, "")` 也是 `150.0`，两条断言照样绿 |
 | 11 | `index_rejects_null_list` | 去掉 A3 的 `requireNonNull` | ⚠️ **恒真**（就 `index` 而言）：测的是 NPE 与消息，与返回值无关；实测「返回空表」的实现照样通过 |
-| 12 | `decimal_amounts_agree_within_tolerance`（本轮新增） | 去掉 `toGrams` 里的乘法（实测红） | ✅ 有检测力；它锁的是「小数份量下近似相等」这条真实不变量，整数份量下无法替代第 7 条 |
-| 13 | `index_rejects_duplicate_unit_names`（本轮新增） | 把 `index` 改回「重复取首个」（实测红：不再抛异常） | ✅ 有检测力；这是唯一能抓「同名单位混入」的测试 |
+| 12 | `decimal_amounts_agree_within_tolerance` | 去掉 `toGrams` 里的乘法（实测红） | ✅ 有检测力；它锁的是「小数份量下近似相等」这条真实不变量，整数份量下无法替代第 7 条 |
+| 13 | `index_rejects_duplicate_unit_names` | 把 `index` 改回「重复取首个」（实测红：不再抛异常） | ✅ 有检测力；这是唯一能抓「同名单位混入」的测试 |
+| 14 | `rejects_conversions_above_the_single_entry_limit`（本轮新增） | 去掉 `toGrams` 的乘积上界（实测红：`33.34` 碗不再抛） | ✅ 有检测力；**放行条件 1** 的验收点，把 `4999.5` 与 `5001.000000000001` 分在边界两侧 |
+| 15 | `rejects_zero_amount_aligning_with_schema`（本轮新增） | 把 `amount <= 0` 改回 `amount < 0`（实测红：`toGrams(0, …)` 不再抛） | ✅ 有检测力；**Minor-3** 的验收点，锁住与 `meal_item.amount CHECK (amount > 0)` 同口径 |
+
+**第 5 条的两道修法都要重测（Minor-4b）**：拆成两条断言之后，三个缺陷变体实测如下
+（本轮用与测试**逐字相同**的断言链跑，`碗`=150 / `勺`=15）：
+
+| 变体 | 干了什么 | `("可用的单位")` | `("碗、勺")` | 判定 |
+| --- | --- | --- | --- | --- |
+| M0 | 正确实现 | PASS | PASS | **GREEN** |
+| M1 | 把整个可用单位列表删掉 | FAIL | FAIL | **RED** |
+| M2 | 列表只留 `勺` | PASS | FAIL | **RED** |
+
+即 `"可用的单位"` 那一条只管「列表出现过」（M2 下它仍绿），**真正逐字锁住内容与顺序的是 `"碗、勺"` 那一条**；
+两条合起来 M1/M2 才都红。**拆开没有拆坏检测力**，但两条的分工要写清楚，别把其中任一条删掉。
 
 **关于第 7 条的专项回答**（原文点名要问的）：
 
@@ -3202,18 +3366,20 @@ IEEE-754 的乘法在积可精确表示时返回精确值。穷举 `1..20 × 1..
 第 2 条断言（`bySpoon == byGram`）相对第 1 条**冗余**：三者同错时二者必同红；
 但反向不成立（`勺` 的克数写错而 `碗` 正确时，只有第 2 条红），所以**保留它是对的**。
 
-**关于 `builds_unit_index_from_rows` 的专项回答**：`containsEntry` × 2
+**关于 `index_maps_each_unit_name_to_its_grams` 的专项回答**：`containsEntry` × 2
 **不会**因为 `index` 返回**多余**条目而变红。多余的条目只会在
 `unknown_unit_is_rejected...` 的**提示文本**里显形（可用单位列表变长）。
 **本轮补强后这条缺口小了一圈，但没有完全堵上**：
 
 - 新加的 `index_rejects_duplicate_unit_names` 抓住了「混进了**同名**单位」
   （`碗=150` 与 `碗=200` 拼在一起）：原实现静默取首个，现在抛异常；
-- 强化后的消息断言锁的是**整段列表**（`可用的单位: 碗、勺`），所以「列表被删空」
+- 强化后的消息断言锁的是**列表内容与顺序**（`可用的单位` + `碗、勺` 两条），所以「列表被删空」
   「只剩一种」「顺序变了」「混进来的单位排在前面」都会变红；
 - 但 `hasMessageContaining` 终究是**子串匹配**：一个**不同名**的单位追加在**末尾**
   （`可用的单位: 碗、勺、份`）仍然通过。要彻底堵住得断言 `index(...)` 的**键集**
   （如 `containsOnlyKeys("碗", "勺")`）——本轮未加，留作后续可选项。
+  另外把断言拆成两条之后，「列表出现过」与「列表内容与顺序」是**两条各自独立**的检查：
+  实测 M2（只留 `勺`）下第一条仍绿、**只有第二条红**（见 D 的变体表）——不要删掉第二条。
 
 ### E. 本轮发现的最弱断言（本轮已修）
 
@@ -3240,19 +3406,66 @@ IEEE-754 的乘法在积可精确表示时返回精确值。穷举 `1..20 × 1..
 `index` 用 `LinkedHashMap`、`List.of` 顺序固定，所以消息是**确定的**，可以这样逐字锁。
 两个缺陷变体（M1 删掉整段列表、M2 只留 `勺`）实测**在新断言下都变红**，正确实现（M0）绿。
 
-### 遗留（仍未修的项，与 Task 5 记档一致；末尾附一条本轮已处理的旧记档）
+**⚠️ 但这一版整段断言本身有个坏味道（Minor-4b，本轮已改）**：`"可用的单位: "` 里那段
+「全角冒号 + 空格」与实现里的拼接文本**逐字相同**——**改一个空格两边一起红**，测试与实现措辞串在一起。
+本轮拆成两条：
 
-- **`NutritionCalculator.forGrams(grams = NaN)` 放行 NaN**（`NaN < 0` 是 `false`，
-  `NaN > MAX_GRAMS` 也是 `false`，两条校验都放行）。**实测后果不是「显示 NaN」，而是「静默显示全 0」**：
+```java
+.hasMessageContaining("可用的单位")
+.hasMessageContaining("碗、勺");   // 列表内容与顺序
+```
+
+**拆完必须重测检测力**（否则可能拆成一个恒真的组合），实测见 D 的变体表：
+**M1/M2 仍然都红、M0 仍绿**。分工是：`"可用的单位"` 只管「列表出现过」（M2 下仍绿），
+`"碗、勺"` 才逐字锁住内容与顺序——两条都不能删。
+
+### F. 包内约定落纸：`package-info.java`（Minor-5，本轮新增）
+
+`calc/` 有两条约定原先只活在示例里，没写下来。本轮新建
+`backend/src/main/java/com/change/calc/package-info.java`（纯 Javadoc，无代码，`{@link}` 同包自动解析、
+编译期不报错），写下：
+
+1. **顶层 record vs 嵌套 record 的判据**：作为某个操作**输入或输出的聚合值**放顶层
+   （`Nutrition` 既用于「每 100 克基准值」也用于「一餐合计值」）；只属于**单个操作**的
+   条目类型嵌在操作类里（`PortionConverter.Unit`，以及计划里 Task 7 的 `VolumeCalculator.Entry`、
+   Task 8 的 `OneRepMax.Set`）。
+2. **`PortionConverter.toGrams` → `NutritionCalculator.forGrams` 的流水线契约**，
+   以及「**二者的定义域必须一致**」——这正是本轮**放行条件 1** 的来源。
+
+外加一条贯穿的价值观：所有校验都倾向于「让它响」而不是「让它算出一个看起来合理的值」，
+因为这类缺陷的失效方式大多是**静默**的（NaN 经舍入变成 0、∞ 被饱和成大数、重复单位名取首个）。
+
+### 遗留（仍未修的项，与 Task 5 记档一致；末尾附两条本轮已处理的旧记档）
+
+- **`NutritionCalculator.forGrams(grams = NaN)` 放行 NaN —— 本轮已关（Minor-2）。**
+  原记档：`NaN < 0` 是 `false`、`NaN > MAX_GRAMS` 也是 `false`，两条校验都放行；
+  **实测后果不是「显示 NaN」，而是「静默显示全 0」**：
   `Round.to2` 里是 `Math.round(NaN * 100.0) / 100.0` = `0 / 100.0` = `0.0`。
-  本轮的 A2 **只**加在 `toGrams`，按任务要求「不要去改 `NutritionCalculator`」。所以
-  `PortionConverter.toGrams` 现在会拒绝 `NaN`，但它**下游**的 `forGrams` 不会——
-  若将来有别的调用方绕过 `toGrams` 直接喂 `forGrams`，这个洞还在。
-  顺带记下 DB 侧对这两个值并不一致：`meal_item.grams` 拒 `NaN`（SQLite 存成 NULL，撞 `NOT NULL`），
-  却**放行 `+Infinity`**（`CHECK (grams > 0)` 判真）——见 A2 的硬价值。
+  当时按任务约束「不要动 `NutritionCalculator`」记成欠账；**本轮质量审查明确把它列为需要关掉的欠账**，
+  所以在 `forGrams` 里补了一条（放在 `grams > MAX_GRAMS` **之前**，更易读）：
+
+  ```java
+  if (!Double.isFinite(grams)) {
+      throw new IllegalArgumentException("grams 必须是有限值，实际为 " + grams);
+  }
+  ```
+
+  于是「同一个包对同一个值有两种态度」这条不一致消失了：`Nutrition` 紧凑构造器、
+  `PortionConverter.Unit`、`toGrams`、`forGrams` 现在**四处同一个口径**。
+  配套测试 `rejects_non_finite_grams`（`NaN` 与 `+Infinity` 都抛）。
+  **只加了这一条校验，算法一行未动**（`Round.to2`、六个分量的换算都没碰）。
+  原先记下的 DB 侧不一致（`meal_item.grams` 拒 `NaN`、却放行 `+Infinity`）**仍然成立**，
+  但它的价值已按 A2 的实测口径下调——`+Infinity` 到不了显示层。
 - **`sum` 的入参仍无上限校验**（Task 5 已记档：单条目 5000 g 的上限约束不到合计值）。
-- **克数落库前没有定标**（C3 记下的待办）：`meal_item.grams` 会把 1 ulp 的差**原样持久化**，
-  而 `Round.to2` 目前没用在克数上；留待 Task 4 的饮食录入 / Task 9 的服务层处理。
+- **克数定标 —— 本轮已从「待办」改成决定（放行条件 2）：只在显示层定标。**
+  原记档写「留待 Task 4 的饮食录入 / Task 9 的服务层处理」，那是**待办**；
+  而**照做有害**（Task 9 的实现者会照旧文档去做）。依据与三条实测数字见 **C3-决定**，
+  结论：`toGrams` 返回前定标最坏（把算术口径降成两位、`sum` 先舍再累加产生方向性偏差）、
+  落库前定标看似合理但实测有害（移动真实录入量最多 0.005 g，5.10%–32.67% 的情形下 kcal 跟着动 0.01，
+  更糟的是制造「库里的 `grams` 与页面显示的热量来自不同的数」），
+  **只在显示层定标是唯一无代价的选项**。
+  `toGrams` 的 Javadoc 已补上「返回未定标的原始乘积；定标属于显示层」。
+  **给 Task 9 的指令是「在渲染层格式化」而不是「落库前定标」。**
 - **`index` 的合并函数 `(a, b) -> a`（本轮已移除）**：原文写「纯防御性代码、当前不可达」，
   实测**可达**——两个都合法的同名 `Unit` 拼成列表即可命中，且会静默丢掉一个克数。
   已改为**重复即抛 `IllegalArgumentException`**（见 B3、D 第 13 条）。
