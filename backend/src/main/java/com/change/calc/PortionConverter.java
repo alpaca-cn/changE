@@ -4,7 +4,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 /**
  * 份量单位换算：「1 碗」折成多少克。
@@ -16,12 +15,15 @@ public final class PortionConverter {
     /**
      * 某食物上的一个份量单位。
      *
-     * 为什么在这里就把非法值拦掉：food_portion 表上已经有
+     * 这里校验的是**值**：名字非空、grams 有限且为正。food_portion 表上本来就有
      * {@code unit_name TEXT NOT NULL} 与 {@code grams REAL NOT NULL CHECK (grams > 0)}，
-     * 也就是说 DB 层本来就存不进下面这几种值。在对象层再拦一道，为的是让
-     * {@link #index} 里那个合并函数 {@code (a, b) -> a} 不至于**静默丢掉一个单位**——
-     * 重复的单位名若连 grams 都不同，用户不会知道用的是哪一个。
-     * 让非法对象根本构造不出来，比在查表处补救更早、也更清楚。
+     * 所以 DB 层存不进下面这几种值——这道校验只是把 Java 侧对齐到既有 schema：
+     * DB 愿意接受的每一行，{@code Unit} 也都接受；反过来，被拦下的值在 DB 侧同样进不去。
+     *
+     * 它**不校验名字唯一性**：同一个食物的单位名唯一由
+     * {@code UNIQUE INDEX ux_food_portion(food_id, unit_name)} 保证，而那个约束管不到
+     * 手工拼出来的列表（{@code new Unit("碗", 150)} 与 {@code new Unit("碗", 200)} 都能构造成功）。
+     * 所以重复名由 {@link #index} 在检出时抛异常作为第二道防线——而不是静默取首个。
      */
     public record Unit(String name, double grams) {
 
@@ -46,7 +48,9 @@ public final class PortionConverter {
      * @param unit   单位名；传 null（或空串/纯空白）表示 amount 本身就是克数
      */
     public static double toGrams(double amount, String unit, List<Unit> units) {
-        // NaN < 0 是 false，所以少了这条有限性校验的话，NaN 会一路流成「热量显示 NaN」。
+        // NaN < 0 是 false，所以少了这条有限性校验的话 NaN 会一路流到 forGrams：
+        // 那里 Math.round(NaN) 是 0、Round.to2(NaN) 是 0.0，最终**静默显示 0 kcal**。
+        // 这比显示 NaN 更糟——NaN 一眼能看出坏了，0 看起来完全正常。
         if (!Double.isFinite(amount)) {
             throw new IllegalArgumentException("amount 必须是有限值，实际为 " + amount);
         }
@@ -67,15 +71,24 @@ public final class PortionConverter {
     }
 
     /**
-     * 把单位行折成 {@code 单位名 → 克数} 的查找表。
+     * 把份量单位表转成「单位名 → 每单位克数」的索引。
      *
-     * 单位名重复时保留先出现的那条：正常数据不可能重复——food_portion 上有
-     * {@code UNIQUE INDEX ux_food_portion ON food_portion(food_id, unit_name)}，
-     * 而本方法拿到的正是同一个 food_id 的若干行。所以这个合并函数是纯防御性的。
+     * 单位名重复时**抛异常**而不是静默取首个：数据库侧的 ux_food_portion
+     * 只在 (food_id, unit_name) 上唯一，而本方法收到的是调用方拼的列表——
+     * 如果混进了别的食物的单位，静默取首个会让 toGrams 按错误的克数换算，
+     * 而调用方无从察觉。让它在拼错时就响，比让它算出一个看起来合理的值更划算。
      */
     public static Map<String, Double> index(List<Unit> units) {
         Objects.requireNonNull(units, "units 不能为 null");
-        return units.stream().collect(Collectors.toMap(
-                Unit::name, Unit::grams, (a, b) -> a, LinkedHashMap::new));
+        Map<String, Double> out = new LinkedHashMap<>();
+        for (Unit u : units) {
+            Objects.requireNonNull(u, "units 不能含 null 元素");
+            Double prev = out.putIfAbsent(u.name(), u.grams());
+            if (prev != null) {
+                throw new IllegalArgumentException(
+                        "份量单位名重复：「" + u.name() + "」既是 " + prev + " 克又是 " + u.grams() + " 克");
+            }
+        }
+        return out;
     }
 }
