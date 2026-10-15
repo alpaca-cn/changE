@@ -19,7 +19,14 @@ import java.util.Objects;
  */
 public final class VolumeCalculator {
 
-    public enum Status { UNTRAINED, BELOW, IN_RANGE, ABOVE }
+    public enum Status {
+        /** 该肌群没有配置目标区间（weekly_sets_min/max 为 NULL）。 */
+        NOT_CONFIGURED,
+        UNTRAINED,
+        BELOW,
+        IN_RANGE,
+        ABOVE
+    }
 
     /**
      * 一条贡献：某个肌群、若干组、扮演什么角色。
@@ -30,10 +37,18 @@ public final class VolumeCalculator {
      * 让**非法状态不可表示**，而不是等到下游再补救。
      *
      * <p>为什么不能省掉、只靠 {@link #accumulate} 的 switch：{@code role} 为 null 时
-     * {@code switch} 抛的 NPE 消息是
-     * {@code Cannot invoke "String.hashCode()" because "<local4>" is null}——
-     * 它既没点出 {@code role} 这个字段，也没点出调用点（实测于 OpenJDK 25），
-     * 而这个值在「动作 → 肌群」的映射里只是一段可选的下游数据，出错的地方离得很远。
+     * {@code switch} 抛的是 NPE（消息形如
+     * {@code Cannot invoke "String.hashCode()" because "<...>" is null}），
+     * 而非有用的 {@link IllegalArgumentException}——它既没点出 {@code role} 这个字段，
+     * 也没点出调用点（实测于 OpenJDK 25），而这个值在「动作 → 肌群」的映射里只是一段
+     * 可选的下游数据，出错的地方离得很远。
+     * <b>刻意不写编译器内部的局部变量槽位号</b>（这里曾经钉了一个具体的槽位编号，而实测出来的
+     * 编号与注释里写的并不是同一个）：那编号换个编译器版本、或者多一个局部变量就会变，
+     * 把它钉在注释里只会制造一处随时会过期的「事实」。
+     *
+     * <p>所以 {@code role} 的 null 检查必须放在白名单之前：放到后面，消息会变成
+     * 「未知的肌群角色: null」——那是<b>另一条</b>信息。这个顺序由
+     * {@code invalid_role_cannot_even_be_constructed} 锁死。
      */
     public record Entry(long muscleId, int sets, String role) {
 
@@ -92,17 +107,33 @@ public final class VolumeCalculator {
 
     /**
      * 与建议区间比较。
-     * 注意：这个区间是预设的参照系，不是科学结论；用户可以在设置里改。
+     *
+     * <p>区间参数用装箱类型是<b>有意</b>的：{@code muscle_group.weekly_sets_min/max}
+     * 在 schema 里可空且无 CHECK，而「没配目标」是一个与「没练」不同的事实。
+     * 如果这里收 {@code int}，服务层就必须 unbox，而任何兜底值都会静默说谎：
+     * <ul>
+     *   <li>兜成 0 → 下限失效，「练得不够」（{@code BELOW}）这一态永久消失；</li>
+     *   <li>上限兜成 0 → 撞上下面的 {@code max < min}，每个肌群都抛异常，整页打不开；</li>
+     *   <li>两者都兜成 0 → 任何训练量都判 {@code ABOVE}，用户看到全身标红。</li>
+     * </ul>
+     * 所以未配目标时直接返回 {@link Status#NOT_CONFIGURED}，并且<b>排在区间校验之前</b>
+     * 短路——否则一个 NULL 上限（被兜成 0）就足以把整页变成异常。
+     *
+     * <p>注意：这个区间是预设的参照系，不是科学结论；用户可以在设置里改。
      *
      * <p>区间本身也要校验：{@code classify(5, 20, 10)}（上下限写反）会返回
      * {@code BELOW}——因为 {@code 5 < 20} 为真——给出一个<b>看起来合理</b>的错答案。
      * 用户可以在设置页逐肌群改这个区间，打错数字完全可能，所以宁可在这里响。
      *
      * @param sets 实际折算组数
-     * @param min  区间下限；不得为负
-     * @param max  区间上限；不得小于下限。比较用的是闭区间
+     * @param min  区间下限；不得为负。传 {@code null} 表示该肌群未设目标
+     * @param max  区间上限；不得小于下限。传 {@code null} 表示该肌群未设目标。
+     *             比较用的是闭区间
      */
-    public static Status classify(double sets, int min, int max) {
+    public static Status classify(double sets, Integer min, Integer max) {
+        if (min == null || max == null) {
+            return Status.NOT_CONFIGURED;
+        }
         if (min < 0) {
             throw new IllegalArgumentException("区间下限不能为负: " + min);
         }

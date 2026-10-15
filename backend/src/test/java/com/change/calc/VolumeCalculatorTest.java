@@ -38,6 +38,10 @@ class VolumeCalculatorTest {
         assertThat(volume).containsEntry(100L, 4.0)
                           .containsEntry(101L, 2.0)
                           .containsEntry(102L, 2.0);
+        // containsEntry 抓不住**多余键**（实测：往 accumulate 的结果里注入 out.put(999L, 1.0)，
+        // 上面三条断言照旧全绿）。「设计文档算例恰好就是胸 / 三头 / 三角前束这三个肌群」
+        // 本来就是这条测试的职责，所以这里必须把键集也锁死。
+        assertThat(volume).containsOnlyKeys(100L, 101L, 102L);
     }
 
     @Test
@@ -96,8 +100,10 @@ class VolumeCalculatorTest {
     @Test
     void null_entries_are_rejected_with_a_useful_message() {
         // 没有这两道校验时，null 会一路流进 for 循环，以 NPE 的形式炸出来——
-        // 消息是 JDK 内部的 Cannot invoke "Entry.role()" / "String.hashCode()"，
-        // 报错点离调用点很远，消息里也不点出是哪个参数坏了。
+        //   accumulate(null)          → Cannot invoke "java.util.List.iterator()" because "entries" is null
+        //   accumulate([Entry, null]) → Cannot invoke "com.change.calc.VolumeCalculator$Entry.role()" because "e" is null
+        // （两条都是实测消息；注意后者点的是 $Entry.role() 而不是 List.iterator()，
+        //  曾把这两条弄混。）报错点离调用点很远，消息里也不点出是哪个参数坏了。
         //
         // 断言用「不能」而不是「null」：那些 JDK 消息本身**也含 "null" 字样**，
         // 用 "null" 断言就恒真了——实测过，它拦不住「删掉校验」的变异。
@@ -130,5 +136,23 @@ class VolumeCalculatorTest {
         assertThat(VolumeCalculator.classify(20, 10, 20)).isEqualTo(VolumeCalculator.Status.IN_RANGE);
         assertThat(VolumeCalculator.classify(9.5, 10, 20)).isEqualTo(VolumeCalculator.Status.BELOW);
         assertThat(VolumeCalculator.classify(20.5, 10, 20)).isEqualTo(VolumeCalculator.Status.ABOVE);
+    }
+
+    @Test
+    void missing_target_range_is_its_own_state() {
+        // 「没配目标」与「没练」是两个不同的事实。若把 null unbox 成 0：
+        //   下限 0 → 「练得不够」永久消失；上限 0 → 撞上 max<min 全页抛异常；
+        //   两者皆 0 → 任何训练量都判 ABOVE。
+        assertThat(VolumeCalculator.classify(25, null, 20)).isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
+        assertThat(VolumeCalculator.classify(25, 10, null)).isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
+        assertThat(VolumeCalculator.classify(0, null, null)).isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
+        // 与真正的「没练」区分开
+        assertThat(VolumeCalculator.classify(0, 10, 20)).isEqualTo(VolumeCalculator.Status.UNTRAINED);
+    }
+
+    @Test
+    void null_range_short_circuits_before_validation() {
+        // 未配目标时不该校验区间（否则一个 NULL 上限会变成整页异常）
+        assertThat(VolumeCalculator.classify(5, null, 0)).isEqualTo(VolumeCalculator.Status.NOT_CONFIGURED);
     }
 }
