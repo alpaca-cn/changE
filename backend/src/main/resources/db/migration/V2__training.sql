@@ -2,6 +2,19 @@
 --
 -- 索引命名：唯一索引 ux_<表名全称>_<列>；普通索引 ix_<表名全称>_<列>；表名不缩写。
 --
+-- 为什么 workout_set 上**没有**单列索引 ix_workout_set_session_exercise：复合唯一索引
+-- ux_workout_set_session_exercise_index(session_exercise_id, set_index) 的**左前缀**就是
+-- session_exercise_id，任何「按 session_exercise_id 过滤」的查询都能直接用它，单列索引
+-- 零查询收益，只剩下每次写入多维护一棵 B 树、多占一份磁盘的代价。不要看到单列查询就
+-- 又把它加回来。
+-- 已用 EXPLAIN QUERY PLAN 实测（SQLite 3.50 驱动 / 3.53 库）：等值、IN、范围、按
+-- set_index 排序与分组、MAX(set_index) 六种形态全部落到 ux_..._index；其中两种（GROUP BY、
+-- MAX）走 COVERING INDEX——复合索引键含 set_index，不必回表，单列索引反而做不到。
+-- 唯一有差别的是一处成本估算：表里有数据且 ANALYZE 之后，「只有左列范围条件」的那次
+-- 计划会在两索引并存时选 ix_（代价估算 53 对 54），删掉后仍落在 ux_ 上、仍是 SEARCH，
+-- 代价 54——差别在一个估算单位，不是一次扫描形态的变化。
+-- 这条判断只能在现在下：迁移一旦发布就字节冻结，事后想补加索引要再写一条迁移。
+--
 -- 为什么这条规则要写死在文件头：SQLite 给索引另起一个名字再建一次**不会报错**，
 -- 只会静默多出一个功能重复的索引（写变慢、占用翻倍，而没有任何提示）。表名缩写在
 -- 这里尤其危险——`ix_sessex_session` 对下一个人来说不显然等于 `session_exercise`，
@@ -126,7 +139,8 @@ CREATE TABLE workout_set (
     CHECK (target_weight IS NULL OR target_weight >= 0),
     CHECK (target_reps IS NULL OR target_reps >= 0)
 );
-CREATE INDEX ix_workout_set_session_exercise ON workout_set(session_exercise_id);
 -- 同一个动作下 set_index 必须唯一——否则上面那段语义冻结只是一句注释。
+-- 这条唯一索引**同时**是 session_exercise_id 的访问路径（左前缀），所以刻意不再单建
+-- 单列索引；理由与实测见文件头「为什么 workout_set 上没有单列索引」那段。
 CREATE UNIQUE INDEX ux_workout_set_session_exercise_index
     ON workout_set(session_exercise_id, set_index);

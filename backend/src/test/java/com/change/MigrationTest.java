@@ -117,6 +117,11 @@ class MigrationTest {
      * 不能猜。当前值对应 V1–V4 发布时的字节内容：
      *   1:baseline / 2:training / 3:nutrition / 4:auxiliary。
      *
+     * V2 的 checksum 在「删除冗余索引 ix_workout_set_session_exercise」时更新过一次
+     * （-962992177 → 1428719958）。这正是这条断言存在意义的现场：V2 尚未分发，删除是
+     * 允许的，而**改动必须在这里显式确认一次**，不能悄悄发生。V1 / V3 / V4 的 checksum
+     * 没有变，说明那次改动只落在 V2 一个文件上。
+     *
      * 版本号写死成 containsExactly（不是「前四个必须是」）：将来新增 V5 时这条会红，
      * 那是**有意的**——新迁移一旦发布就该被一起冻结，加进来的同时也要确认它已发布。
      */
@@ -125,7 +130,7 @@ class MigrationTest {
         assertThat(jdbc.queryForList(
                 "SELECT version || ':' || checksum FROM flyway_schema_history ORDER BY installed_rank",
                 String.class))
-                .containsExactly("1:1904735359", "2:-962992177", "3:1207314981", "4:1460974919");
+                .containsExactly("1:1904735359", "2:1428719958", "3:1207314981", "4:1460974919");
     }
 
     private String readMigration(String fileName) {

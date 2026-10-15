@@ -50,13 +50,17 @@ class SchemaTest {
 
     @Test
     void all_fifteen_tables_exist() {
-        // sqlite_% 排除的是 SQLite 自己维护的表（AUTOINCREMENT 会建 sqlite_sequence）；
-        // flyway_schema_history 是迁移框架的历史表，不属于业务模型。
+        // sqlite_% 排除的是 SQLite 自己维护的表（AUTOINCREMENT 会建 sqlite_sequence、
+        // ANALYZE 会建 sqlite_stat1）；flyway_schema_history 是迁移框架的历史表，
+        // 不属于业务模型。
         // 这里刻意不排除 schema_probe：它若还在，这条断言就该红。
         //
-        // 将来新增**内部**表（FTS5 全文检索的影子表如 *_data / *_idx / *_content /
-        // *_docsize / *_config、sqlite_stat1 等）时，必须同步更新本断言——否则这条
-        // 「多建了也要红」的收口会先把真正的业务表变化挡住，让人误以为只是影子表噪音。
+        // 将来新增**内部**表时要同步更新 EXPECTED，否则这条「多建了也要红」的收口会先把
+        // 真正的业务表变化挡住，让人误以为只是内部表噪音。要补的只有**不以 sqlite_ 开头**
+        // 的那些：FTS5 的影子表（影子表名由虚拟表名派生，如 content= 指向的表，以及
+        // <表>_data / _idx / _content / _docsize / _config）不在本次排除之列，必须逐个写进
+        // EXPECTED；而 sqlite_stat1 / sqlite_sequence 已被上面的 NOT LIKE 排除，不必也不该
+        // 写进去——写了反而让「这份清单等于业务模型」这句话失真。
         List<String> names = jdbc.queryForList(
                 "SELECT name FROM sqlite_master WHERE type='table' " +
                 "AND name NOT LIKE 'sqlite_%' AND name <> 'flyway_schema_history'", String.class);
@@ -219,7 +223,9 @@ class SchemaTest {
         expected.put("ix_session_date", "NOT UNIQUE");
         expected.put("ix_session_exercise_session", "NOT UNIQUE");
         expected.put("ux_session_exercise_session_order", "UNIQUE");
-        expected.put("ix_workout_set_session_exercise", "NOT UNIQUE");
+        // 这里**没有** ix_workout_set_session_exercise：它的访问路径由下面这条复合唯一
+        // 索引的左前缀提供，单列索引已按冗余删除。这条清单是双侧收口的，所以「又把它
+        // 加回来」同样会让本测试变红——冗余索引不会报错，只会悄悄变慢，只能靠这里挡。
         expected.put("ux_workout_set_session_exercise_index", "UNIQUE");
         expected.put("ix_food_name_zh", "NOT UNIQUE");
         expected.put("ux_food_portion", "UNIQUE");
