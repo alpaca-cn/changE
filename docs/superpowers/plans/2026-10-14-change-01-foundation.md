@@ -565,7 +565,7 @@ git commit -m "feat: 接通 SQLite 与 Flyway，加基线迁移与验证测试"
 
 - `CREATE TABLE IF NOT EXISTS` —— 理由见上面第 2 条。
 
-- [ ] **Step 1: 写训练域迁移 V2**
+- [x] **Step 1: 写训练域迁移 V2**
 
 ```sql
 -- V2: 训练域 6 张表
@@ -648,7 +648,7 @@ CREATE TABLE workout_set (
 CREATE INDEX ix_set_sessex ON workout_set(session_exercise_id);
 ```
 
-- [ ] **Step 2: 写饮食域迁移 V3**
+- [x] **Step 2: 写饮食域迁移 V3**
 
 ```sql
 -- V3: 饮食域 4 张表
@@ -701,7 +701,7 @@ CREATE TABLE meal_item (
 CREATE INDEX ix_meal_item_meal ON meal_item(meal_id);
 ```
 
-- [ ] **Step 3: 写辅助域迁移 V4**
+- [x] **Step 3: 写辅助域迁移 V4**
 
 ```sql
 -- V4: 辅助域 5 张表
@@ -761,9 +761,18 @@ CREATE INDEX ix_changelog_target ON change_log(target_table, target_id);
 CREATE INDEX ix_changelog_time ON change_log(changed_at);
 ```
 
-- [ ] **Step 4: 写表结构测试**
+- [x] **Step 4: 写表结构测试**
 
 用一张期望清单核对，**避免漏建或多建**。
+
+> **实施时对本块的修正（已落地，与 Task 2 那条同一个套路）**：
+> 原代码里 `List<String> cols = jdbc.queryForList("PRAGMA table_info(meal_item)", String.class)`
+> 是写不出来的——`PRAGMA table_info` 是「一行六列」的表函数，`queryForList(..., String.class)`
+> 会对它抛 `IncorrectResultSizeDataAccessException`，于是 `doesNotContain` 那一行**永远执行不到**：
+> 这条断言会以「红」的形式恒绿（红在读取上，不在断言上）。改走 `pragma_table_info('meal_item')`
+> 并显式选 `name` 列——`workout_set` 那条本来就是这么写的，现在两张表写法一致。
+> 另外补上 `probe_table_was_dropped_by_v2`，把「V2 删掉了探针表」变成可执行断言，
+> 这样 `all_fifteen_tables_exist` 里才敢不带 `name <> 'schema_probe'` 那个特例。
 
 ```java
 package com.change;
@@ -773,6 +782,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -799,35 +809,97 @@ class SchemaTest {
     }
 
     @Test
+    void probe_table_was_dropped_by_v2() {
+        Integer n = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_probe'",
+                Integer.class);
+        assertThat(n)
+                .as("V2 的第一行应当 DROP 掉 V1 的探针表，让它不再留在用户的库里")
+                .isZero();
+    }
+
+    @Test
     void meal_item_has_no_stored_calorie_column() {
         // 这条是防回归：一旦有人「顺手」加了 kcal 列，测试立刻失败。
-        List<String> cols = jdbc.queryForList("PRAGMA table_info(meal_item)", String.class);
+        // 走 pragma_table_info 而不是 PRAGMA table_info：后者是「一行多列」的表函数，
+        // queryForList(..., String.class) 会对它抛 IncorrectResultSizeDataAccessException，
+        // 断言就永远走不到 doesNotContain 那一行。
+        Set<String> cols = new HashSet<>(
+                jdbc.queryForList("SELECT name FROM pragma_table_info('meal_item')", String.class));
         assertThat(cols).doesNotContain("kcal", "calories", "energy");
     }
 
     @Test
     void workout_set_supports_timed_and_per_side() {
-        Set<String> cols = new java.util.HashSet<>(
+        Set<String> cols = new HashSet<>(
                 jdbc.queryForList("SELECT name FROM pragma_table_info('workout_set')", String.class));
         assertThat(cols).contains("duration_seconds", "per_side", "target_weight", "target_reps");
     }
 }
 ```
 
-- [ ] **Step 5: 跑测试**
+- [x] **Step 5: 跑测试**
 
 Run: `cd backend && mvn -B test -Dtest=SchemaTest`
 
-Expected: `Tests run: 3, Failures: 0, Errors: 0`
+Expected: `Tests run: 4, Failures: 0, Errors: 0`
 
-- [ ] **Step 6: 提交**
+**但只跑 `-Dtest=SchemaTest` 是不够的**：V2 的第一行会把 `schema_probe` 删掉，而
+`MigrationTest.baseline_migration_created_probe_table` 断言的是「这张表还在」——
+全量测试会因此变红。实测确认过，这不是猜测。处理办法见 Step 5b。
+
+- [x] **Step 5b: 修 MigrationTest 里被 V2 弄红的那条断言**
+
+V2 一旦 DROP 掉探针表，`MigrationTest` 里那条断言就**结构性地无法成立**：
+迁移在上下文启动时就跑完了，任何 `@Test` 方法都看不到这张表。它原本要守的是
+「V1 里那句 CREATE 不能消失或被改坏」，这件事只有读脚本原文才问得出来，所以改成：
+
+```java
+    @Test
+    void baseline_migration_still_defines_the_probe_table_it_is_known_for() {
+        // 读资源原文而不是数据库：schema_probe 已被 V2 删掉（见 SchemaTest 的对应断言）。
+        String v1 = readMigration("V1__baseline.sql");
+
+        // 空迁移、CREATE 被删掉 / 改名 / 拆成别的表，都会在这里变红。
+        assertThat(v1).contains("CREATE TABLE");
+        assertThat(v1).contains("schema_probe");
+        assertThat(v1).contains("INTEGER PRIMARY KEY AUTOINCREMENT");
+        assertThat(v1).contains("NOT NULL");
+    }
+
+    private String readMigration(String fileName) {
+        try (var in = new ClassPathResource("db/migration/" + fileName).getInputStream()) {
+            // 统一换行符：断言只关心内容，不该因为 checkout 的行尾设置而变红。
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8).replace("\r\n", "\n");
+        } catch (Exception e) {
+            throw new IllegalStateException("读不到迁移脚本: " + fileName, e);
+        }
+    }
+```
+
+顺带补上了原断言查不到的盲区：改 V1 只让「已经跑过 V1 的库」报 checksum 失配，
+**全新的库照样跑得通**（本仓库的测试库每次 `target` 一删就是全新的），
+所以光靠运行时断言根本拦不住这类改动。
+
+- [x] **Step 6: 跑全量测试**
+
+Run: `cd backend && Remove-Item -Recurse -Force target; mvn -B test`
+
+Expected: `Tests run: 12, Failures: 0, Errors: 0`
+
+（原计划写的 8 + 4 漏算了 V2 会弄红 `MigrationTest` 一条；修好之后总数仍是
+2 + 3 + 3 + 4 = 12。**必须先删 `target`**：`src/main/resources` 下的改动
+可能没被复制到 `target/classes`，验证结果会与源码不符。）
+
+- [x] **Step 7: 提交**
 
 ```bash
 git add backend/src/main/resources/db/migration/V2__training.sql \
         backend/src/main/resources/db/migration/V3__nutrition.sql \
         backend/src/main/resources/db/migration/V4__auxiliary.sql \
-        backend/src/test/java/com/change/SchemaTest.java
-git commit -m "feat: 十五张表的迁移，含两条防回归断言（不存热量、支持计时与每侧）"
+        backend/src/test/java/com/change/SchemaTest.java \
+        backend/src/test/java/com/change/MigrationTest.java
+git commit -m "feat: 十五张表的迁移，含三条防回归断言"
 ```
 
 ---
