@@ -2,6 +2,9 @@ package com.change.calc;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -54,7 +57,7 @@ class NutritionCalculatorTest {
 
     @Test
     void sums_a_meal() {
-        Nutrition meal = NutritionCalculator.sum(java.util.List.of(
+        Nutrition meal = NutritionCalculator.sum(List.of(
                 NutritionCalculator.forGrams(RICE_PER_100G, 150),
                 new Nutrition(240, 18, 6, 14, 1, 300)));
 
@@ -69,7 +72,7 @@ class NutritionCalculatorTest {
     @Test
     void rounding_is_exactly_two_decimals() {
         // 5 克的碳水 = 25.9 × 0.05 = 1.295；两位舍入给 1.3，三位会给 1.295。
-        // 这条锁住 round2 的精度本身，而不只是「不粗于两位」。
+        // 这条锁住 Round.to2 的精度本身，而不只是「不粗于两位」。
         assertThat(NutritionCalculator.forGrams(RICE_PER_100G, 5).carb()).isEqualTo(1.3);
     }
 
@@ -81,5 +84,42 @@ class NutritionCalculatorTest {
         assertThatThrownBy(() -> NutritionCalculator.forGrams(RICE_PER_100G, 5_000.001))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("grams");
+    }
+
+    @Test
+    void rejects_non_finite_and_negative_nutrition() {
+        // NaN 经 round2 会变成 0.0（一餐安静地显示 0 kcal）；
+        // ∞ 会被饱和成 9.2e16。两者都必须在构造时就拦住。
+        assertThatThrownBy(() -> new Nutrition(Double.NaN, 0, 0, 0, 0, 0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("kcal");
+        assertThatThrownBy(() -> new Nutrition(0, Double.POSITIVE_INFINITY, 0, 0, 0, 0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("protein");
+        assertThatThrownBy(() -> new Nutrition(0, 0, -1, 0, 0, 0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("carb");
+    }
+
+    @Test
+    void gram_based_fields_are_validated_too() {
+        assertThatThrownBy(() -> new Nutrition(0, 0, 0, Double.NaN, 0, 0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("fat");
+        assertThatThrownBy(() -> new Nutrition(0, 0, 0, 0, Double.NEGATIVE_INFINITY, 0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("fiber");
+        assertThatThrownBy(() -> new Nutrition(0, 0, 0, 0, 0, -1))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sodium");
+    }
+
+    @Test
+    void sum_of_empty_list_is_all_zero() {
+        assertThat(NutritionCalculator.sum(List.of()))
+                .isEqualTo(new Nutrition(0, 0, 0, 0, 0, 0));
+    }
+
+    @Test
+    void sum_rejects_null_list_and_null_elements() {
+        assertThatThrownBy(() -> NutritionCalculator.sum(null))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("items");
+        assertThatThrownBy(() -> NutritionCalculator.sum(
+                Arrays.asList(RICE_PER_100G, null)))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("null");
     }
 }

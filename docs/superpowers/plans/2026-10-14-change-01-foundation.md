@@ -33,6 +33,8 @@ backend/
     │   │   │   └── ...
     │   │   ├── repo/              # Spring Data 仓储
     │   │   ├── calc/              # ★ 三个核心计算，纯类、无 Spring 依赖
+    │   │   │   ├── Round.java     # Task 5：舍入工具（包内可见，三处计算共用）
+    │   │   │   ├── Nutrition.java
     │   │   │   ├── NutritionCalculator.java
     │   │   │   ├── PortionConverter.java
     │   │   │   ├── VolumeCalculator.java
@@ -2066,6 +2068,7 @@ git commit -m "feat: 训练域实体与仓储，覆盖三层嵌套与计时/每�
 **Files:**
 - Create: `backend/src/main/java/com/change/calc/Nutrition.java`
 - Create: `backend/src/main/java/com/change/calc/NutritionCalculator.java`
+- Create: `backend/src/main/java/com/change/calc/Round.java`（质量审查轮新增：舍入工具，见 Step 3b）
 - Test: `backend/src/test/java/com/change/calc/NutritionCalculatorTest.java`
 
 - [x] **Step 1: 写失败的测试**
@@ -2074,6 +2077,9 @@ git commit -m "feat: 训练域实体与仓储，覆盖三层嵌套与计时/每�
 package com.change.calc;
 
 import org.junit.jupiter.api.Test;
+
+import java.util.Arrays;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -2127,7 +2133,7 @@ class NutritionCalculatorTest {
 
     @Test
     void sums_a_meal() {
-        Nutrition meal = NutritionCalculator.sum(java.util.List.of(
+        Nutrition meal = NutritionCalculator.sum(List.of(
                 NutritionCalculator.forGrams(RICE_PER_100G, 150),
                 new Nutrition(240, 18, 6, 14, 1, 300)));
 
@@ -2142,7 +2148,7 @@ class NutritionCalculatorTest {
     @Test
     void rounding_is_exactly_two_decimals() {
         // 5 克的碳水 = 25.9 × 0.05 = 1.295；两位舍入给 1.3，三位会给 1.295。
-        // 这条锁住 round2 的精度本身，而不只是「不粗于两位」。
+        // 这条锁住 Round.to2 的精度本身，而不只是「不粗于两位」。
         assertThat(NutritionCalculator.forGrams(RICE_PER_100G, 5).carb()).isEqualTo(1.3);
     }
 
@@ -2154,6 +2160,43 @@ class NutritionCalculatorTest {
         assertThatThrownBy(() -> NutritionCalculator.forGrams(RICE_PER_100G, 5_000.001))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("grams");
+    }
+
+    @Test
+    void rejects_non_finite_and_negative_nutrition() {
+        // NaN 经 round2 会变成 0.0（一餐安静地显示 0 kcal）；
+        // ∞ 会被饱和成 9.2e16。两者都必须在构造时就拦住。
+        assertThatThrownBy(() -> new Nutrition(Double.NaN, 0, 0, 0, 0, 0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("kcal");
+        assertThatThrownBy(() -> new Nutrition(0, Double.POSITIVE_INFINITY, 0, 0, 0, 0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("protein");
+        assertThatThrownBy(() -> new Nutrition(0, 0, -1, 0, 0, 0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("carb");
+    }
+
+    @Test
+    void gram_based_fields_are_validated_too() {
+        assertThatThrownBy(() -> new Nutrition(0, 0, 0, Double.NaN, 0, 0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("fat");
+        assertThatThrownBy(() -> new Nutrition(0, 0, 0, 0, Double.NEGATIVE_INFINITY, 0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("fiber");
+        assertThatThrownBy(() -> new Nutrition(0, 0, 0, 0, 0, -1))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sodium");
+    }
+
+    @Test
+    void sum_of_empty_list_is_all_zero() {
+        assertThat(NutritionCalculator.sum(List.of()))
+                .isEqualTo(new Nutrition(0, 0, 0, 0, 0, 0));
+    }
+
+    @Test
+    void sum_rejects_null_list_and_null_elements() {
+        assertThatThrownBy(() -> NutritionCalculator.sum(null))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("items");
+        assertThatThrownBy(() -> NutritionCalculator.sum(
+                Arrays.asList(RICE_PER_100G, null)))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("null");
     }
 }
 ```
@@ -2200,9 +2243,68 @@ Expected: 编译失败，提示 `cannot find symbol: class Nutrition` / `Nutriti
 ```java
 package com.change.calc;
 
-/** 一份营养值。热量与三大营养素、纤维单位为克（kcal 除外）；钠为毫克。 */
+/**
+ * 一份营养值。
+ *
+ * 单位：热量为 kcal，蛋白质/碳水/脂肪/纤维为克，钠为毫克。
+ * （钠用毫克与 USDA 及国内成分表一致；按克读会得到致死量级的数字。）
+ *
+ * 这个类型同时用于「每 100 克基准值」和「一餐合计值」两种语义——
+ * 二者形状相同，record 无法区分。约定：**持有 per-100g 基准值的变量一律带 per100 前缀**
+ * （`forGrams` 的参数已经这么做），没有该前缀的就是实际份量的值。
+ */
 public record Nutrition(double kcal, double protein, double carb,
                         double fat, double fiber, double sodium) {
+
+    public Nutrition {
+        requireNonNegativeFinite(kcal, "kcal");
+        requireNonNegativeFinite(protein, "protein");
+        requireNonNegativeFinite(carb, "carb");
+        requireNonNegativeFinite(fat, "fat");
+        requireNonNegativeFinite(fiber, "fiber");
+        requireNonNegativeFinite(sodium, "sodium");
+    }
+
+    /**
+     * 拒绝负数与非有限值（NaN / ±Infinity）。
+     *
+     * 为什么在类型上拦：这两个值一旦流进统计，失效方式都是**静默**的——
+     * NaN 经 {@link Round#to2} 会变成 0.0（一餐安静地显示 0 kcal），
+     * ∞ 会被饱和成 9.2e16（一个荒谬但看起来像数字的值）。
+     * 对会分发给他人的客户端，「看起来对但其实不对」比崩溃更坏。
+     */
+    private static void requireNonNegativeFinite(double v, String field) {
+        if (!Double.isFinite(v)) {
+            throw new IllegalArgumentException(field + " 必须是有限值，实际为 " + v);
+        }
+        if (v < 0) {
+            throw new IllegalArgumentException(field + " 不能为负，实际为 " + v);
+        }
+    }
+}
+```
+
+```java
+package com.change.calc;
+
+/**
+ * 舍入工具。
+ *
+ * 为什么单独抽出来：饮食、训练容量、1RM 三处都需要「保留两位小数」，
+ * 而它各自私有会导致三份逐字相同的拷贝——改一处就得记得改三处。
+ *
+ * 为什么用 Math.round：它按「四舍五入远离零」处理 .5，
+ * 且对负数对称（-1.005 → -1.01 而非 -1.00），适合营养与重量这类只关心量级的场景。
+ */
+final class Round {
+
+    private Round() {
+    }
+
+    /** 保留两位小数：避免 0.1+0.2 那类浮点噪声显示成 0.30000000000000004。 */
+    static double to2(double v) {
+        return Math.round(v * 100.0) / 100.0;
+    }
 }
 ```
 
@@ -2210,6 +2312,7 @@ public record Nutrition(double kcal, double protein, double carb,
 package com.change.calc;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 热量与宏量营养素计算。
@@ -2217,6 +2320,9 @@ import java.util.List;
  * 铁律：所有营养值都按「每 100 克」保存，份量单独保存。
  * 本类只做一件事：把每 100 克的值按实际克数换算出来。
  * 结果永远实时计算，绝不回存——这样改份量、换食物、换单位都不会算错。
+ *
+ * 命名约定：凡持有 per-100g 基准值的变量/参数一律带 per100 前缀
+ * （forGrams 的参数已经这么做）。没有该前缀的，就是实际份量的值。
  */
 public final class NutritionCalculator {
 
@@ -2236,36 +2342,88 @@ public final class NutritionCalculator {
         }
         double k = grams / 100.0;
         return new Nutrition(
-                round2(per100g.kcal() * k),
-                round2(per100g.protein() * k),
-                round2(per100g.carb() * k),
-                round2(per100g.fat() * k),
-                round2(per100g.fiber() * k),
-                round2(per100g.sodium() * k));
+                Round.to2(per100g.kcal() * k),
+                Round.to2(per100g.protein() * k),
+                Round.to2(per100g.carb() * k),
+                Round.to2(per100g.fat() * k),
+                Round.to2(per100g.fiber() * k),
+                Round.to2(per100g.sodium() * k));
     }
 
+    /**
+     * 合计若干份营养值。
+     *
+     * @param items 待合计的条目；**不得为 null，也不得含 null 元素**
+     * @return 合计值；**空列表返回全 0**
+     */
     public static Nutrition sum(List<Nutrition> items) {
+        Objects.requireNonNull(items, "items 不能为 null");
         double kcal = 0, p = 0, c = 0, f = 0, fi = 0, na = 0;
         for (Nutrition n : items) {
+            Objects.requireNonNull(n, "items 不能含 null 元素");
             kcal += n.kcal(); p += n.protein(); c += n.carb();
             f += n.fat();     fi += n.fiber();   na += n.sodium();
         }
-        return new Nutrition(round2(kcal), round2(p), round2(c),
-                             round2(f), round2(fi), round2(na));
-    }
-
-    /** 保留两位小数：避免 0.1+0.2 那类浮点噪声显示成 0.30000000000000004。 */
-    private static double round2(double v) {
-        return Math.round(v * 100.0) / 100.0;
+        return new Nutrition(Round.to2(kcal), Round.to2(p), Round.to2(c),
+                             Round.to2(f), Round.to2(fi), Round.to2(na));
     }
 }
 ```
+
+- [x] **Step 3b（质量审查轮新增）：抽 `Round.to2`、给 `Nutrition` 与 `sum` 补校验**
+
+**为什么抽 `Round`**：本任务把 `round2` 写成 `NutritionCalculator` 的私有方法，
+但 Task 7（训练容量）与 Task 8（1RM）面对的是同一个小数问题——
+Task 8 的 `OneRepMax` fence 里已经是一份**逐字相同**的拷贝。
+到 Task 8 时第三份拷贝会被当成「既有惯例」照抄，那时统一要同时改三个已验证过的类。
+**成本窗口只在现在开着**，所以提前抽成包内可见的 `Round`。
+
+**为什么给 `Nutrition` 加不变量校验**（实测确认过的三个失效方式，全部**静默**）：
+
+| 输入 | 改动前 | 改动后 |
+| --- | --- | --- |
+| `forGrams(new Nutrition(∞,…), 100)` | 返回 `9.223372036854776E16`（`Math.round` 饱和到 `Long.MAX_VALUE/100`） | 构造时抛 `IllegalArgumentException: kcal 必须是有限值，实际为 Infinity` |
+| `new Nutrition(NaN, 0,0,0,0,0)` | **合法对象** | 抛 `IllegalArgumentException: kcal 必须是有限值，实际为 NaN` |
+| `new Nutrition(-1, -1, -1, -1, -1, -1)` | **合法对象** | 抛 `IllegalArgumentException: kcal 不能为负，实际为 -1.0` |
+| `sum([NaN 条目, 正常值])` | 返回 `kcal=0.0`——**一餐安静地显示 0 kcal** | NaN 条目在构造处就被拦下，压根进不了 `sum` |
+| `sum(null)` | 裸 NPE：`Cannot invoke "java.util.List.iterator()" because "items" is null` | NPE：`items 不能为 null` |
+| `sum([rice, null])` | 裸 NPE：`Cannot invoke "…Nutrition.kcal()" because "n" is null` | NPE：`items 不能含 null 元素` |
+| `sum(List.of())` | 返回全 0，但**行为既没文档也没测试** | 返回全 0，且已在 javadoc 与测试里写死 |
+
+**抽样验证（2026-10-15，质量审查轮）**：构造器拒绝矩阵 **14/14 拦下**
+（六字段 × {NaN, -1}，加 kcal 的 ±∞）；合法值零误杀
+（全 0、米饭基准值、一餐合计值 `414.0/21.9/44.85/14.45/1.45/303.0` 全部照常构造）。
+
+**逐位不变性验证**：改动前后各跑一遍对照程序（反射调用私有 `round2` /
+`forGrams` 的代表值），拿 double 的**十六进制位模式**逐行比：
+`forGrams` 在 `0/5/100/150/225/1000/5000` 七个克数上 **8 行输出完全相同**，
+拒绝路径（`-1/-0.0/5000.001/10000/NaN/∞`）**7 行完全相同**，
+`sum([rice150, chicken])` 也完全相同。
+`round2` 与 `Round.to2` 的共同输入 **6/6 位模式一致**（含 `NaN→0.0`、`∞→9.223372036854776E16`）。
+`Round.to2` 的表达式与原来的 `round2` **逐字相同**（`Math.round(v * 100.0) / 100.0`），
+所以 28 个既有测试与全部变异结论原样成立。
+
+**为什么用 `Math.round`**：它按「四舍五入远离零」处理 `.5`，对负数对称
+（`-1.005 → -1.01` 而非 `-1.00`）——注意实测值是 `round2(-1.005) = -1.0`
+（`-1.005` 的 double 字面量略大于 `-1.005`，故落在 `-1.0` 一侧），
+`-2.675 → -2.67`。营养与重量只关心量级，这个方向性无害。
+**取舍已记录**：`Math.round` 返回 `long` 且饱和，超过约 `9.2e16` 会静默截断——
+现在这条路径被 `Nutrition` 的有限性校验**在构造处**堵死，不再能流进统计。
+
+**为什么 `Round` 用包内可见**：目前只有 `com.change.calc` 包内需要它。
+将来的 service 层若需要，再提升可见性（而不是现在就 `public`）。
+
+**命名约定（冻结，一行注释，不重命名）**：质量审查明确**不要**把 `Nutrition`
+改名成 `NutritionPer100g`——`sum()` 返回的合计值没有 per-100g 基准，改名反而制造新的语义矛盾。
+改为在 `NutritionCalculator` 的类注释里写死：
+「凡持有 per-100g 基准值的变量/参数一律带 `per100` 前缀（`forGrams` 的参数已经这么做）。
+没有该前缀的，就是实际份量的值。」
 
 - [x] **Step 4: 跑测试，确认通过**
 
 Run: `cd backend && mvn -B test -Dtest=NutritionCalculatorTest`
 
-Expected: `Tests run: 8, Failures: 0, Errors: 0`
+Expected: `Tests run: 12, Failures: 0, Errors: 0`（8 + 质量审查轮新增 4 条）
 
 **实测（2026-10-15）**：`Tests run: 6, Failures: 0, Errors: 0, Skipped: 0`，
 耗时 **0.115 s**——纯类、无 Spring 上下文，符合「`calc/` 不依赖框架」的设计意图
@@ -2274,6 +2432,15 @@ Expected: `Tests run: 8, Failures: 0, Errors: 0`
 > **补记（2026-10-15，规格评审轮）**：上面这条 `Tests run: 6` 是补完 3 个覆盖缺口
 > **之前**的实测记录。补完两个测试方法后复测为
 > `Tests run: 8, Failures: 0, Errors: 0, Skipped: 0`。
+
+> **再补记（2026-10-15，质量审查轮）**：补完 Step 3b 的 4 条校验测试后，
+> `mvn -B test -Dtest=NutritionCalculatorTest` 实测
+> **`Tests run: 12, Failures: 0, Errors: 0, Skipped: 0`**（8 + 4）。
+> 4 条新增：`rejects_non_finite_and_negative_nutrition`、
+> `gram_based_fields_are_validated_too`、`sum_of_empty_list_is_all_zero`、
+> `sum_rejects_null_list_and_null_elements`。
+> **既有 26 条断言行逐字未动**（用脚本对比 HEAD 版本与当前版本的断言行集合：
+> HEAD 的 26 行全部原样保留，新增的 18 行全部来自上述 4 个新方法）。
 
 **Step 4b（原始计划没有，为回答「有没有恒真断言」而补做）：变异测试**
 
@@ -2323,6 +2490,23 @@ Expected: `Tests run: 8, Failures: 0, Errors: 0`
 | M16 `k` 硬编码成 `150/100.0` | 杀（2 条） |
 | M17 把 225 映射回 150（两份量算出同一数） | 杀 `changing_portion_recomputes_from_scratch` |
 
+**变异测试复验（2026-10-15，质量审查轮，抽取 `Round` 之后）**
+
+抽 `Round` 会把 `round2` 从 `NutritionCalculator` 私有方法搬成另一个类的包内静态方法，
+**风险是守卫被搬松**（比如搬的时候顺手改精度）。所以三个关键变异体重跑一遍：
+
+| 变异体 | 改动 | 实测结果（删 `target` 后跑） | 红灯方法 |
+| --- | --- | --- | --- |
+| M3′ | `Round.to2` 精度改成三位 `*1000/1000` | **杀** —— `Tests run: 12, Failures: 1, Errors: 0`，`expected: 1.3  but was: 1.295` | `rounding_is_exactly_two_decimals` |
+| M7′ | 上限校验 `>` 改 `>=` | **杀** —— `Tests run: 12, Failures: 0, Errors: 1`，`IllegalArgument grams 超出上限 5000.0: 5000.0` | `accepts_exactly_the_upper_bound_and_rejects_just_above` |
+| M10′ | `sum` 不累加 `carb` | **杀** —— `Tests run: 12, Failures: 1, Errors: 0`，`expected: 44.85  but was: 0.0` | `sums_a_meal` |
+
+**结论：抽取没有削弱守卫**，三个变异体全部仍被杀，且红灯落在预期的方法上。
+每个变异体跑完后源文件用 sha256 逐字节校验已恢复（3/3 一致），恢复后全量回归 32/32 绿。
+
+> **方法学提醒**：这轮替换源码用的是 Python（显式 UTF-8、bytes 级读写），
+> **不是 PowerShell**——源码里有中文注释，PowerShell 按 GBK 读 UTF-8 会静默损坏文件。
+
 **结论：原有 6 个测试方法里的每一条断言都不是恒真的**——每条都能指名一个让它变红的最小改动。
 但变异测试同时暴露了 **3 个测试覆盖缺口**（是「漏测」，不是「恒真断言」）：
 
@@ -2355,6 +2539,8 @@ git commit -m "feat: 热量计算（每 100 克基准 + 实时换算），含份
 
 Run: `cd backend && mvn -B clean test`
 
+Expected（质量审查轮更新后）: `Tests run: 32, Failures: 0, Errors: 0`
+
 **实测（2026-10-15）**：`Tests run: 26, Failures: 0, Errors: 0, Skipped: 0`——
 **26 = 原 20 + 本任务 6**，与预期一致。六个测试类逐项：
 `NutritionCalculatorTest` 6、`SchemaTest` 8、`MigrationTest` 5、
@@ -2367,6 +2553,14 @@ Run: `cd backend && mvn -B clean test`
 另在 `sums_a_meal` 内补了 4 行断言）。逐项：
 `NutritionCalculatorTest` 8、`SchemaTest` 8、`MigrationTest` 5、
 `DataDirectoryInitializerTest` 3、`ChangeApplicationTests` 2、`TrainingRepoTest` 2。
+
+**再复测（2026-10-15，质量审查轮补完 Step 3b 的 4 条校验测试之后）**：
+删掉 `backend/target` 后 `mvn -B test` 实测
+**`Tests run: 32, Failures: 0, Errors: 0, Skipped: 0`**——
+**32 = 原 20 + 本任务 12**（8 + Step 3b 的 4 条）。逐项：
+`NutritionCalculatorTest` **12**、`SchemaTest` 8、`MigrationTest` 5、
+`DataDirectoryInitializerTest` 3、`ChangeApplicationTests` 2、`TrainingRepoTest` 2。
+**新增的 4 条全是新方法，既有期望值一个都没改。**
 
 ### 期望值独立核算（不照抄，用 IEEE-754 逐位验证）
 
@@ -2927,7 +3121,7 @@ public final class OneRepMax {
         if (weight < 0) {
             throw new IllegalArgumentException("weight 不能为负: " + weight);
         }
-        return round2(weight * (1 + reps / 30.0));
+        return Round.to2(weight * (1 + reps / 30.0));
     }
 
     public static double bestOf(List<Set> sets) {
@@ -2940,12 +3134,20 @@ public final class OneRepMax {
         }
         return best;
     }
-
-    private static double round2(double v) {
-        return Math.round(v * 100.0) / 100.0;
-    }
 }
 ```
+
+> **（2026-10-15，质量审查轮）本 fence 已同步**：这里原先是**第三份逐字相同的 `round2` 拷贝**
+> （`private static double round2(double v) { return Math.round(v * 100.0) / 100.0; }`）。
+> Task 5 的 Step 3b 已把它抽成包内可见的 `com.change.calc.Round.to2`，
+> 所以本任务**直接调用 `Round.to2`，不要再写一份私有拷贝**——
+> 否则三处各有一份，改一处就得记得改三处。
+> 本任务只改这一处调用与 `import`（同包，无需 import）；`OneRepMax` 的算法逻辑与
+> 上表 5 个期望值不受影响（`Round.to2` 的表达式与旧 `round2` 逐字相同）。
+> ℹ️ 遗留观察（本轮**不处理**，留给 Task 8 自己判断）：`epley` 只校验了 `weight < 0`，
+> **没有校验 `weight` 是否为有限值**——`epley(Double.POSITIVE_INFINITY, 5)` 会返回 `∞`
+> 而不抛错。`Round.to2(∞)` 会饱和到 `9.223372036854776E16`（与 Task 5 改动前同一现象）。
+> Task 8 若要跟上 `Nutrition` 的校验口径，应在这里补一条有限性校验。
 
 - [ ] **Step 4: 跑测试，确认通过**
 
