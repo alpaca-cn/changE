@@ -60,5 +60,26 @@ class NutritionCalculatorTest {
 
         assertThat(meal.kcal()).isEqualTo(414.0);
         assertThat(meal.protein()).isEqualTo(21.9);
+        assertThat(meal.carb()).isEqualTo(44.85);
+        assertThat(meal.fat()).isEqualTo(14.45);
+        assertThat(meal.fiber()).isEqualTo(1.45);
+        assertThat(meal.sodium()).isEqualTo(303.0);
+    }
+
+    @Test
+    void rounding_is_exactly_two_decimals() {
+        // 5 克的碳水 = 25.9 × 0.05 = 1.295；两位舍入给 1.3，三位会给 1.295。
+        // 这条锁住 round2 的精度本身，而不只是「不粗于两位」。
+        assertThat(NutritionCalculator.forGrams(RICE_PER_100G, 5).carb()).isEqualTo(1.3);
+    }
+
+    @Test
+    void accepts_exactly_the_upper_bound_and_rejects_just_above() {
+        // 边界：5000 必须被接受，5000.001 必须被拒。
+        // 只测「深处越界」（10000）的话，把 > 写成 >= 无人察觉。
+        assertThat(NutritionCalculator.forGrams(RICE_PER_100G, 5_000).kcal()).isEqualTo(5_800.0);
+        assertThatThrownBy(() -> NutritionCalculator.forGrams(RICE_PER_100G, 5_000.001))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("grams");
     }
 }
