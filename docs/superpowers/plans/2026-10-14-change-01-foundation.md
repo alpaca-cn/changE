@@ -2068,7 +2068,7 @@ git commit -m "feat: 训练域实体与仓储，覆盖三层嵌套与计时/每�
 - Create: `backend/src/main/java/com/change/calc/NutritionCalculator.java`
 - Test: `backend/src/test/java/com/change/calc/NutritionCalculatorTest.java`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```java
 package com.change.calc;
@@ -2137,13 +2137,38 @@ class NutritionCalculatorTest {
 }
 ```
 
-- [ ] **Step 2: 跑测试，确认它失败**
+- [x] **Step 2: 跑测试，确认它失败**
 
 Run: `cd backend && mvn -B test -Dtest=NutritionCalculatorTest`
 
 Expected: 编译失败，提示 `cannot find symbol: class Nutrition` / `NutritionCalculator`
 
-- [ ] **Step 3: 写实现**
+**实测（2026-10-15）**：`BUILD FAILURE`，`testCompile` 报 **15 个**「找不到符号」
+（本机 locale 为 zh_CN，英文提示为 cannot find symbol）：多处 `类 Nutrition` 与
+`变量 NutritionCalculator` 未定义。原始输出：
+
+```text
+[INFO] --- compiler:3.14.1:testCompile (default-testCompile) @ change-backend ---
+[INFO] Compiling 6 source files with javac [debug parameters release 25] to target\test-classes
+[ERROR] COMPILATION ERROR :
+[ERROR] .../NutritionCalculatorTest.java:[11,26] 找不到符号
+  符号:   类 Nutrition
+  位置: 类 com.change.calc.NutritionCalculatorTest
+[ERROR] .../NutritionCalculatorTest.java:[16,28] 找不到符号
+  符号:   变量 NutritionCalculator
+  位置: 类 com.change.calc.NutritionCalculatorTest
+[ERROR] .../NutritionCalculatorTest.java:[37,20] 找不到符号
+  （共 15 处，略）
+[INFO] 15 errors
+[INFO] BUILD FAILURE
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.14.1:testCompile
+```
+
+⚠️ 读这条证据时要准确：编译失败意味着**一条断言都没跑到**。
+它只证明「测试先于实现存在」，**不能**证明「断言会红」。
+断言本身可失败的证据在 Step 4 的变异测试里。
+
+- [x] **Step 3: 写实现**
 
 ```java
 package com.change.calc;
@@ -2209,13 +2234,58 @@ public final class NutritionCalculator {
 }
 ```
 
-- [ ] **Step 4: 跑测试，确认通过**
+- [x] **Step 4: 跑测试，确认通过**
 
 Run: `cd backend && mvn -B test -Dtest=NutritionCalculatorTest`
 
 Expected: `Tests run: 6, Failures: 0, Errors: 0`
 
-- [ ] **Step 5: 提交**
+**实测（2026-10-15）**：`Tests run: 6, Failures: 0, Errors: 0, Skipped: 0`，
+耗时 **0.115 s**——纯类、无 Spring 上下文，符合「`calc/` 不依赖框架」的设计意图
+（对比：同一次全量里 `@SpringBootTest` 要 5.7 s）。
+
+**Step 4b（原始计划没有，为回答「有没有恒真断言」而补做）：变异测试**
+
+做法：每次只改实现里的一处（模拟手滑），跑测试，看哪些断言变红。共 17 个变异体，
+**13 杀 / 4 活**（存活的是 M3、M6、M7、M10，每一个都对应一个真实的测试覆盖缺口，见下方）。
+
+> **更正（2026-10-15）**：本段最初写的是「11 杀 / 6 活」，是我把两个版本的统计混在了一起：
+> 第一轮只跑了 15 个变异体（11 杀 4 活）且失败用例名字解析有 bug，补上 M16/M17 后是
+> **17 个变异体、13 杀、4 活**。上表的逐条结论两轮一致，只有这行汇总数错过，已改。
+
+| 变异（只改一处） | 结果 |
+| --- | --- |
+| M1 `grams/100` → `grams/10` | 杀（3 条测试红） |
+| M2 `round2` 的 `100.0` → `10.0` | 杀 |
+| M3 `round2` 精度改成三位 `*1000/1000` | **存活 —— 缺口 1** |
+| M4 `Math.round(v*100.0)/10.0` | 杀（3 条） |
+| M5 负数校验 `<` → `>`（条件永不触发） | 杀（4 条） |
+| M6 `grams < 0` → `grams < -0.0` | **存活 —— 缺口 2** |
+| M7 上限校验 `>` → `>=`（正好 5000 被误拒） | **存活 —— 缺口 2** |
+| M8 上限校验 `>` → `<` | 杀（5 条） |
+| M9 `MAX_GRAMS` 5000 → 50000 | 杀（`rejects_absurd_grams`） |
+| M10 `sum` 里少累加 `carb` | **存活 —— 缺口 3** |
+| M11 `sum` 里 kcal/protein 互换累加 | 杀 |
+| M12 `sum` 只返回首条 | 杀 |
+| M13 `forGrams` 里 carb/protein 位置互换 | 杀（2 条） |
+| M14 `Nutrition` record 参数顺序换 carb/protein | 杀 |
+| M15 `forGrams` 不换算（`k = 1.0`） | 杀（4 条） |
+| M16 `k` 硬编码成 `150/100.0` | 杀（2 条） |
+| M17 把 225 映射回 150（两份量算出同一数） | 杀 `changing_portion_recomputes_from_scratch` |
+
+**结论：6 条断言没有一条是恒真的**——每条都能指名一个让它变红的最小改动。
+但变异测试同时暴露了 **3 个测试覆盖缺口**（是「漏测」，不是「恒真断言」）：
+
+1. **`round2` 只被锁住了「精度不粗于两位」，没锁「不细于两位」**。
+   把精度改成三位小数（M3）测试**全绿**，因为 `174.0 / 3.9 / 38.85 / 261.0 / 414.0 / 21.9`
+   在三位小数精度下也是同一个 double。真正锁住精度的是 `38.85`。
+2. **只测了「深处越界」，没测「边界本身」**：`10000`（越界 2 倍）与 `-1` 能红，
+   但 `4999 / 5000 / 5000.001` 一个都没测，所以 `>` 写成 `>=`
+   （把正好 5000 g 误拒）无人察觉；`grams < 0` 与 `grams < -0.0` 在测试用到的输入上等价。
+3. **`sum` 有四个字段完全没被断言**：`sums_a_meal` 只断言了 `kcal` 与 `protein`，
+   所以 `sum` 里 `carb / fat / fiber / sodium` 的累加整段删掉都不红（M10 存活）。
+
+- [x] **Step 5: 提交**
 
 ```bash
 git add backend/src/main/java/com/change/calc/Nutrition.java \
@@ -2223,6 +2293,133 @@ git add backend/src/main/java/com/change/calc/Nutrition.java \
         backend/src/test/java/com/change/calc/NutritionCalculatorTest.java
 git commit -m "feat: 热量计算（每 100 克基准 + 实时换算），含份量上限校验"
 ```
+
+**Step 6（原始计划没有，本次任务要求补做）：全量回归**
+
+Run: `cd backend && mvn -B clean test`
+
+**实测（2026-10-15）**：`Tests run: 26, Failures: 0, Errors: 0, Skipped: 0`——
+**26 = 原 20 + 本任务 6**，与预期一致。六个测试类逐项：
+`NutritionCalculatorTest` 6、`SchemaTest` 8、`MigrationTest` 5、
+`DataDirectoryInitializerTest` 3、`ChangeApplicationTests` 2、`TrainingRepoTest` 2。
+
+**Step 6（原始计划没有，本次任务要求补做）：全量回归**
+
+Run: `cd backend && mvn -B clean test`
+
+**实测（2026-10-15）**：`Tests run: 26, Failures: 0, Errors: 0, Skipped: 0`——
+**26 = 原 20 + 本任务 6**，与预期一致。六个测试类逐项：
+`NutritionCalculatorTest` 6、`SchemaTest` 8、`MigrationTest` 5、
+`DataDirectoryInitializerTest` 3、`ChangeApplicationTests` 2、`TrainingRepoTest` 2。
+
+### 期望值独立核算（不照抄，用 IEEE-754 逐位验证）
+
+断言用的是 `isEqualTo(double)`，比的是**位模式**，不是「看起来相等」，所以逐条算了精确值：
+
+| 算式 | 结果 | 说明 |
+| --- | --- | --- |
+| `116 × 150/100` | `174.0` ✅ | `150/100.0 = 1.5` 精确；乘积精确 |
+| `2.6 × 1.5 = 3.9` | `3.9` ✅ | `2.6` 与 `3.9` 都不可精确表示；`2.6×1.5` 的精确值 = `3.89999999999999991118…`，落回 `double(3.9)` 的位模式 |
+| `25.9 × 1.5 = 38.85` | `38.85` ✅ | 精确值 `38.84999999999999431…`，`×100 = 3884.9999999999995…`，`Math.round → 3885`，`/100` 落回 `double(38.85)`。**这一次 `round2` 不是锦上添花，是必需的**（不 round2 会得到 `38.849999999999994`） |
+| `116 × 2.25 = 261.0` | `261.0` ✅ | `225/100.0 = 2.25` 精确 |
+| `174.0 + 240 = 414.0` | `414.0` ✅ | 整数运算，精确 |
+| `3.9 + 18 = 21.9` | `21.9` ✅ | ⚠️ **这条是「侥幸通过」**：`3.9(精确 3.89999999999999991118…) + 18` 的**精确和**是 `21.89999999999999991118…`，而 `double(21.9)` 是 `21.89999999999999857891…`——两者**不是同一个有理数**。只是 `21.89999999999999991…` 到最近 double 的距离恰好把结果舍入到 `double(21.9)`，边界只差约 1.3e-15。若把第二条改成别的值，同一条断言的写法就会红 |
+
+**结论：6 个期望值全部算对，不需要改测试，也不需要改实现。** 但第 6 条记一个「脆弱」标记——
+断言本身正确，只是它的通过依赖于 IEEE-754 的舍入巧合，不是数学上的必然。
+
+### 边界思考结论
+
+**（1）`round2` 对负数与极大值的行为。**
+`Math.round(v*100.0)/100.0` 在负数上是 **half-up 而非 half-even**，且方向朝 +∞：
+`round2(-0.005) = 0.0`、`round2(-1.005) = -1.0`、`round2(-2.675) = -2.67`。
+也就是说负数侧的「平局」会向零靠。这对本任务是**无害**的：`grams ≥ 0`，
+`food` 表的营养值也应非负，`sum` 累加的同样是非负值，负数路径实际不可达。
+真正的问题是**极大值**：`Math.round` 返回 `long` 且**饱和**，
+`round2(1e17) = 9.223372036854776e16`、`round2(1e308)` 与 `round2(+∞)` 都塌到
+`Long.MAX_VALUE/100`，`round2(NaN) = 0.0`。即**超过约 9.2e16 的输入会被静默截断**，
+不抛异常。`sum` 的入参没有任何校验（`forGrams` 有，`sum` 没有），
+所以如果将来有人把「一周总量」或异常数据喂进 `sum`，会得到静默的错误值而不是报错。
+当前调用面（一餐 3–10 条，各 ≤5000 g）离这个量级有 12 个数量级，**不构成现实风险**；
+建议在 Task 6 或汇总统计落地时复核。
+
+**（2）`MAX_GRAMS = 5000` 是否合理。**
+对「单次录入」合理：一顿饭单人份 5 kg 不可能。但要注意两件事：
+① 这是**单条目上限**，不是单餐上限——一餐 5 条各 1 kg 的合计 5 kg 不受约束，
+而 `sum` 也没有上限，所以「整餐上限」其实没设防；
+② **批量录入确实会撞到**：一次记一周备餐（比如 7 份 × 800 g = 5600 g）如果被实现成
+「一次调用 `forGrams` 传总克数」，就会误报。正确做法是**每份各调一次再 `sum`**，
+这也正是 per-100g 铁律想要的使用方式。**建议**：把 `MAX_GRAMS` 的语义在注释里写死成
+「单条目上限」，并在餐记录服务层另外设一个「单餐合计上限」。本次**不改**。
+
+**（3）`Nutrition` 六个 `double` 的位置参数容易写错。**
+确实容易：`new Nutrition(240, 18, 6, 14, 1, 300)` 光看数字读不出哪个是 fat、哪个是 fiber。
+更防错的方案（**建议，本次不擅自改**，因为 record 的形状已被下游设计与迁移引用）：
+- 用**静态工厂 + 具名参数**，或 builder；
+- 至少给六个分量加**单位后缀**的意识；
+- 最小成本的缓解：调用处一律用具名局部变量再传入。
+
+⚠️ 实测发现一个**真实的文档缺陷**：`Nutrition` 的类注释写「单位：kcal 与克」，
+但 `sodium` 的取值 `2.0 / 300` 明显是**毫克**（300 mg 钠 ≈ 一份正餐），
+按「克」读则 300 g 钠是致死量的上千倍。**注释与数据不符**。
+建议后续把注释改成「kcal 与克；sodium 为毫克」。本次不改代码。
+
+**（4）先 `round2` 再 `sum`，会不会有累积舍入误差？**
+会，而且是**真实存在但很小**的偏差。逐条 `round2` 会把每条最多 0.005 的误差固定下来，
+再累加，误差上界约 `条数 × 0.005`。实测（每条 0.005 kcal）：
+`n=3` 差 `0.01`、`n=5` 差 `0.02`、`n=10` 差 `0.05`、`n=100` 差 `0.5`、`n=10000` 差 `50 kcal`。
+**关键结论：这个差异在真实使用（一餐 3–10 条）里不重要。**
+- 上界是 `n × 0.005 = 0.05 kcal`（n=10），相对一餐 400–800 kcal 是 **0.01% 量级**，
+  远小于食物库本身的误差（USDA 数据自身有 5–10% 波动）。
+- 用真实食物数据（5 条不同食物，含小数尾巴）实测：逐条舍入 `410.35`、
+  先和后舍 `410.35`，**差 0**。因为 per-100g 值本身通常只到一位小数，
+  `round2` 对它们多是恒等操作。
+- 反过来，**先 `round2` 是对的**：它的价值在「显示与存储的一致性」——
+  界面显示的每条就是这个数，合计必须等于这些显示值之和，否则用户会看到「加起来对不上」。
+  为 0.01% 的理论精度去牺牲「显示可加性」是亏的。
+- `sum` 末尾再 `round2` 一次是必要的：它把 double 累加的噪声（如 `0.1+0.2`）收掉。
+  用精确算术（Decimal）验证过：在「分量已 `round2` 到两位」的前提下，
+  「先舍后加」与「先加后舍」在真实取值范围内结果一致。
+
+### 恒真断言逐条判断
+
+**结论：6 条断言没有恒真的。** 每条都能指名「让它红」的最小改动（变异编号见 Step 4 的变异测试表）：
+
+| 断言 | 怎么才能变红 | 是否恒真 |
+| --- | --- | --- |
+| `computes…: kcal == 174.0` | M1/M4/M15/M16 | 否 |
+| `computes…: protein == 3.9` | M13/M14（分量错位） | 否 |
+| `computes…: carb == 38.85` | M2/M4（`round2` 因子错） | 否 |
+| `changing…: oneBowl == 174.0` | M1/M4/M15 | 否 |
+| `changing…: oneAndHalf == 261.0` | M1/M4/M15、M17 | 否 |
+| `changing…: oneAndHalf != oneBowl` | M17 | 否（但见下方「多余吗」） |
+| `zero…: kcal isZero` | M1/M4/M15（`grams=0` 时 `k` 不归零） | 否 |
+| `rejects_negative_grams` | M5（`<` 写反）、M8 | 否 |
+| `rejects_absurd_grams` | M8（条件写反）、M9（上限放宽） | 否 |
+| `sums_a_meal: kcal == 414.0` | M1/M4/M11/M12/M15/M16 | 否 |
+| `sums_a_meal: protein == 21.9` | M1/M4/M11/M12/M15/M16 | 否 |
+
+**`isNotEqualTo(oneBowl.kcal())` 是多余的吗？——作为「检测手段」完全多余，作为「文档」有价值。**
+
+证明（三段论即可）：该断言位于
+`assertThat(oneBowl.kcal()).isEqualTo(174.0)` 与
+`assertThat(oneAndHalf.kcal()).isEqualTo(261.0)` **之后**。若前两条都通过，
+则 `oneAndHalf.kcal() == 261.0 != 174.0 == oneBowl.kcal()`，第三条**必然通过**。
+反过来，第三条要能单独变红，就必须存在一种实现让「174.0 与 261.0 都成立、但两者相等」——
+自相矛盾。**所以这条断言在任何实现下都不可能成为唯一的红灯。**
+（实测佐证：M17 让两份量同值，第 5 行的 `oneAndHalf == 261.0` 先红，
+`isNotEqualTo` 根本没被执行到。）
+
+**但它不是废代码**，理由有两条：
+1. **它锁的是「铁律」本身，不是数值**：前两条只锁了「150→174、225→261」两个点，
+   这条锁的是「**函数真的依赖 grams 参数**」这个性质。
+2. **它是未来引入缓存时的哨兵**：一旦有人为了性能给 `forGrams` 加
+   「按 `per100g` 缓存结果」的优化（key 不含 grams），两份量就会返回同一个值，
+   这条断言立刻变红——而前两条 `isEqualTo` 可能会因为缓存里先存进去的是哪个值而随机通过。
+   这正是本任务「绝不回存结果」那条铁律最容易被破坏的方式。
+
+**建议保留**，只把注释补一句「本断言同时是缓存回归的哨兵」。本次**不改测试**
+（任务要求不擅自改期望值）。
 
 ---
 
