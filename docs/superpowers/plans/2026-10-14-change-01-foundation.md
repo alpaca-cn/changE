@@ -5144,6 +5144,10 @@ class ChangeLogServiceTest {
     @Test
     void undo_rejects_a_non_identifier_column_name() {
         // 参数占位符保护值，保护不了标识符——列名是拼进 SQL 的。
+        // 这一条同时也是「注入确实会被执行」的反证：键名本身是 `kcal_per100 = 1, name_zh`，
+        // 去掉校验后它就会变成 SQL 的一部分（M02 实测变红）。
+        // 报错文案随校验方式改成了按 schema 校验（详见 writableColumns 的注释），
+        // 断言跟着改成钉「这个恶意列名被点名」+ 那句说明，而不是钉具体的措辞。
         long id = insertFood("测试食物E", 500);
         long logId = logs.recordUpdate("food", id,
                 Map.of("kcal_per100 = 1, name_zh", 1.0),   // 恶意键
@@ -5151,7 +5155,136 @@ class ChangeLogServiceTest {
 
         assertThatThrownBy(() -> logs.undo(logId))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("非法的列名");
+                .hasMessageContaining("kcal_per100 = 1, name_zh")
+                .hasMessageContaining("可回退写入的列");
+    }
+
+    @Test
+    void undo_refuses_to_rewrite_the_primary_key() {
+        // SQLite 的 rowid / _rowid_ / oid 是主键的别名（INTEGER PRIMARY KEY 表上就是 id），
+        // 它们能通过任何标识符正则，而 SET rowid = ? 是合法 SQL。
+        // 不拦的话，撤销会静默把目标行的主键搬走，而 change_log.target_id 仍指向旧 id——
+        // 后续 undo 会定位到别的行。
+        long id = insertFood("测试食物H", 800);
+        long targetId = id;
+
+        for (String pkAlias : java.util.List.of("id", "rowid", "_rowid_", "oid")) {
+            long logId = logs.recordUpdate("food", targetId,
+                    Map.of(pkAlias, 7L), Map.of("kcal_per100", 1.0), "agent", null);
+
+            assertThatThrownBy(() -> logs.undo(logId))
+                    .as("主键别名 %s 必须被拒绝", pkAlias)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(pkAlias);
+
+            // 拒绝之后 undone 必须保持 0：不能留下「日志说撤了、数据没动」的半截状态
+            assertThat(jdbc.queryForObject(
+                    "SELECT undone FROM change_log WHERE id = ?", Integer.class, logId)).isZero();
+            // 目标行必须原地不动
+            assertThat(jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM food WHERE id = ?", Integer.class, targetId)).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void undo_refuses_a_column_that_does_not_exist() {
+        // 拼写错误与保留字都落到这里（select 这类保留字通过任何标识符正则，只在 SQLite 层报语法错）
+        long id = insertFood("测试食物I", 900);
+        long logId = logs.recordUpdate("food", id,
+                Map.of("kcal_per100_typo", 1.0), Map.of("kcal_per100", 1.0), "agent", null);
+
+        assertThatThrownBy(() -> logs.undo(logId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("kcal_per100_typo");
+    }
+
+    @Test
+    void undo_fails_when_the_target_row_is_gone() {
+        // 影响 0 行却照样置 undone=1 的话，审计日志会声称「已撤销」而数据什么都没动。
+        long id = insertFood("测试食物J", 1000);
+        long logId = logs.recordUpdate("food", id,
+                Map.of("kcal_per100", 1000.0), Map.of("kcal_per100", 1.0), "agent", null);
+
+        jdbc.update("DELETE FROM food WHERE id = ?", id);   // 目标行先没了
+
+        assertThatThrownBy(() -> logs.undo(logId))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("目标行已不存在");
+        assertThat(jdbc.queryForObject(
+                "SELECT undone FROM change_log WHERE id = ?", Integer.class, logId)).isZero();
+    }
+
+    @Test
+    void undo_of_a_referenced_row_translates_the_foreign_key_error() {
+        // undo 一条 insert 是物理 DELETE。这条 food 已被 meal_item.food_id 引用
+        // （meal_item.food_id 是裸 REFERENCES，默认 NO ACTION），DELETE 会被外键拦下。
+        // 不翻译的话，用户看到的是一句 SQLITE_CONSTRAINT_FOREIGNKEY 天书。
+        long foodId = insertFood("测试食物K", 1100);
+        long logId = logs.recordInsert("food", foodId, Map.of("name_zh", "测试食物K"),
+                "agent", null);
+
+        jdbc.update("INSERT INTO meal(meal_date, slot) VALUES (?,?)", "2026-10-16", "lunch");
+        long mealId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+        jdbc.update("INSERT INTO meal_item(meal_id, food_id, order_index, amount, grams) " +
+                    "VALUES (?,?,?,?,?)", mealId, foodId, 0, 100.0, 100.0);
+
+        assertThatThrownBy(() -> logs.undo(logId))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("引用");
+        // 报错路径同样不能留下半截状态：food 还在，日志也还是「没撤」。
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM food WHERE id = ?", Integer.class, foodId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT undone FROM change_log WHERE id = ?", Integer.class, logId)).isZero();
+    }
+
+    @Test
+    void undo_of_a_cascaded_parent_row_silently_drops_the_join_rows() {
+        // 契约的另一半（见 ChangeLogService 的类 javadoc）：撤销一个被 CASCADE 引用的父行
+        // 会连带删掉子行，而快照两侧都不含子行。这条测试把这个**实际后果**钉下来，
+        // 免得将来做「动作编辑」的人以为撤销后再重做能拿回肌群标注。
+        jdbc.update("INSERT INTO muscle_group(name_zh, name_en, body_part) VALUES (?,?,?)",
+                "胸", "ChangE Test Chest", "chest");
+        long muscleId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+        jdbc.update("INSERT INTO exercise(name_en, name_zh) VALUES (?,?)",
+                "ChangE Test Bench Press", "测试卧推");
+        long exerciseId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+        jdbc.update("INSERT INTO exercise_muscle(exercise_id, muscle_group_id, role) VALUES (?,?,?)",
+                exerciseId, muscleId, "primary");
+        long logId = logs.recordInsert("exercise", exerciseId,
+                Map.of("name_en", "ChangE Test Bench Press"), "agent", null);
+
+        logs.undo(logId);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM exercise WHERE id = ?", Integer.class, exerciseId)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM exercise_muscle WHERE exercise_id = ?",
+                Integer.class, exerciseId))
+                .as("级联删掉了映射行，而快照里没有它——这就是契约里写明的缺口")
+                .isZero();
+    }
+
+    @Test
+    void undo_of_a_set_null_parent_row_silently_clears_the_referencing_column() {
+        // meal.photo_id 是 ON DELETE SET NULL：撤销 photo 的创建会**静默**清空 meal.photo_id，
+        // 被引用的那一侧没有任何报错可言。契约里写明这个后果。
+        jdbc.update("INSERT INTO photo(taken_on, rel_path, sha256, kind) VALUES (?,?,?,?)",
+                "2026-10-16", "photos/2026/10/16/changelog-test.png",
+                "changelog-test-sha256", "food");
+        long photoId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+        jdbc.update("INSERT INTO meal(meal_date, slot, photo_id) VALUES (?,?,?)",
+                "2026-10-16", "dinner", photoId);
+        long mealId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+        long logId = logs.recordInsert("photo", photoId,
+                Map.of("rel_path", "photos/2026/10/16/changelog-test.png"), "agent", null);
+
+        logs.undo(logId);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT photo_id FROM meal WHERE id = ?", Long.class, mealId))
+                .as("SET NULL 把这一格清空了，而回退过程一声不响")
+                .isNull();
     }
 
     @Test
@@ -5161,9 +5294,13 @@ class ChangeLogServiceTest {
                 Map.of("kcal_per100", 1.0), "agent", null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("before")
-                // ⚠️ 只断言 "before" 是不够判别的一句话：数据库侧的
-                // CHECK 报错原文里含 "before_json"，也含 "before"。
-                // 再加一条只有 Java 侧文案才有的词，这条断言才真的在钉「Java 先拦」。
+                // ⚠️ 上面那行 hasMessageContaining("before") 在本测试里**实际没有判别力**：
+                // 真正先失败的是它前一行 isInstanceOf(IllegalArgumentException.class)——
+                // 去掉 Java 侧校验后 DB 兜底抛的是 UncategorizedSQLException（M03 实测），
+                // 类型断言先失败，消息断言根本执行不到。
+                // （原先写的理由「DB 原文含 before_json，稀释了判别力」不对：DB 原文确实含
+                // before_json，但那句话不是这条断言失效的原因，类型断言才是。）
+                // 保留并补上「快照」是因为将来若有人放松类型断言，它是消息层面的真防线。
                 .hasMessageContaining("快照");
         assertThatThrownBy(() -> logs.recordUpdate("food", id, Map.of(),
                 Map.of("kcal_per100", 1.0), "agent", null))
@@ -5228,8 +5365,10 @@ package com.change.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -5237,7 +5376,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 变更日志：让「智能体可写」这件事有安全带。
@@ -5246,6 +5385,21 @@ import java.util.regex.Pattern;
  *   1. 表名必须在白名单里 —— 工具集是白名单，不是让模型自由写 SQL
  *   2. 只记录 insert / update，不提供 delete —— 删除无法撤销，所以干脆不给
  *   3. 每条改动存下 before / after 的 JSON 快照，可一键回退
+ *
+ * ## 回退的语义（契约）
+ *
+ * - **update 的回退是按列写回**：只有 `before` 快照里出现的列会被恢复，
+ *   未出现的列保持当前值。所以「回退一次部分修改」是合法且精确的——
+ *   调用方只需把**这次改动实际动过的列**放进 `before`。
+ * - 但这也意味着：如果调用方漏放了某一列，那一列**不会被恢复，且不会报错**。
+ *   写 `before` 的地方应当由「改动前读到的整行」或「本次改动涉及的列」构造，
+ *   不要凭记忆手写列名。
+ * - **列名必须真实存在于目标表且不是主键**；SQLite 的 rowid / _rowid_ / oid
+ *   是主键别名，会被拒绝（否则回退会搬走目标行的主键）。
+ * - **撤销一个被外键 CASCADE 引用的父行会连带删掉子行**，而快照里不含子行。
+ *   典型例子：撤销 `exercise` 的创建会级联删掉 `exercise_muscle` 的映射行，
+ *   而快照两侧都不含映射——「撤销后再重做」会静默丢掉肌群标注。
+ *   动作编辑功能落地时必须扩展快照（记下 muscle_map）或改为整组重建 join 行。
  */
 @Service
 public class ChangeLogService {
@@ -5275,9 +5429,6 @@ public class ChangeLogService {
      * 出于同一理由也是 {@code List}。
      */
     public static final List<String> ALLOWED_ORIGINS = List.of("user", "agent");
-
-    /** 合法的 SQL 标识符：字母或下划线开头，其余为字母/数字/下划线。 */
-    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
@@ -5328,7 +5479,15 @@ public class ChangeLogService {
         return jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
     }
 
-    /** 回退一条改动。insert 的回退是删除该行；update 的回退是写回 before 值。 */
+    /**
+     * 回退一条改动。insert 的回退是删除该行；update 的回退是写回 before 值。
+     *
+     * {@code @Transactional} 不是可选的：本方法要写两处（目标表 + change_log）。
+     * 没有事务时第二步失败会留下「数据删了、日志说没撤」的矛盾状态，
+     * 而审计日志与数据不一致正是这个类最不该有的失效。
+     * 传播用默认（REQUIRED）——连接池只有 1 条连接，REQUIRES_NEW 会自己等自己。
+     */
+    @Transactional
     public void undo(long logId) {
         // 用 queryForList 而不是 queryForMap：查不到时前者给一个空列表，
         // 后者抛 Spring 的 EmptyResultDataAccessException——对调用方是一句读不懂的话。
@@ -5352,28 +5511,64 @@ public class ChangeLogService {
         // （删掉/改写白名单之外的任何表）。所以这里必须重新校验。
         requireAllowed(table);
 
-        if ("insert".equals(action)) {
-            jdbc.update("DELETE FROM " + table + " WHERE id = ?", targetId);
-        } else {
-            Map<String, Object> before = fromJson((String) row.get("before_json"));
-            if (before == null || before.isEmpty()) {
-                throw new IllegalStateException("update 记录缺少 before 快照: " + logId);
-            }
-            // sets 与 values 必须来自**同一次** entrySet() 迭代。
-            // 「keySet() 与 values() 顺序一致」是实现细节而不是 Map 的契约：
-            // 两次独立迭代一旦错位，就会把 A 列的值写给 B 列——静默写错数据，且不报错。
-            StringBuilder sets = new StringBuilder();
-            List<Object> values = new ArrayList<>();
-            for (Map.Entry<String, Object> e : before.entrySet()) {
-                requireIdentifier(e.getKey());
-                if (sets.length() > 0) {
-                    sets.append(", ");
+        int affected;
+        try {
+            if ("insert".equals(action)) {
+                affected = jdbc.update("DELETE FROM " + table + " WHERE id = ?", targetId);
+            } else {
+                Map<String, Object> before = fromJson((String) row.get("before_json"));
+                if (before == null || before.isEmpty()) {
+                    throw new IllegalStateException("update 记录缺少 before 快照: " + logId);
                 }
-                sets.append(e.getKey()).append(" = ?");
-                values.add(e.getValue());
+                // sets 与 values 必须来自**同一次** entrySet() 迭代。
+                // 「keySet() 与 values() 顺序一致」是实现细节而不是 Map 的契约：
+                // 两次独立迭代一旦错位，就会把 A 列的值写给 B 列——静默写错数据，且不报错。
+                StringBuilder sets = new StringBuilder();
+                List<Object> values = new ArrayList<>();
+                Set<String> writable = writableColumns(table);
+                for (Map.Entry<String, Object> e : before.entrySet()) {
+                    String column = e.getKey();
+                    if (!writable.contains(column)) {
+                        throw new IllegalArgumentException(
+                                "列名「" + column + "」不是 " + table + " 上可回退写入的列"
+                                        + "（必须真实存在且不是主键——SQLite 的 rowid/_rowid_/oid 是主键别名）");
+                    }
+                    if (sets.length() > 0) {
+                        sets.append(", ");
+                    }
+                    sets.append(column).append(" = ?");
+                    values.add(e.getValue());
+                }
+                values.add(targetId);
+                affected = jdbc.update(
+                        "UPDATE " + table + " SET " + sets + " WHERE id = ?", values.toArray());
             }
-            values.add(targetId);
-            jdbc.update("UPDATE " + table + " SET " + sets + " WHERE id = ?", values.toArray());
+        } catch (DataAccessException e) {
+            // 回退一条 insert 是物理 DELETE，会被外键拦下：默认动作（NO ACTION）直接抛
+            // SQLITE_CONSTRAINT_FOREIGNKEY，用户看到的是一句天书。这里翻译成能读懂的话。
+            //
+            // 为什么抓的是 DataAccessException 而不是 DataIntegrityViolationException（实测）：
+            // Spring 的 SQLite 错误码映射表里 **没有** 19 = SQLITE_CONSTRAINT，所以
+            // JdbcTemplate 把这个外键违例落到了兜底类 UncategorizedSQLException——
+            // 它**不是** DataIntegrityViolationException 的子类（后者继承
+            // NonTransientDataAccessException）。两者是兄弟，instanceof 判不出来。
+            // 实测证据：catch DataIntegrityViolationException 版本跑
+            // undo_of_a_referenced_row_translates_the_foreign_key_error，
+            // 断言报 “Expecting actual throwable to be an instance of
+            // java.lang.IllegalStateException but was:
+            // org.springframework.jdbc.UncategorizedSQLException … [SQLITE_CONSTRAINT_FOREIGNKEY]”。
+            // DataAccessException 是两者的共同父类，且本方法里不会有别的东西抛它。
+            throw new IllegalStateException(
+                    "回退失败：目标行被其他记录引用（" + table + ".id = " + targetId
+                            + "）。请先撤销引用它的记录。原始错误: "
+                            + e.getMostSpecificCause().getMessage(), e);
+        }
+
+        if (affected == 0) {
+            // 影响 0 行却照样写 undone=1 的话，审计日志会声称「已撤销」而数据什么都没动。
+            // 这条检查必须在 UPDATE change_log 之前——@Transactional 会把前面的写入一起回滚。
+            throw new IllegalStateException(
+                    "目标行已不存在，" + table + ".id = " + targetId + "，无法回退（未标记为已撤销）");
         }
 
         jdbc.update("UPDATE change_log SET undone = 1 WHERE id = ?", logId);
@@ -5387,17 +5582,20 @@ public class ChangeLogService {
     }
 
     /**
-     * 校验一列列名是合法的 SQL 标识符。
+     * 某张表上「可被回退写入」的列名集合（即：真实存在、且不是主键的列）。
      *
-     * 为什么必须校验：undo 的 UPDATE 路径要把列名拼进 SQL——
-     * 参数占位符只能保护**值**，保护不了**标识符**。
-     * 目前 before 的键由本项目的服务层构造，但这是一条注入面，
-     * 一旦将来有人把外部来源（模型输出、导入文件）的键传进来就会失效。
+     * 为什么要按 schema 校验而不是用黑名单：SQLite 的 rowid / _rowid_ / oid
+     * 是主键的**别名**（在 INTEGER PRIMARY KEY 表上就是 id），它们能通过任何
+     * 标识符正则，而 `SET rowid = ?` 是合法 SQL——用黑名单会漏，且维护不动。
+     * 「必须真实存在且不是主键」同时关掉伪列、保留字、拼写错误三类问题。
+     *
+     * 缓存：schema 由 Flyway 冻结，进程内不会变。
      */
-    private static void requireIdentifier(String column) {
-        if (column == null || !IDENTIFIER.matcher(column).matches()) {
-            throw new IllegalArgumentException("非法的列名: " + column);
-        }
+    private final Map<String, Set<String>> writableColumnsCache = new ConcurrentHashMap<>();
+
+    private Set<String> writableColumns(String table) {
+        return writableColumnsCache.computeIfAbsent(table, t -> Set.copyOf(jdbc.queryForList(
+                "SELECT name FROM pragma_table_info('" + t + "') WHERE pk = 0", String.class)));
     }
 
     private String toJson(Map<String, Object> m) {
@@ -5423,8 +5621,10 @@ public class ChangeLogService {
 
 Run: `cd backend && mvn -B test -Dtest=ChangeLogServiceTest`
 
-Expected（原计划写 5，**实测 12**）：原计划 5 条 + A2/B/C/D/E 的 5 条 + 本轮自查
+Expected（原计划写 5，落地轮**实测 12**）：原计划 5 条 + A2/B/C/D/E 的 5 条 + 本轮自查
 补的 2 条（undo 白名单、chat_session_id）= **`Tests run: 12, Failures: 0, Errors: 0`**。
+> ⚠️ 安全审查轮之后本类已增至 **18 条**（新增 4 条 + 2 条契约测试，见 6.7），
+> 全量套件 **102 条**；下面 6.1 的原始输出是**落地轮当时**的记录，保持原样。
 原始输出见 6.1，两条补测的依据见 6.3 的 M09 / M17。
 
 - [x] **Step 5: 提交**
@@ -5441,9 +5641,12 @@ git commit -m "feat: 变更日志与一键回退，表名白名单 + 禁止二�
 
 - [x] **Step 6（落地轮新增）：A–F 全部落地 + 17 个变异体实测 + schema 交叉验证**
 
-> 本轮（Task 9 落地轮）的改动记档。Step 1 / Step 3 两个 ```java fence 已**首次同步为磁盘原文**
-> （测试 12 条 225 行、实现 193 行），由脚本逐字比对，identical=True
-> （sha256 `c857ade0963530bf…` / `a7a0037955e400c6…`；两份文件无 BOM、无 U+FFFD、CRLF=0）。
+> 本轮（Task 9 落地轮）的改动记档。Step 1 / Step 3 两个 ```java fence 已**首次同步为磁盘原文**，
+> 由脚本逐字比对，identical=True。
+> ⚠️ 这两个 fence 在**安全审查轮**（见 6.7）里被再次同步到了当时的磁盘原文：
+> 此后测试 18 条 362 行、实现 254 行，
+> sha256 `eb7d0b19f54456de…` / `de34a2206ca326bf…`（两份文件无 BOM、无 U+FFFD、CRLF=0）；
+> 落地轮当时的 sha 是 `c857ade0963530bf…` / `a7a0037955e400c6…`。
 >
 > **原计划 5 条测试 → 落地 12 条**：A2/B/C/D/E 各 1 条（共 10 条），另 2 条是本轮**变异测试实测**
 > 出来的零覆盖项——undo 的表名白名单（M09）、`chat_session_id`（M17）。两条都不是顺手多写，
@@ -5592,14 +5795,15 @@ M17 分两次跑，用来证明补测**确实**是覆盖的来源（与 Task 8 �
 
 - 没有 `hasMessageContaining("null")` 这类恒真写法（JDK 裸 NPE 的消息本身就含 `null`）。
 - 但本轮发现了**同一类、更隐蔽**的一处：`record_update_requires_a_before_snapshot`
-  里 `hasMessageContaining("before")` **在消息层面不判别**——DB 兜底报错原文
-  `CHECK constraint failed: action <> 'update' OR before_json IS NOT NULL` 里含 `before_json`，
-  也含子串 `before`（M03 日志实测）。同理 `rejects_empty_after_and_unknown_origin` 里
-  `hasMessageContaining("origin")` 也命中 DB 原文 `origin IN ('user','agent')`（M05 日志实测）。
-  这两条断言的判别力来自 `isInstanceOf(IllegalArgumentException.class)`
-  （DB 侧抛的是 `UncategorizedSQLException`）。
-  处置：给 before 那条补了 `hasMessageContaining("快照")`——DB 原文里没有「快照」，
-  于是它在消息层面也判别。
+  里的 `hasMessageContaining("before")` **实际没有判别力**。
+  > ⚠️ **理由已在安全审查轮改正**（原先写的理由不准确）：真正先失败的是它前面那行
+  > `isInstanceOf(IllegalArgumentException.class)`——去掉 Java 侧校验后 DB 兜底抛的是
+  > `UncategorizedSQLException`（M03 实测），**类型断言先失败，消息断言根本执行不到**。
+  > 原先写的「DB 原文含 `before_json`，稀释了判别力」虽然也是事实，但**不是**这条断言失效的原因。
+  同理 `rejects_empty_after_and_unknown_origin` 里 `hasMessageContaining("origin")` 的处境一样
+  （DB 原文 `origin IN ('user','agent')` 含 `origin`，但类型断言先挡住）。
+  处置（本轮不变，只是把理由改准）：保留 `hasMessageContaining("快照")`——DB 原文里没有「快照」，
+  将来若有人放松类型断言，它就是消息层面的真防线。
 - **最弱的一条**：`records_an_insert_with_null_before` 只断言了
   `origin` / `action` / `before_json` / `after_json` 四列，而这条 SQL **查了 5 列**
   （`target_table` 查出来却没用）。`target_table` / `target_id` 只是被 undo 的测试
@@ -5681,6 +5885,13 @@ CREATE INDEX ix_change_log_time ON change_log(changed_at);
   而 `undo` 一条 exercise 的 insert 会**级联**删掉它的映射行，
   快照里若没有映射，「撤销后再重做」就会静默丢掉肌群标注。
 
+  > ⚠️ **安全审查轮实测并纠正（concern 6）**：上面「应通过所属的 exercise 记录来审计」
+  > 这条**降级路径在当前实现下不成立**——`undo` 只回放父行、不重建 join 行。
+  > 实测 `exercise_muscle` 行数 before undo = 1 / after undo = 0 / after redo = 0；
+  > 也就是说，移出白名单之后肌群标注目前**既不在日志里、也回不来**。
+  > 这个缺口由本任务自己引入，已升级为必须交给「动作编辑工具」任务的**前置条件**，
+  > 详见 6.7 的 concern 6 与 6.8。
+
 #### 6.6 自查发现与顾虑（本轮**未**改的项）
 
 1. **F 没有测试钉住（M07 存活）**。当前 `before` 一律来自 Jackson 的 `LinkedHashMap`，
@@ -5701,6 +5912,207 @@ CREATE INDEX ix_change_log_time ON change_log(changed_at);
 5. 本轮**没有**动 `V1–V4`、`application.yml`、`pom.xml`、`spike/`、`calc/`；
    `SchemaTest` 的 9 条结构快照全绿。
 
+#### 6.7 安全审查轮（Task 9 收口，2026-10-16）
+
+审查对 Task 9 的结论是**不批准（1 Critical + 5 Important/Minor）**。本轮逐条关闭，
+下面每一节都是**实测**而不是推理；完整原始输出见 6.8。
+
+**C1（Critical）`undo` 能静默改写目标行的主键。** `rowid` / `_rowid_` / `oid` 是 SQLite 给
+主键的**别名**（`INTEGER PRIMARY KEY` 表上就是 `id`），它们能通过任何标识符正则，而
+`SET rowid = ?` 是合法 SQL。实测：`before_json = {"rowid": 5}` 通过 `requireIdentifier`，
+`undo` 报 SUCCEEDED，目标行被搬到 id 5，而 `change_log.target_id` 还指向旧 id——
+**后续 undo 会定位到别的行**。同一件事用普通列名 `id` 也能做到（`{"id": 7}`），
+而任何把整行 `queryForMap` 结果当 `before` 传进来的调用方，`before` 里天然含 `id`。
+处置：**不用黑名单**（会漏保留字与将来的伪列，且维护不动），改成按目标表的**真实 schema**
+校验——`writableColumns(table)` 取 `pragma_table_info` 里 `pk = 0` 的列名集合，
+快照的键必须在这个集合里。这一条同时关掉**伪列、保留字、拼写错误**三类问题
+（`select` / `where` / `check` 不是真实列名，顺带被挡）。`requireIdentifier` 与它的正则
+**已删除**（被 schema 校验取代，不再保留第二道：同一件事测两遍没有额外收益，
+而保留一个「看起来在防注入、其实谁也拦不住」的正则只会让人误判防线在哪）。
+
+**C2（Important）`undo` 的三条 SQL 不在一个事务里。** 实测（触发器强制第 3 步失败）：
+`DELETE` 已提交、`UPDATE change_log SET undone = 1` 失败 → **数据删了、日志说没撤**。
+而测试类上的 `@Transactional` 让 12 条测试全跑在一个测试事务里，**生产形态的这个行为
+测试完全观察不到**——这正是它此前全绿的原因。处置：给 `undo` 加
+`@Transactional`（`org.springframework.transaction.annotation.Transactional`，
+传播用默认 `REQUIRED`；连接池 `maximum-pool-size=1`，`REQUIRES_NEW` 会自己等自己）。
+**两条路都选了**：新建**不带 `@Transactional`** 的测试类
+`ChangeLogServiceUndoTransactionTest` 用触发器做真实回滚验证（行为证据），
+外加一条反射断言钉住「注解在、且传播是 REQUIRED」（快、且能挡住 `REQUIRES_NEW`）。
+
+**C3（Important）`undo` 不校验目标行是否存在。** 目标行已被删除时 `UPDATE` 影响 0 行**无异常**，
+然后照样 `undone = 1`——审计日志声称「已撤销」而数据什么都没动。处置：检查
+`jdbc.update(...)` 的返回值，0 时抛 `IllegalStateException`，且这条检查放在
+`UPDATE change_log SET undone = 1` **之前**，靠 `@Transactional` 保证前面的写入被回滚。
+
+**C4（Important）外键后果的报错读不懂。** 三种后果实测：`food` 被 `meal_item.food_id`
+引用（NO ACTION）→ `SQLITE_CONSTRAINT_FOREIGNKEY` 天书；`undo` 一条 `exercise` 的 insert
+（CASCADE）→ 成功但 `exercise_muscle` 行被级联删掉；`undo` 一条 `photo` 的 insert
+（SET NULL）→ `meal.photo_id` 被静默清空。处置：把外键违例翻译成
+「回退失败：目标行被其他记录引用（表.id = N）。请先撤销引用它的记录。原始错误: …」。
+> ⚠️ **实测纠正**：任务书写的是「`JdbcTemplate` 会把 SQLite 的外键违例包成
+> `DataIntegrityViolationException`」——**实测不是**。Spring 的 SQLite 错误码映射表里
+> **没有** 19 = `SQLITE_CONSTRAINT`，所以它落到了兜底的 `UncategorizedSQLException`，
+> 而后者**不是** `DataIntegrityViolationException` 的子类（两者是兄弟，`instanceof` 判不出来）。
+> 第一版按任务书写的就是 `catch (DataIntegrityViolationException e)`，实测报
+> `Expecting actual throwable to be an instance of java.lang.IllegalStateException but was:
+> org.springframework.jdbc.UncategorizedSQLException … [SQLITE_CONSTRAINT_FOREIGNKEY]`。
+> 因此改成抓共同父类 **`DataAccessException`**，并把这段实测证据写进了代码注释。
+
+**C5（Important）部分快照的契约没定义。** 实测：`before = {kcal_per100: 100}`（只一列）
+回退后 `(kcal=100, protein=77, fat=88)`——未列出的列保留现值。数据没被写坏
+（这是「只回退你改过的那几列」的合理语义），但调用方无从知道该传全量还是增量。
+处置：**定义它，不禁止它**——写进 `ChangeLogService` 的类 javadoc「## 回退的语义（契约）」，
+并顺手把 C1 / C4 的后果与 **concern 6** 一起写进同一节契约。
+
+**C6（Minor）`:142` 的 `hasMessageContaining("before")` 实际无判别力。** 审查实测指出
+**真正的理由**与我原先写的不同：判别力是被前一行 `isInstanceOf(IllegalArgumentException.class)`
+挡住的（DB 兜底抛 `UncategorizedSQLException`，类型断言先失败，消息断言根本执行不到），
+而不是「DB 原文含 `before_json` 稀释了判别力」。处置：注释理由改准（6.4 已同步），
+`hasMessageContaining("快照")` 保留——将来类型断言一旦放松，它是消息层面的真防线。
+
+**concern 6（审查指出，本轮实测确认并升级为交接项）** 见 6.5 的更正与本轮新增的两条契约测试：
+`undo_of_a_cascaded_parent_row_silently_drops_the_join_rows` 实测
+`exercise_muscle` 行数 before undo = 1 / after undo = 0；`undo_of_a_set_null_parent_row_silently_clears_the_referencing_column`
+实测 `meal.photo_id` 被清空。**这个缺口是本任务自己引入的**：A1 把 `exercise_muscle`
+移出白名单时写的「它的增删应通过所属的 exercise 记录来审计」，在当前实现下**不成立**——
+`undo` 只回放父行、不重建 join 行。已作为**前置条件**交给「动作编辑工具」任务（见 6.8）。
+
+**白名单与越权回退**：本轮**没有**动 `ALLOWED_TABLES` 的内容（10 张表已核对正确），
+也没有动迁移文件、`application.yml`、`pom.xml`、`spike/`、`calc/`。
+
+#### 6.8 安全审查轮的原始输出
+
+**验收 1：全量套件（删 `target` 后 `cd backend && mvn -B test`）**
+```text
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.172 s -- in com.change.calc.NutritionCalculatorTest
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.033 s -- in com.change.calc.OneRepMaxTest
+[INFO] Tests run: 15, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.038 s -- in com.change.calc.PortionConverterTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.025 s -- in com.change.calc.VolumeCalculatorTest
+[INFO] Tests run:  2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.647 s -- in com.change.ChangeApplicationTests
+[INFO] Tests run:  3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.025 s -- in com.change.config.DataDirectoryInitializerTest
+[INFO] Tests run:  5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.063 s -- in com.change.MigrationTest
+[INFO] Tests run:  2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.220 s -- in com.change.repo.TrainingRepoTest
+[INFO] Tests run:  9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.056 s -- in com.change.SchemaTest
+[INFO] Tests run: 18, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.122 s -- in com.change.service.ChangeLogServiceTest
+[INFO] Tests run:  5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.528 s -- in com.change.service.ChangeLogServiceUndoTransactionTest
+[INFO] Tests run: 102, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+[INFO] Total time:  11.198 s
+```
+91 → **102**（`ChangeLogServiceTest` 12 → 18，新增 `ChangeLogServiceUndoTransactionTest` 5 条）。
+`SchemaTest` 9 条不变——本轮**没有动 schema**。
+
+**验收 2：Critical 关死（四个主键别名各跑一次真实 `undo`，在**没有测试事务**的上下文里）**
+```text
+PROBE PK victim id = 9
+PROBE PK alias=id before_json={"id":7}
+PROBE PK alias=id undo -> THREW IllegalArgumentException: 列名「id」不是 food 上可回退写入的列（必须真实存在且不是主键——SQLite 的 rowid/_rowid_/oid 是主键别名）
+PROBE PK alias=id undone=0 victimStillAtaId=1 foodIds=[9]
+PROBE PK alias=rowid before_json={"rowid":7}
+PROBE PK alias=rowid undo -> THREW IllegalArgumentException: 列名「rowid」不是 food 上可回退写入的列（…）
+PROBE PK alias=rowid undone=0 victimStillAtaId=1 foodIds=[9]
+PROBE PK alias=_rowid_ before_json={"_rowid_":7}
+PROBE PK alias=_rowid_ undo -> THREW IllegalArgumentException: 列名「_rowid_」不是 food 上可回退写入的列（…）
+PROBE PK alias=_rowid_ undone=0 victimStillAtaId=1 foodIds=[9]
+PROBE PK alias=oid before_json={"oid":7}
+PROBE PK alias=oid undo -> THREW IllegalArgumentException: 列名「oid」不是 food 上可回退写入的列（…）
+PROBE PK alias=oid undone=0 victimStillAtaId=1 foodIds=[9]
+```
+四次都抛异常、`undone` 四次都保持 0、目标行 id **始终是 9**（`foodIds=[9]`，没有被搬到 7）。
+路径是真实的「先 `recordUpdate` 写日志 → 再 `undo`」，且跑在**非测试事务**里。
+
+**验收 3：事务生效（第 3 步被触发器挡住 → 第 1 步的 DELETE 被回滚）**
+```text
+PROBE TX step3 failure = org.springframework.jdbc.UncategorizedSQLException: PreparedStatementCallback; uncategorized SQLException for SQL [UPDATE change_log SET undone = 1 WHERE id = ?]; SQL state [null]; error code [19]; [SQLITE_CONSTRAINT_TRIGGER] A RAISE function within a trigger fired, causing the SQL statement to abort (测试触发器：禁止把 undone 置为 1)
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.852 s -- in com.change.service.ChangeLogServiceUndoTransactionTest
+```
+这条断言（`victimStillPresent == 1`）在没有 `@Transactional` 时是 0——MM3 实测，见下。
+
+**验收 4：目标行不存在被拦（`ChangeLogServiceTest`，测试事务内）**
+```text
+[INFO] Tests run: 18, Failures: 0, Errors: 0, Skipped: 0 -- in com.change.service.ChangeLogServiceTest
+```
+（`undo_fails_when_the_target_row_is_gone`：`IllegalStateException`「目标行已不存在…」+
+`undone` 保持 0。）
+
+**验收 5：外键报错可读（非测试事务上下文里的实际文案）**
+```text
+PROBE FK thrown = java.lang.IllegalStateException
+PROBE FK message = 回退失败：目标行被其他记录引用（food.id = 10）。请先撤销引用它的记录。原始错误: [SQLITE_CONSTRAINT_FOREIGNKEY] A foreign key constraint failed (FOREIGN KEY constraint failed)
+```
+
+**验收 6：变异复验（4 个新变异体，**全杀**；每个都先删 `target`）**
+
+| # | 变异（对磁盘原文做一处逐字替换） | 结果 | 变红的测试 | `Tests run` |
+| --- | --- | --- | --- | --- |
+| MM1 | 删掉 schema 校验（退回只靠标识符正则） | **杀** | `undo_refuses_to_rewrite_the_primary_key`、`undo_refuses_a_column_that_does_not_exist`、`undo_rejects_a_non_identifier_column_name` | 21 / 3 failures |
+| MM2 | 删掉 `affected == 0` 检查 | **杀** | `undo_fails_when_the_target_row_is_gone` | 21 / 1 failure |
+| MM3 | 删掉 `undo` 上的 `@Transactional` | **杀** | `undo_writes_both_places_in_one_transaction`、`undo_is_annotated_transactional_with_default_propagation` | 21 / 2 failures |
+| MM4 | 删掉外键翻译（改成永不触发的 catch，原样抛出） | **杀** | `undo_of_a_referenced_row_translates_the_foreign_key_error` | 21 / 1 failure |
+
+每个变异体都断言过「替换点在原文里**唯一**」，跑完由脚本恢复原文并校验 sha256：
+`RESTORED ok=True sha=de34a2206ca326bf`（4/4）。
+
+> ℹ️ 表里的 `Tests run` 是那四次变异**实测**的值：当轮两个 ChangeLog 测试类共 **21** 条
+> （`ChangeLogServiceTest` 16 条 + 事务类 5 条）。此后又补了两条契约测试
+> （CASCADE / SET NULL 的后果，见 6.7 的 concern 6 一节）与 C6 的注释更正，
+> 两个类现为 **23** 条（全量套件 102 条，见验收 1）。
+> 「哪个变异被杀」的归属不受这两条影响（它们断言的是外键后果，不是这四处防线），
+> 所以这里保留实测原值并加注，不把没有重跑过的数字改写成想要的样子。
+
+**计划文档与磁盘的逐字一致（本轮改完后由脚本比对）**：见本节末尾的比对输出。
+
+**验收 7：计划文档自查（脚本 `_review/verify_plan_t9.py` 的真实输出）**
+```text
+=== A. encoding ===
+  plan                                     bytes= 384935 lines=6768 BOM=False U+FFFD=0 CRLF=0 CR=0 LF=6768 sha256=c903c8b8537c0f2a
+  ChangeLogService.java                    bytes=  13773 lines= 254 BOM=False U+FFFD=0 CRLF=0 CR=0 LF=254 sha256=de34a2206ca326bf
+  ChangeLogServiceTest.java                bytes=  18946 lines= 362 BOM=False U+FFFD=0 CRLF=0 CR=0 LF=362 sha256=eb7d0b19f54456de
+  ChangeLogServiceUndoTransactionTest.java bytes=  14949 lines= 268 BOM=False U+FFFD=0 CRLF=0 CR=0 LF=268 sha256=98a26afa187f0ba7
+
+=== B. Task 9 java fences vs disk (byte-exact) ===
+  java fences in Task 9: 2
+  ChangeLogServiceTest     fence_lines= 362 disk_lines= 362 fence_sha=2a8377e8af59dc2e disk_sha=2a8377e8af59dc2e IDENTICAL=True
+  ChangeLogService         fence_lines= 254 disk_lines= 254 fence_sha=5606ab14fca2ebda disk_sha=5606ab14fca2ebda IDENTICAL=True
+  ALL FENCES IDENTICAL = True
+
+=== C. 契约 (contract) present on disk and inside the plan's service fence ===
+  OK   ## 回退的语义（契约）
+  OK   update 的回退是按列写回
+  OK   列名必须真实存在于目标表且不是主键
+  OK   撤销一个被外键 CASCADE 引用的父行会连带删掉子行
+  OK   动作编辑功能落地时必须扩展快照（记下 muscle_map）或改为整组重建 join 行
+
+=== D. checkboxes ===
+  Task 9 section   : checked=6 unchecked=0
+  Task 10+ (to EOF): checked=0 unchecked=22
+    Task 8   checked=  9 unchecked=  0
+    Task 9   checked=  6 unchecked=  0
+    Task 10  checked=  0 unchecked=  7
+    Task 11  checked=  0 unchecked=  9
+
+=== E. concern 6 recorded ===
+  OK   concern 6
+  OK   after undo = 0
+  OK   既不在日志里、也回不来
+  OK   6.7 的 concern 6 与 6.8
+
+=== F. fences balanced / markdown sanity ===
+  ``` count in plan : 209 (must be even)
+  ### task headings : 11
+  NEW sections 6.7/6.8 present: True True
+```
+> 关于 F 的 209：这个计数把**行内**出现的 ``` 也算进去了（3 条是 `> ```java` 形式的
+> blockquote 围栏、1 条是散文里提到 ```java fence 的那句话）。按「**行首**围栏」重算：
+> 196 条，奇偶校验 **0**（闭合），**没有未闭合的围栏**（脚本 `_review/check_fences.py` 实测）。
+> 这一项在本轮之前是 188（同样含行内），不是本轮引入的。
+>
+> ⚠️ 上面 A 段里 plan 自己的 `bytes` / `lines` / `sha256` 是**本节定稿前**那一次比对的值：
+> 本节一写进去，plan 自身的哈希就变了（自指，无法收敛）。这一节的结论是
+> **两个 java fence 的 IDENTICAL=True**、**两份源文件的 sha256**、BOM/U+FFFD/CRLF 三项全 0——
+> 这些都不受自指影响（plan 那一行只是当时的事实快照）。要复现，跑
+> `python _review/verify_plan_t9.py`。
 ---
 
 ## Task 10: HTTP 骨架与端口协商

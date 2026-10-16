@@ -160,6 +160,10 @@ class ChangeLogServiceTest {
     @Test
     void undo_rejects_a_non_identifier_column_name() {
         // 参数占位符保护值，保护不了标识符——列名是拼进 SQL 的。
+        // 这一条同时也是「注入确实会被执行」的反证：键名本身是 `kcal_per100 = 1, name_zh`，
+        // 去掉校验后它就会变成 SQL 的一部分（M02 实测变红）。
+        // 报错文案随校验方式改成了按 schema 校验（详见 writableColumns 的注释），
+        // 断言跟着改成钉「这个恶意列名被点名」+ 那句说明，而不是钉具体的措辞。
         long id = insertFood("测试食物E", 500);
         long logId = logs.recordUpdate("food", id,
                 Map.of("kcal_per100 = 1, name_zh", 1.0),   // 恶意键
@@ -167,7 +171,136 @@ class ChangeLogServiceTest {
 
         assertThatThrownBy(() -> logs.undo(logId))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("非法的列名");
+                .hasMessageContaining("kcal_per100 = 1, name_zh")
+                .hasMessageContaining("可回退写入的列");
+    }
+
+    @Test
+    void undo_refuses_to_rewrite_the_primary_key() {
+        // SQLite 的 rowid / _rowid_ / oid 是主键的别名（INTEGER PRIMARY KEY 表上就是 id），
+        // 它们能通过任何标识符正则，而 SET rowid = ? 是合法 SQL。
+        // 不拦的话，撤销会静默把目标行的主键搬走，而 change_log.target_id 仍指向旧 id——
+        // 后续 undo 会定位到别的行。
+        long id = insertFood("测试食物H", 800);
+        long targetId = id;
+
+        for (String pkAlias : java.util.List.of("id", "rowid", "_rowid_", "oid")) {
+            long logId = logs.recordUpdate("food", targetId,
+                    Map.of(pkAlias, 7L), Map.of("kcal_per100", 1.0), "agent", null);
+
+            assertThatThrownBy(() -> logs.undo(logId))
+                    .as("主键别名 %s 必须被拒绝", pkAlias)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(pkAlias);
+
+            // 拒绝之后 undone 必须保持 0：不能留下「日志说撤了、数据没动」的半截状态
+            assertThat(jdbc.queryForObject(
+                    "SELECT undone FROM change_log WHERE id = ?", Integer.class, logId)).isZero();
+            // 目标行必须原地不动
+            assertThat(jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM food WHERE id = ?", Integer.class, targetId)).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void undo_refuses_a_column_that_does_not_exist() {
+        // 拼写错误与保留字都落到这里（select 这类保留字通过任何标识符正则，只在 SQLite 层报语法错）
+        long id = insertFood("测试食物I", 900);
+        long logId = logs.recordUpdate("food", id,
+                Map.of("kcal_per100_typo", 1.0), Map.of("kcal_per100", 1.0), "agent", null);
+
+        assertThatThrownBy(() -> logs.undo(logId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("kcal_per100_typo");
+    }
+
+    @Test
+    void undo_fails_when_the_target_row_is_gone() {
+        // 影响 0 行却照样置 undone=1 的话，审计日志会声称「已撤销」而数据什么都没动。
+        long id = insertFood("测试食物J", 1000);
+        long logId = logs.recordUpdate("food", id,
+                Map.of("kcal_per100", 1000.0), Map.of("kcal_per100", 1.0), "agent", null);
+
+        jdbc.update("DELETE FROM food WHERE id = ?", id);   // 目标行先没了
+
+        assertThatThrownBy(() -> logs.undo(logId))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("目标行已不存在");
+        assertThat(jdbc.queryForObject(
+                "SELECT undone FROM change_log WHERE id = ?", Integer.class, logId)).isZero();
+    }
+
+    @Test
+    void undo_of_a_referenced_row_translates_the_foreign_key_error() {
+        // undo 一条 insert 是物理 DELETE。这条 food 已被 meal_item.food_id 引用
+        // （meal_item.food_id 是裸 REFERENCES，默认 NO ACTION），DELETE 会被外键拦下。
+        // 不翻译的话，用户看到的是一句 SQLITE_CONSTRAINT_FOREIGNKEY 天书。
+        long foodId = insertFood("测试食物K", 1100);
+        long logId = logs.recordInsert("food", foodId, Map.of("name_zh", "测试食物K"),
+                "agent", null);
+
+        jdbc.update("INSERT INTO meal(meal_date, slot) VALUES (?,?)", "2026-10-16", "lunch");
+        long mealId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+        jdbc.update("INSERT INTO meal_item(meal_id, food_id, order_index, amount, grams) " +
+                    "VALUES (?,?,?,?,?)", mealId, foodId, 0, 100.0, 100.0);
+
+        assertThatThrownBy(() -> logs.undo(logId))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("引用");
+        // 报错路径同样不能留下半截状态：food 还在，日志也还是「没撤」。
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM food WHERE id = ?", Integer.class, foodId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT undone FROM change_log WHERE id = ?", Integer.class, logId)).isZero();
+    }
+
+    @Test
+    void undo_of_a_cascaded_parent_row_silently_drops_the_join_rows() {
+        // 契约的另一半（见 ChangeLogService 的类 javadoc）：撤销一个被 CASCADE 引用的父行
+        // 会连带删掉子行，而快照两侧都不含子行。这条测试把这个**实际后果**钉下来，
+        // 免得将来做「动作编辑」的人以为撤销后再重做能拿回肌群标注。
+        jdbc.update("INSERT INTO muscle_group(name_zh, name_en, body_part) VALUES (?,?,?)",
+                "胸", "ChangE Test Chest", "chest");
+        long muscleId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+        jdbc.update("INSERT INTO exercise(name_en, name_zh) VALUES (?,?)",
+                "ChangE Test Bench Press", "测试卧推");
+        long exerciseId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+        jdbc.update("INSERT INTO exercise_muscle(exercise_id, muscle_group_id, role) VALUES (?,?,?)",
+                exerciseId, muscleId, "primary");
+        long logId = logs.recordInsert("exercise", exerciseId,
+                Map.of("name_en", "ChangE Test Bench Press"), "agent", null);
+
+        logs.undo(logId);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM exercise WHERE id = ?", Integer.class, exerciseId)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM exercise_muscle WHERE exercise_id = ?",
+                Integer.class, exerciseId))
+                .as("级联删掉了映射行，而快照里没有它——这就是契约里写明的缺口")
+                .isZero();
+    }
+
+    @Test
+    void undo_of_a_set_null_parent_row_silently_clears_the_referencing_column() {
+        // meal.photo_id 是 ON DELETE SET NULL：撤销 photo 的创建会**静默**清空 meal.photo_id，
+        // 被引用的那一侧没有任何报错可言。契约里写明这个后果。
+        jdbc.update("INSERT INTO photo(taken_on, rel_path, sha256, kind) VALUES (?,?,?,?)",
+                "2026-10-16", "photos/2026/10/16/changelog-test.png",
+                "changelog-test-sha256", "food");
+        long photoId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+        jdbc.update("INSERT INTO meal(meal_date, slot, photo_id) VALUES (?,?,?)",
+                "2026-10-16", "dinner", photoId);
+        long mealId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+        long logId = logs.recordInsert("photo", photoId,
+                Map.of("rel_path", "photos/2026/10/16/changelog-test.png"), "agent", null);
+
+        logs.undo(logId);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT photo_id FROM meal WHERE id = ?", Long.class, mealId))
+                .as("SET NULL 把这一格清空了，而回退过程一声不响")
+                .isNull();
     }
 
     @Test
@@ -177,9 +310,13 @@ class ChangeLogServiceTest {
                 Map.of("kcal_per100", 1.0), "agent", null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("before")
-                // ⚠️ 只断言 "before" 是不够判别的一句话：数据库侧的
-                // CHECK 报错原文里含 "before_json"，也含 "before"。
-                // 再加一条只有 Java 侧文案才有的词，这条断言才真的在钉「Java 先拦」。
+                // ⚠️ 上面那行 hasMessageContaining("before") 在本测试里**实际没有判别力**：
+                // 真正先失败的是它前一行 isInstanceOf(IllegalArgumentException.class)——
+                // 去掉 Java 侧校验后 DB 兜底抛的是 UncategorizedSQLException（M03 实测），
+                // 类型断言先失败，消息断言根本执行不到。
+                // （原先写的理由「DB 原文含 before_json，稀释了判别力」不对：DB 原文确实含
+                // before_json，但那句话不是这条断言失效的原因，类型断言才是。）
+                // 保留并补上「快照」是因为将来若有人放松类型断言，它是消息层面的真防线。
                 .hasMessageContaining("快照");
         assertThatThrownBy(() -> logs.recordUpdate("food", id, Map.of(),
                 Map.of("kcal_per100", 1.0), "agent", null))

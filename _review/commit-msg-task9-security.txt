@@ -1,0 +1,94 @@
+fix(task9): 关掉审查的 1 Critical（undo 能搬走目标行主键）并给 undo 补事务、缺行拒绝、外键翻译与快照契约
+
+安全审查对 Task 9 的结论是「不批准（1 Critical）」。本轮逐条关闭，全部结论都来自实测。
+
+## C1（Critical）undo 能静默改写目标行的主键
+
+rowid / _rowid_ / oid 是 SQLite 给主键的**别名**（INTEGER PRIMARY KEY 表上就是 id），
+它们能通过任何标识符正则，而 `SET rowid = ?` 是合法 SQL。实测：before_json = {"rowid": 5}
+通过 requireIdentifier，undo 报 SUCCEEDED，目标行被搬到 id 5，而 change_log.target_id
+仍指向旧 id——后续 undo 会定位到别的行。同一件事用普通列名 id 也能做到（{"id": 7}），
+而任何把整行 queryForMap 结果当 before 传进来的调用方，before 里天然含 id。
+
+改法：不用黑名单（会漏保留字与将来的伪列，且维护不动），改成按目标表的**真实 schema**
+校验——writableColumns(table) 取 pragma_table_info 里 pk = 0 的列名集合（进程内缓存），
+快照的键必须在这个集合里。这一条同时关掉伪列、保留字、拼写错误三类问题。
+requireIdentifier 与它的正则随之删除：同一件事测两遍没有额外收益，而留一个
+「看起来在防注入、其实谁也拦不住」的正则只会让人误判防线在哪。
+
+## C2（Important）undo 的三条 SQL 不在一个事务里
+
+实测（触发器强制第 3 步失败）：DELETE 已提交、UPDATE change_log SET undone = 1 失败
+→ 数据删了、日志说没撤。而测试类上的 @Transactional 让测试全跑在一个测试事务里，
+生产形态的这个行为**测试完全观察不到**——这正是它此前全绿的原因。
+
+改法：给 undo 加 @Transactional（默认 REQUIRED；连接池 maximum-pool-size=1，
+REQUIRES_NEW 会自己等自己）。验证两条路都做了：新建**不带 @Transactional** 的
+ChangeLogServiceUndoTransactionTest，用「让第 3 步必然失败的触发器」做真实回滚验证
+（有注解时目标行还在 = 1，无注解时 DELETE 已提交 = 0），另加一条反射断言钉住
+「注解在、且传播是 REQUIRED」。
+
+## C3（Important）undo 不校验目标行是否存在
+
+目标行已删除时 UPDATE 影响 0 行、无异常，然后照样 undone = 1——审计日志声称「已撤销」
+而数据什么都没动。改法：检查 jdbc.update(...) 的返回值，0 时抛 IllegalStateException，
+且这条检查放在 UPDATE change_log SET undone = 1 **之前**，靠 @Transactional 回滚前序写入。
+
+## C4（Important）外键后果的报错读不懂
+
+三种后果实测：food 被 meal_item.food_id 引用（NO ACTION）→ SQLITE_CONSTRAINT_FOREIGNKEY
+天书；undo 一条 exercise 的 insert（CASCADE）→ 成功但 exercise_muscle 行被级联删掉；
+undo 一条 photo 的 insert（SET NULL）→ meal.photo_id 被静默清空。
+
+改法：把外键违例翻译成「回退失败：目标行被其他记录引用（表.id = N）。请先撤销引用它的
+记录。原始错误: …」。**实测纠正**：任务书写的是「JdbcTemplate 会把 SQLite 的外键违例包成
+DataIntegrityViolationException」——实测不是。Spring 的 SQLite 错误码映射表里没有
+19 = SQLITE_CONSTRAINT，它落到兜底的 UncategorizedSQLException，而后者不是
+DataIntegrityViolationException 的子类（兄弟关系，instanceof 判不出来）。第一版按任务书
+写的 catch 实测报「Expecting actual throwable to be an instance of
+java.lang.IllegalStateException but was: org.springframework.jdbc.UncategorizedSQLException
+… [SQLITE_CONSTRAINT_FOREIGNKEY]」，因此改抓共同父类 DataAccessException，
+并把这段实测证据写进代码注释。
+
+## C5（Important）部分快照的契约没定义
+
+实测 before = {kcal_per100: 100}（只一列）回退后未列出的列保留现值。数据没被写坏
+（这是「只回退你改过的那几列」的合理语义），但调用方无从知道该传全量还是增量。
+改法：定义它、不禁止它——写进类的 javadoc「## 回退的语义（契约）」，并把 C1 / C4 的后果
+与 concern 6 一起收进同一节。
+
+## concern 6（本任务自己引入的缺口，已记进计划并交接）
+
+A1 把 exercise_muscle 移出白名单时写的「它的增删应通过所属的 exercise 记录来审计」，
+在当前实现下**不成立**：undo 只回放父行、不重建 join 行。实测 exercise_muscle 行数
+before undo = 1 / after undo = 0（撤销后再重做 = 0）。补两条契约测试把 CASCADE 与
+SET NULL 的实际后果钉下来，并在计划 6.5 / 6.7 / 6.8 里写明：动作编辑功能落地时**必须**
+先扩展快照（记下 muscle_map）或改为整组重建 join 行。
+
+## C6（Minor）
+
+record_update_requires_a_before_snapshot 里 hasMessageContaining("before") 实际没有判别力
+——理由与原先写的不一样：判别力是被前一行的 isInstanceOf(IllegalArgumentException.class)
+挡住的（DB 兜底抛 UncategorizedSQLException，类型断言先失败，消息断言根本执行不到），
+不是「DB 原文含 before_json 稀释了判别力」。注释里的理由已改准（计划 6.4 同步），
+hasMessageContaining("快照") 保留作为类型断言放松后的防线。
+
+## 测试与验证
+
+- ChangeLogServiceTest 12 → 18 条（主键别名四个值、不存在的列、目标行缺失、
+  外键引用，外加 CASCADE / SET NULL 两条契约测试）
+- 新增 ChangeLogServiceUndoTransactionTest 5 条（真实回滚 + 反射 + 触发器自证 +
+  非测试事务里的主键别名四次实测 + 外键文案实测）
+- 全量套件：删 target 后 `cd backend && mvn -B test` → **Tests run: 102, Failures: 0,
+  Errors: 0, Skipped: 0 / BUILD SUCCESS**（原 91）
+- 4 个新变异体全部被杀（每个都先删 target）：删 schema 校验（3 条红）、
+  删 affected == 0（1 条红）、删 @Transactional（2 条红）、删外键翻译（1 条红）；
+  替换点唯一性有断言，跑完恢复原文并校验 sha256（4/4 RESTORED ok=True）
+- 计划文档自查：Task 9 的两个 java fence 与磁盘**逐字一致**（脚本比对，
+  测试 362 行 / 实现 254 行，IDENTICAL=True）；无 BOM、无 U+FFFD、CRLF=0；
+  Task 9 复选框 6/6 全勾、Task 10+ 零勾
+
+## 边界
+
+未动 ALLOWED_TABLES 的内容（10 张表已核对正确），未动迁移文件、application.yml、
+pom.xml、spike/、calc/；未给 undo 用 REQUIRES_NEW。
