@@ -6124,16 +6124,18 @@ PROBE FK message = 回退失败：目标行被其他记录引用（food.id = 10�
 - Create: `backend/src/main/java/com/change/web/HealthController.java`
 - Test: `backend/src/test/java/com/change/web/HealthControllerTest.java`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```java
 package com.change.web;
 
+import com.change.config.PortReporter;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.core.env.Environment;
 import org.springframework.http.ResponseEntity;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -6144,6 +6146,8 @@ class HealthControllerTest {
     @LocalServerPort int port;
 
     @Autowired TestRestTemplate http;
+
+    @Autowired Environment env;
 
     @Test
     void random_port_was_assigned() {
@@ -6157,16 +6161,38 @@ class HealthControllerTest {
         assertThat(r.getBody()).contains("\"status\":\"up\"");
         assertThat(r.getBody()).contains("\"cache\"");
     }
+
+    @Test
+    void port_reporter_prints_the_agreed_protocol_line() {
+        // 这一行是外壳与后端的协议：外壳按 CHANGE_PORT= 前缀匹配 stdout。
+        // 改动 PREFIX 或格式等于改协议，会让外壳找不到后端。
+        assertThat(PortReporter.PREFIX).isEqualTo("CHANGE_PORT=");
+
+        // 在真实上下文里跑一次 report()，捕获 stdout
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        java.io.PrintStream original = System.out;
+        try {
+            System.setOut(new java.io.PrintStream(captured, true, java.nio.charset.StandardCharsets.UTF_8));
+            new PortReporter(env).report();
+        } finally {
+            System.setOut(original);
+        }
+
+        String line = captured.toString(java.nio.charset.StandardCharsets.UTF_8).trim();
+        assertThat(line).startsWith(PortReporter.PREFIX);
+        // 前缀后面必须是纯数字端口——外壳要 parseInt
+        assertThat(line.substring(PortReporter.PREFIX.length())).matches("\\d+");
+    }
 }
 ```
 
-- [ ] **Step 2: 跑测试，确认失败**
+- [x] **Step 2: 跑测试，确认失败**
 
 Run: `cd backend && mvn -B test -Dtest=HealthControllerTest`
 
 Expected: FAIL —— 404，因为 `/api/health` 还不存在
 
-- [ ] **Step 3: 写实现**
+- [x] **Step 3: 写实现**
 
 ```java
 package com.change.config;
@@ -6216,7 +6242,6 @@ public class PortReporter {
 ```java
 package com.change.web;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -6247,7 +6272,7 @@ public class HealthController {
 }
 ```
 
-- [ ] **Step 4: 临时提供一个 CacheStatus 实现**
+- [x] **Step 4: 临时提供一个 CacheStatus 实现**
 
 Task 11 会替换成真正的实现。先放一个最小的，让本任务能独立跑绿。
 
@@ -6269,13 +6294,17 @@ public class CacheConfig {
 }
 ```
 
-- [ ] **Step 5: 跑测试，确认通过**
+- [x] **Step 5: 跑测试，确认通过**
 
 Run: `cd backend && mvn -B test -Dtest=HealthControllerTest`
 
-Expected: `Tests run: 2, Failures: 0, Errors: 0`
+Expected: `Tests run: 3, Failures: 0, Errors: 0`
 
-- [ ] **Step 6: 手动验证端口上报格式**
+> 计划原文写的是 `Tests run: 2`，那是**加上下面 B 那条协议测试之前**的数字。
+> `port_reporter_prints_the_agreed_protocol_line` 是在落地轮补上的（见 Step 6b 末），
+> 所以这里的期望值是 3。实测见 Step 6b。
+
+- [x] **Step 6: 手动验证端口上报格式**
 
 Run:
 ```bash
@@ -6284,7 +6313,33 @@ cd backend && mvn -B -q -DskipTests package && java -jar target/change-backend-0
 
 Expected: 启动日志中有一行形如 `CHANGE_PORT=54321`。按 `Ctrl+C` 停掉。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 6b: 生产形态实测（落地轮新增）**
+
+Step 6 在原计划里只说「Expected: 有一行」。这不够——外壳真的能不能用这行，要**实测**。
+落地轮的实测（`_review/t10_probe.py`，从 `%TEMP%\change-t10-probe` 起子进程，模拟外壳）：
+
+- `local.server.port` 在 `java -jar` 生产形态下**确实有值**，`ApplicationReadyEvent` 时机没问题：
+  协议行在启动后约 **5.2 s** 出现在 stdout（比设计文档记的 3.8 s 慢，加载提示的时间要按 5 s 留）。
+- 端口真的能访问：`GET http://127.0.0.1:<port>/api/health` → `200`，
+  body = `{"cache":"disabled(placeholder)","status":"up"}`。
+- 监听地址是 **`127.0.0.1`**，不是 `::`/`0.0.0.0`：
+  `netstat -ano` 给出 `TCP 127.0.0.1:<port> 0.0.0.0:0 LISTENING <pid>`，
+  且从本机非回环地址连它一律 `ConnectionRefused`。
+- **stdout / stderr 归属**：Spring Boot 的日志（含 INFO）走 **stdout**；
+  stderr 上只有 JVM 的 `WARNING: A restricted method...` 那几行。
+  协议行在 stdout 上**恰好一行**、**没有任何日志前缀**，`CHANGE_PORT=` 只出现 1 次——
+  外壳按前缀匹配是安全的。
+- ⚠️ **给外壳实现的坑（必须按这个写解析）**：Windows 上 `System.out.println` 输出的是
+  `\r\n`，所以那一行的**原始字节是 `b'CHANGE_PORT=56934\r'`**（18 字节，不是 17）。
+  外壳必须**按行读取并 trim**（Rust 侧 `BufRead::lines()` 已经会去掉 `\r`），
+  **不要**用 `split('\n')` 之类只切 `\n` 的写法，否则后缀变成 `"56934\r"`，
+  `parse::<u16>()` 直接报错。Java 的 `Integer.parseInt` 恰好容忍尾部 `\r`，别被它骗过。
+
+> 落地轮还补了一条**协议测试** `port_reporter_prints_the_agreed_protocol_line`（见 Step 1 的 fence）。
+> 理由：`PREFIX` 是外壳与后端的协议，改一个字符外壳就找不到后端，而原来没有任何测试守着它。
+> 实测有效：把 `PREFIX` 改成 `"CHANGE_PORTX="` → 该测试变红（失败在 `HealthControllerTest.java:40`）。
+
+- [x] **Step 7: 提交**
 
 ```bash
 git add backend/src/main/java/com/change/config/PortReporter.java \
@@ -6293,6 +6348,48 @@ git add backend/src/main/java/com/change/config/PortReporter.java \
         backend/src/test/java/com/change/web/HealthControllerTest.java
 git commit -m "feat: HTTP 骨架 + 端口协商（stdout 上报 CHANGE_PORT=）"
 ```
+
+### 给加写接口的任务的安全约定（Task 11 及以后，**增加第一个写接口之前必须落地**）
+
+Task 10 只加了 `GET /api/health`（只读、无副作用），所以下面这些还没做是对的。但从 Task 11 的
+`/api/chat` 开始，接口能**读写全部数据、能调模型 API**，威胁面就完全变了。落地写接口的任务
+**必须**同时把这一节做掉，不能留到「以后再说」。
+
+**1) 任何会改数据的端点都必须校验请求来源。**
+
+现状是「绑在 `127.0.0.1` + 无鉴权 + 随机端口」。这里有一个常见误解要写清楚：
+
+> **随机端口不能挡住跨站请求。CORS 只挡「读响应」，不挡「发请求」。**
+> 用户浏览器里任何一个网页都能向 `http://127.0.0.1:<端口>/api/...` 发 POST——请求真的会被
+> 后端执行，只是网页读不到响应而已。对「写数据」这种有副作用的操作，读不到响应**不等于**
+> 没造成损害。端口随机只是让攻击者多扫几秒（页面可以直接扫端口段），**不是防护措施**。
+
+最小可行做法（二选一，推荐第一个）：
+
+- **要求一个自定义请求头**，例如 `X-Change-Client: <外壳启动时生成的一次性令牌>`。
+  自定义头会**强制触发 CORS 预检**（`OPTIONS` + `Access-Control-Request-Headers`），
+  而服务端不返回 `Access-Control-Allow-*`，预检就失败，浏览器**不会**发出真正的写请求。
+  校验放在一个 `HandlerInterceptor`（或 Filter）里，对「非只读方法 + 写路径」生效。
+  注意别把令牌校验写成「头不存在就放行」——那等于没做。
+- 或者**校验 `Origin` 头**：为空（非浏览器，例如 Tauri 外壳自己的原生 HTTP 客户端）
+  或非 `http(s)` 才放行；`http://` 与 `https://` 来源一律拒绝。
+
+**2) 令牌在启动时随机生成，只经 stdout 交给外壳**（与 `CHANGE_PORT=` 同一信道）。
+
+- 用 `SecureRandom` 生成，进程生命周期内一次性、不持久化。
+- **不落盘、不进日志**：打印令牌与打印端口不同，端口泄露无害，令牌泄露等于没了防护。
+  复用 `PortReporter` 那个信道时，令牌也必须走 stdout 的单独一行，且**不能**被
+  slf4j 日志包装（日志行带时间戳/线程名前缀，外壳按前缀匹配会拿到脏数据）。
+- 外壳把它作为常量请求头附在每个请求上；后端只比对，不回显。
+
+**3) 别指望随机端口当安全措施。** 见上面第 1 条的引用块：它增加的是扫描成本，不是防护。
+
+**4) 这条在增加第一个写接口之前必须落地。** 具体地说，Task 11 落地 `/api/chat` 时，
+**要么**同一个提交里带上来源校验，**要么**把 `/api/chat` 的写操作挡在未校验的来源之外
+（例如先只上只读端点）。先上线一个能改数据的接口、再补校验，是不可接受的顺序。
+
+> 这套东西的边界要说清楚：它挡的是**网页发起的跨站请求**（浏览器会遵守 CORS 预检），
+> **挡不住**用户机器上其它本地进程直接发起的请求——那需要真正的鉴权，超出本计划范围。
 
 ---
 
