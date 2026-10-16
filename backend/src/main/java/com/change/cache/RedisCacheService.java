@@ -93,6 +93,13 @@ public class RedisCacheService implements CacheService {
     public void put(String key, Object value, Duration ttl) {
         if (isBroken()) return;
         try {
+            // ⚠️ 已知缺口（本任务未修，范围外）：这里把「序列化失败」与「Redis 故障」放在同一个
+            // catch 里。如果某个 value 的类型 Jackson 序列化不了，每次 put 都会走 onFailure，
+            // 于是**一条写不进去的数据就能把整个缓存熔断**——正是本任务在 get() 上修掉的
+            // 同一类缺陷（「一条坏数据 → 缓存整体瘫痪」）在读路径上的镜像。
+            // 未顺手改的原因：额外要求 A/B 明确只覆盖反序列化路径，put 的序列化失败需要
+            // 独立的设计判断（序列化失败该不该计入熔断、要不要在 put 里也拆两个 try）。
+            // 已记入报告的「自查发现」，留给后续任务。
             redis.opsForValue().set(key, json.writeValueAsString(value), ttl);
             onSuccess();
         } catch (Exception e) {
