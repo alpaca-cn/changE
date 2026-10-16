@@ -845,7 +845,8 @@ mod tests {
         // 断言它们两两不同——若有人把 into_message 改成一句「健康检查失败」，
         // 用户就再也分不清「后端没起来」和「后端读不懂」了。
         let addr = "127.0.0.1:1".to_string();
-        let msgs = vec![
+        // 数组而不是 `vec!`：下面只经 `.iter()` 使用，不需要堆分配（clippy 也这么建议）
+        let msgs = [
             HealthError::Connect {
                 addr: addr.clone(),
                 source: std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused"),
