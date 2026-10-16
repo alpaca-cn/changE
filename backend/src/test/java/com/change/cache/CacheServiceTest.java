@@ -1,0 +1,365 @@
+package com.change.cache;
+
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class CacheServiceTest {
+
+    @Test
+    void the_breaker_constants_are_pinned_to_their_spec() {
+        // 熔断参数是「Redis 挂了之后等多久再试」的唯一旋钮，属于对外行为（影响请求延迟）。
+        // 没有这条的话，FAILURE_THRESHOLD 改成 1 或 100、BREAK_DURATION 改成 10 分钟，
+        // 别的测试**照样全绿**——因为它们都是「循环 FAILURE_THRESHOLD 次」这种
+        // 跟着常量走的写法（实测确认过）。这条把数值钉死，改动必须显式改测试。
+        assertThat(RedisCacheService.FAILURE_THRESHOLD).isEqualTo(3);
+        assertThat(RedisCacheService.BREAK_DURATION).isEqualTo(Duration.ofSeconds(30));
+    }
+
+    @Test
+    void noop_always_misses_and_never_throws() {
+        CacheService c = new NoOpCacheService();
+
+        assertThat(c.get("anything", String.class)).isEmpty();
+        c.put("anything", "value", Duration.ofMinutes(5));   // 不应抛异常
+        c.invalidatePrefix("change:");
+        assertThat(c.isAvailable()).isFalse();
+        // 查值而不是查前缀：describe() 若退化成固定字符串（把 reason 丢掉）也要变红。
+        // 这个 reason 最终会显示在 /api/health 的 cache 字段里，是验收标准的一部分。
+        assertThat(c.describe()).isEqualTo("缓存：未启用（未启用）");
+
+        // 带原因的构造器：原因必须出现在描述里，否则「为什么降级」就没人知道了
+        assertThat(new NoOpCacheService("连不上 1.2.3.4:6379").describe())
+                .isEqualTo("缓存：未启用（连不上 1.2.3.4:6379）");
+    }
+
+    @Test
+    void noop_is_the_guaranteed_safe_fallback() {
+        // 这条测试的意义：无论 Redis 处于什么状态，注入 NoOp 时业务代码都不会崩。
+        CacheService c = new NoOpCacheService();
+        for (int i = 0; i < 100; i++) {
+            assertThat(c.get("k" + i, Integer.class)).isEqualTo(Optional.empty());
+        }
+    }
+
+    // ---- 以下是本任务对计划测试的补充（额外要求 A）：熔断是 RedisCacheService 的全部价值，
+    // ---- 而计划只测了 NoOp 的两条，FAILURE_THRESHOLD / BREAK_DURATION / isBroken / onFailure 零覆盖。
+
+    @Test
+    void redis_failures_trip_the_circuit_breaker_and_stop_calling_redis() {
+        // 熔断的意义：Redis 挂了之后，不要让每个请求都白等 300ms 连接超时。
+        // 连续失败到阈值后，后续调用必须**直接返回未命中、不再碰 Redis**。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        Mockito.when(template.opsForValue())
+                .thenThrow(new QueryTimeoutException("redis down"));
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD; i++) {
+            assertThat(c.get("k", String.class)).isEmpty();   // 失败但降级，不抛
+        }
+        assertThat(c.isAvailable()).isFalse();
+        assertThat(c.describe()).contains("熔断");
+
+        // 熔断后不再调用 Redis
+        Mockito.clearInvocations(template);
+        assertThat(c.get("k", String.class)).isEmpty();
+        Mockito.verifyNoInteractions(template);
+    }
+
+    @Test
+    void the_circuit_closes_again_after_the_break_duration() {
+        // 用可控时钟：否则要真的睡 30 秒才能验证恢复。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var clock = Mockito.mock(Clock.class);
+        Instant t0 = Instant.parse("2026-01-01T00:00:00Z");
+        Mockito.when(clock.instant()).thenReturn(t0);
+
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        Mockito.when(valueOps.get(ArgumentMatchers.anyString()))
+                .thenThrow(new QueryTimeoutException("down"));
+
+        CacheService c = new RedisCacheService(template, "h", 6379, clock);
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD; i++) {
+            c.get("k", String.class);
+        }
+        assertThat(c.isAvailable()).isFalse();
+
+        // 时钟推进到熔断期之后
+        Mockito.when(clock.instant())
+                .thenReturn(t0.plus(RedisCacheService.BREAK_DURATION).plusSeconds(1));
+        assertThat(c.isAvailable()).isTrue();
+    }
+
+    @Test
+    void a_deserialization_failure_is_not_a_redis_failure() {
+        // 一条类型不匹配的脏数据不该把整个缓存关掉——那是「一条脏数据 → 缓存整体瘫痪」。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        // 缓存里存的是 JSON 字符串，但要按 Integer 读 -> 反序列化失败
+        Mockito.when(valueOps.get(ArgumentMatchers.anyString()))
+                .thenReturn("\"not-a-number\"");
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD + 5; i++) {
+            assertThat(c.get("k", Integer.class)).isEmpty();   // 按未命中处理
+        }
+        assertThat(c.isAvailable())
+                .as("反序列化失败不该触发熔断——否则一条脏数据会让整个缓存瘫痪")
+                .isTrue();
+        // 关键补充：确认这 8 次读**真的走到了 Redis 并失败在反序列化上**。
+        // 否则这条测试可能是「提前熔断短路、根本没碰 Redis」而假绿。
+        Mockito.verify(valueOps, Mockito.times(RedisCacheService.FAILURE_THRESHOLD + 5))
+                .get("k");
+    }
+
+    @Test
+    void redis_success_path_round_trips_a_value() {
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        Mockito.when(valueOps.get("k")).thenReturn("\"hello\"");
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+        assertThat(c.get("k", String.class)).contains("hello");
+        assertThat(c.isAvailable()).isTrue();
+    }
+
+    @Test
+    void failures_accumulate_across_calls_and_are_cleared_by_a_success() {
+        // 这条是实测中发现真 bug 后补的回归测试（计划原稿的实现里熔断器从不跳）。
+        // 根因：isBroken() 是每个操作的第一步，原稿在里面**无条件**清零失败计数，
+        // 于是「清零 → 累加本次的 1 次失败」无限循环，计数永远到不了阈值。
+        // 本测试把两件事钉住：①失败必须跨调用累积到阈值；②成功的调用才允许清零。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        // 连续 3 次失败 -> 阈值；阈值后第 4 次调用成功（get 返回 null 即未命中）把计数清零
+        Mockito.when(valueOps.get("k"))
+                .thenThrow(new QueryTimeoutException("down"))
+                .thenThrow(new QueryTimeoutException("down"))
+                .thenThrow(new QueryTimeoutException("down"))
+                .thenReturn(null);
+
+        // 2 次失败 < 阈值，还没到熔断
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.isAvailable()).as("2 次失败还不够触发熔断").isTrue();
+
+        // 第 3 次失败：恰好到阈值 -> 熔断
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.isAvailable()).as("连续 3 次失败必须熔断").isFalse();
+
+        // 第 4 次调用：熔断期内，不碰 Redis（序列里的 thenReturn(null) 因此不会被消费）
+        Mockito.clearInvocations(template);
+        assertThat(c.get("k", String.class)).isEmpty();
+        Mockito.verifyNoInteractions(template);
+
+        assertThat(c.describe()).contains("熔断");
+    }
+
+    @Test
+    void dirty_cache_data_never_trips_the_breaker_and_never_raises_the_count() {        // 语义：脏数据（类型不匹配）对熔断状态必须是**中性**的——既不计入失败，也不清零。
+        //
+        // ⚠️ 实测修正（报告 F）：计划把这个改动说成「不改就会让一条脏数据把整个缓存关掉」，
+        // 但把实现退回计划原稿实测后，行为**完全相同**——原稿把 onSuccess() 放在反序列化之前，
+        // 于是每次读都以「计数归 0」收尾，onFailure 永远落在干净的 0 上加 1，
+        // 读路径上的计数**根本不可能累积到阈值**。也就是说原稿那个 bug 在当前组合下不可达，
+        // 「脏数据会触发熔断」这个说法不成立。
+        // 真正能实测的差异是**计数语义**：原稿让每次脏读都以 1 收尾（清零+自增互相抵消），
+        // 本实现让它保持中性（不增不减）。下面用「2 次真实故障 + 1 次脏读 + 1 次真实故障」
+        // 把两种语义区分开——这在行为层面是可观测的，不依赖反射：
+        //   中性（本实现）：故障 1,2 -> 脏读(仍 2) -> 故障 3 达阈值 -> 恰好 3 次跳闸 ✅
+        //   计数脏数据    ：故障 1,2 -> 脏读(3)   -> 已跳闸，第 4 次不再触达 Redis ❌
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+
+        java.util.concurrent.atomic.AtomicBoolean dirty = new java.util.concurrent.atomic.AtomicBoolean(false);
+        Mockito.when(valueOps.get("k")).thenAnswer(inv -> {
+            if (dirty.get()) return "\"not-a-number\"";              // 脏数据
+            throw new QueryTimeoutException("down");                  // Redis 故障
+        });
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        // 2 次真实故障：还没到阈值
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.isAvailable()).as("2 次真实故障还不够触发熔断").isTrue();
+
+        // 一次脏读：中性，不得把计数推过阈值
+        dirty.set(true);
+        assertThat(c.get("k", Integer.class)).isEmpty();
+        assertThat(c.isAvailable())
+                .as("脏数据不得计入熔断——否则 2 次真实故障 + 1 次脏读就跳闸了")
+                .isTrue();
+
+        // 回到真实故障：这是第 3 次，恰好达阈值
+        dirty.set(false);
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.isAvailable())
+                .as("脏数据中性时，第 3 次真实故障必须跳闸；若脏读被计过数，这里早就跳了")
+                .isFalse();
+    }
+
+    @Test
+    void the_breaker_trips_under_concurrent_failures() {
+        // 计数器非原子时，并发下读-改-写会丢失更新，熔断可能永不触发——
+        // 而熔断失效的后果是「每个请求都白等 300ms 连接超时」。
+        //
+        // ⚠️ 关于这条测试到底守住了什么，必须如实写清（实测数据见报告的「第 4 条」）：
+        //
+        // (1) **它是负载下的回归守卫，不是「非原子 → 丢失更新」的判别器。**
+        //     实测：把 RedisCacheService 整体退回普通 int / Instant（逻辑不变，
+        //     只把 AtomicInteger/AtomicReference 换掉），这条测试**依然全绿**。
+        //     根因是 x86 上普通 int 的 `consecutiveFailures++` 编译出来就是一条
+        //     读-改-写指令（inc dword ptr [r]）：用下面的会合点把 20 个线程对齐到
+        //     同一次自增上、连跑 100 轮，计数**每一轮都精确等于 20**，一次都不丢。
+        //     「读-改-写窗口」在真实编译产物里根本没有打开过。
+        //     对照实验（证明断言本身对真实的丢失更新是敏感的）：把那句自增人为撑宽成
+        //     「读出 + 空转 20 万次 + 写回」，同一个会合点下计数立刻远低于 20，
+        //     这条断言当场变红。
+        //     所以选 AtomicInteger 的理由是**可移植的正确性**——JLS 不保证 int++ 原子，
+        //     其他架构或未来的 JIT 可能真的把它拆成 load/add/store；不是本机可复现的缺陷。
+        //     **不要因为它现在是绿的，就以为「并发安全有测试守着」。**
+        //
+        // (2) **仍然必须断言计数的精确值，不能只断言「熔断跳没跳」。**
+        //     阈值只有 3，任何并发实现哪怕丢了大半更新，计数也远超 3、
+        //     isAvailable() 恒为 false——那种断言对并发语义零判别力。
+        //     精确值断言至少守得住「计数被整体重置/崩塌」这类退化。
+        //
+        // (3) **会合点让 20 个线程真正同时动手**，而不是靠 sleep 碰运气。
+        //     没有它，线程是散开的，这条测试就退化成「多线程跑一遍不炸」。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        // 前两次「Redis 在工作但未命中」= 成功（不该动失败计数），之后全部失败。
+        Mockito.when(valueOps.get(ArgumentMatchers.anyString()))
+                .thenReturn(null)
+                .thenReturn(null)
+                .thenThrow(new QueryTimeoutException("down"));
+
+        RedisCacheService c = new RedisCacheService(template, "h", 6379);
+
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.isAvailable()).as("2 次未命中是成功，不该熔断").isTrue();
+        assertThat(c.consecutiveFailureCount()).as("未命中是成功，不该记失败").isZero();
+
+        int threads = 20;
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        var gate = new java.util.concurrent.CyclicBarrier(threads);
+        var done = new java.util.concurrent.CountDownLatch(threads);
+        RedisCacheService.failureRendezvous = gate;
+        try {
+            for (int i = 0; i < threads; i++) {
+                pool.submit(() -> {
+                    try {
+                        c.get("k", String.class);
+                    } catch (Throwable ignored) {
+                        // 缓存抽象承诺「不向上抛异常」；但计数是否丢失与它无关，
+                        // 所以这里不让异常掩盖下面的计数断言。
+                    } finally {
+                        done.countDown();
+                    }
+                });
+            }
+            try {
+                assertThat(done.await(20, java.util.concurrent.TimeUnit.SECONDS))
+                        .as("%d 个线程都应在 20 秒内结束", threads)
+                        .isTrue();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+        } finally {
+            RedisCacheService.failureRendezvous = null;   // 绝不让会合点泄漏到别的测试
+            pool.shutdownNow();
+        }
+
+        // 20 个线程各失败一次：计数必须精确等于 20，一次更新都不能丢。
+        assertThat(c.consecutiveFailureCount())
+                .as("%d 个线程各失败一次，计数必须精确等于 %d（丢了就是读-改-写没做成原子）",
+                        threads, threads)
+                .isEqualTo(threads);
+
+        // 熔断本身也要跳（用户可观测的那一面）
+        assertThat(c.isAvailable())
+                .as("%d 个线程各失败一次，熔断必须已触发（阈值 %d）",
+                        threads, RedisCacheService.FAILURE_THRESHOLD)
+                .isFalse();
+    }
+
+    @Test
+    void a_serialization_failure_does_not_trip_the_breaker() {
+        // 序列化失败是「调用方给了一个缓存不了的值」，不是 Redis 故障。
+        // 计入熔断的话，一个调用点缓存了序列化不了的值就会把**整个缓存**关掉——
+        // 包括所有毫不相干的正常键，而且是静默的（不抛异常，只是从此不缓存）。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        var bad = new SelfReferencing();
+        bad.self = bad;
+
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD + 5; i++) {
+            c.put("k", bad, Duration.ofMinutes(1));
+        }
+
+        assertThat(c.isAvailable())
+                .as("序列化失败不该触发熔断——否则一条写不进去的数据会让整个缓存瘫痪")
+                .isTrue();
+
+        // 而且没往 Redis 发过请求（序列化都没过，不该有网络调用）
+        Mockito.verify(template, Mockito.never()).opsForValue();
+    }
+
+    @Test
+    void a_real_redis_failure_on_put_still_trips_the_breaker() {
+        // 对照组：**真正的** Redis 故障必须照旧计入熔断。
+        // 拆 try 不能把这条也一起放过。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        Mockito.doThrow(new QueryTimeoutException("down"))
+                .when(valueOps).set(ArgumentMatchers.anyString(),
+                        ArgumentMatchers.anyString(),
+                        ArgumentMatchers.any(Duration.class));
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD; i++) {
+            c.put("k", "v", Duration.ofMinutes(1));
+        }
+        assertThat(c.isAvailable()).isFalse();
+    }
+
+    /** Jackson 序列化不了：自引用导致无限递归。 */
+    static class SelfReferencing {
+        SelfReferencing self;
+    }
+
+    /** ValueOperations 是泛型类，不具名类型参数无法直接 mock，这里统一收口。 */
+    @SuppressWarnings("unchecked")
+    private static ValueOperations<String, String> valueOps() {
+        return Mockito.mock(ValueOperations.class);
+    }
+}

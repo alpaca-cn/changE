@@ -1,0 +1,59 @@
+spring:
+  application:
+    name: change
+  datasource:
+    # busy_timeout=5000：SQLite 默认 busy_timeout=0，写冲突会立刻失败；给 5 秒让单写者排队
+    # foreign_keys=true：SQLite 默认 PRAGMA foreign_keys=0，且该开关是「每连接」的；
+    # 迁移里大量 REFERENCES ... ON DELETE CASCADE 不开这一项就只是装饰（级联删除不发生）
+    # journal_mode=WAL：默认的 journal_mode=delete + synchronous=FULL 每次 commit 都要 fsync，
+    # 且写完之前读者被阻塞。本应用的写入形状是「逐组记训练、逐条记饮食」——小事务、高频次，
+    # 这个组合会把每次点击都卡在一次磁盘同步上。WAL 让写者与读者互不阻塞。
+    # 只能走 URL 参数：SQLite 在事务内拒绝切 WAL（cannot change into wal mode from within a
+    # transaction），而 Flyway 默认把迁移包在事务里，-- flyway:executeInTransaction=false 也无效
+    # （已实测），所以迁移脚本这条路无论怎么走都是错的。
+    # 注意参数名必须与 PRAGMA 名逐字一致：xerial 驱动会把无法识别的 URL 参数当成 PRAGMA 名
+    # 执行，拼错大小写（如 journalMode=WAL）不是静默忽略，而是直接 SQLITE_CANTOPEN 连不上库。
+    # 哨兵见 MigrationTest#connection_pragmas_are_effective。
+    url: jdbc:sqlite:${change.data-dir:./target/data}/change.db?busy_timeout=5000&foreign_keys=true&journal_mode=WAL
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1          # SQLite 单写者，连接池开大只会互相等锁
+      connection-timeout: 3000      # 别用默认 30s：单连接池被占满时要快速失败而不是挂住
+      # 约定：池只有 1 条连接，禁止 REQUIRES_NEW（会自己等自己）
+  jpa:
+    # ChangeSqliteDialect 是 community SQLiteDialect 的子类，只改类型名映射：
+    # community 方言把 Long/boolean/LocalDate/LocalDateTime/Double 报成
+    # bigint/boolean/date/timestamp/double，而 V1–V4 里写的是 INTEGER/TEXT/REAL（SQLite
+    # 只有这四个存储类），ddl-auto=validate 会因此整片报「wrong column type」、上下文起不来。
+    # 详见该类的注释：为什么这条规则放在方言里而不是每个实体字段上。
+    database-platform: com.change.config.ChangeSqliteDialect
+    hibernate:
+      ddl-auto: validate            # 建表交给 Flyway，Hibernate 只校验
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  data:
+    redis:
+      # ⚠️ 这只是**示例值**（作者内网的一台虚拟机），不是本项目的一部分。
+      # 想用自己的 Redis：改这里或设 change.redis.host。
+      host: ${change.redis.host:192.168.100.128}
+      port: ${change.redis.port:6379}
+      timeout: 500ms
+      connect-timeout: 300ms
+  main:
+    banner-mode: off
+
+server:
+  address: 127.0.0.1                # 无鉴权的后端只许本机访问；Tauri 壳也走 127.0.0.1
+  port: 0                           # 由系统分配；实际端口由 PortReporter 上报（后续任务）
+
+change:
+  # APPDATA 存在且为空串时 ${APPDATA}/changE 会解析成 /changE，在 Windows 上等于「当前盘:\changE」，
+  # 静默把库写进盘根不可接受，所以这里逐级兜底到 user.home
+  data-dir: ${CHANGE_DATA_DIR:${APPDATA:${user.home}/AppData/Roaming}/changE}
+  redis:
+    # 默认关闭：这是要分发给他人的客户端，绝大多数使用者的机器上没有 Redis。
+    # 开着的话每位朋友的首次启动都要为一次连不上的探测白等约 0.5 秒（实测值）。
+    # 想用自己的 Redis：设 change.redis.enabled=true，并改 spring.data.redis.host。
+    enabled: ${CHANGE_REDIS_ENABLED:false}

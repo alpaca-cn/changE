@@ -22,6 +22,11 @@ src-tauri/target/
 data/
 *.db
 *.db-journal
+# WAL 模式的旁挂文件：开 journal_mode=WAL 后，库旁边会多出 -wal（预写日志）与
+# -shm（共享内存索引）。它们与 .db 同属一份数据，同样绝不入库。
+# （-journal 保留：WAL 不可用时的回滚日志仍是兜底。）
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 
@@ -44,3 +49,8 @@ logs/
 
 # ── PPT 任务派生物 ──
 ppt_tasks/*/render/*.pdf
+
+# ── _review/：单机调试产物，保留在磁盘但不入库 ──
+# 理由见计划「Task 10 质量审查轮记录」的 M4：里面的脚本硬编码本机路径
+# （E:\maven\...、C:\Users\alpaca\.jdks\...），换机器就废，不是可复跑验证。
+_review/
