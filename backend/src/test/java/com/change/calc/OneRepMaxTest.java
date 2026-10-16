@@ -15,16 +15,13 @@ class OneRepMaxTest {
     }
 
     @Test
-    void single_rep_is_still_scaled_by_epley() {
-        // ⚠️ 这是第二处修正（原测试名 single_rep_returns_the_weight_itself，期望 100.0）。
-        // 标准 Epley 在 reps=1 时**不**返回重量本身：100 × (1 + 1/30) = 100 × 31/30
-        //   = 3100/30 = 103.333… → 103.33（实测 "expected: 100.0 but was: 103.33"）。
-        // 「reps=1 时 1RM 就是举起的那个重量」是**物理事实**，也确实是 Brzycki 公式
-        // （w × 36/(37−reps)，reps=1 时恰好退化成 w）的性质——原测试名沿用的是 Brzycki 的直觉，
-        // 与计划里写死的 Epley 公式（1RM = w × (1 + reps/30)）不是同一个公式。
-        // 这里按 Epley 的算术结果断言，并把测试名改成与断言相符的说法：
-        // 一个叫「返回重量本身」却断言 103.33 的测试，本身就是一处会误导人的不实自述。
-        assertThat(OneRepMax.epley(100, 1)).isEqualTo(103.33);
+    void single_rep_returns_the_weight_itself() {
+        // 1RM 的定义就是「一组只能做一次的最大重量」。Epley 在 reps=1 处给 w*31/30（103.33），
+        // 那是 3.3% 的系统性高估——最可靠的数据点反而最不该外推。所以 reps=1 直接返回实测重量。
+        assertThat(OneRepMax.epley(100, 1)).isEqualTo(100.0);
+        assertThat(OneRepMax.epley(62.5, 1)).isEqualTo(62.5);
+        // reps=2 起才走 Epley
+        assertThat(OneRepMax.epley(100, 2)).isEqualTo(Round.to2(100 * (1 + 2 / 30.0)));
     }
 
     @Test
@@ -37,16 +34,13 @@ class OneRepMaxTest {
 
     @Test
     void best_of_a_session_picks_the_max() {
-        // ⚠️ 这是修正：计划里这条原写 75.0，与同文件 timed_sets_are_ignored 对
-        // 同一组 Set(60, 8) 断言的 76.0 自相矛盾。独立核算（标准 Epley，1RM = w × (1 + reps/30)）：
-        //   60   × (1 + 8/30) = 60   × 38/30 = 2280/30 = 76.00   ← 最大
-        //   62.5 × (1 + 6/30) = 62.5 × 1.2   = 75.00
-        //   65   × (1 + 4/30) = 65   × 34/30 = 2210/30 = 73.666… → 73.67
-        // 所以正确值是 76.0；实现（标准 Epley）是对的，改的是这条期望值。
+        // 顺序刻意打乱、让最大值落在中间：否则「取最大」与「取第一个」不可区分。
+        // 60x8 = 76.0（最大，放中间）；62.5x6 = 75.0；65x4 = 73.67
         double best = OneRepMax.bestOf(java.util.List.of(
-                new OneRepMax.Set(60, 8),
                 new OneRepMax.Set(62.5, 6),
-                new OneRepMax.Set(65, 4)));
+                new OneRepMax.Set(60, 8),
+                new OneRepMax.Set(65, 4)))
+                .orElseThrow();
 
         assertThat(best).isEqualTo(76.0);
     }
@@ -56,9 +50,49 @@ class OneRepMaxTest {
         // 平板支撑没有 1RM 的概念，传 null 次数应被跳过而不是抛错
         double best = OneRepMax.bestOf(java.util.List.of(
                 new OneRepMax.Set(60, 8),
-                new OneRepMax.Set(0, null)));
+                new OneRepMax.Set(0, null)))
+                .orElseThrow();
 
         assertThat(best).isEqualTo(76.0);
+    }
+
+    @Test
+    void no_estimable_sets_yields_empty_not_zero() {
+        // 0.0 是个看起来像数字的哨兵，会被画成曲线上的一个点。
+        // 「没有可估算的组」与「1RM 是 0 kg」必须可区分（包内约定四）。
+        assertThat(OneRepMax.bestOf(java.util.List.of())).isEmpty();
+        assertThat(OneRepMax.bestOf(java.util.List.of(
+                new OneRepMax.Set(0, null)))).isEmpty();                       // 只有计时动作
+        assertThat(OneRepMax.bestOf(java.util.List.of(
+                new OneRepMax.Set(60, 0)))).isEmpty();                         // 次数 0
+        assertThat(OneRepMax.bestOf(java.util.List.of(
+                new OneRepMax.Set(60, 20)))).isEmpty();                        // 次数超上限
+        assertThat(OneRepMax.bestOf(java.util.List.of(
+                new OneRepMax.Set(0, 8)))).isEmpty();                          // 重量为 0
+    }
+
+    @Test
+    void epley_validates_its_own_inputs() {
+        // 直接测公开入口：Set 的构造器会先挡住负数与非法重复次数，
+        // 所以这三条守卫只有绕过 Set 才走得到（变异测试实测它们此前无覆盖）。
+        assertThatThrownBy(() -> OneRepMax.epley(60, 0))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("reps");
+        assertThatThrownBy(() -> OneRepMax.epley(-60, 5))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
+        assertThatThrownBy(() -> OneRepMax.epley(60, 13))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("12");
+    }
+
+    @Test
+    void out_of_range_reps_are_skipped_not_thrown_by_best_of() {
+        // javadoc 承诺「超范围跳过」而不是抛错——这条契约此前没有测试守住。
+        // 一次训练里混进 20 次的组不该让整条 bestOf 炸掉。
+        double best = OneRepMax.bestOf(java.util.List.of(
+                new OneRepMax.Set(60, 20),
+                new OneRepMax.Set(62.5, 6)))
+                .orElseThrow();
+
+        assertThat(best).isEqualTo(75.0);
     }
 
     @Test
@@ -81,6 +115,9 @@ class OneRepMaxTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("repetitions");
         // 0 次是合法的（记了但没次数），与 null（计时动作）不同
         assertThat(new OneRepMax.Set(60, 0).repetitions()).isZero();
+        // 0 kg 也是合法的（能构造），只是不可估算——由 bestOf 跳过，不由构造器拒绝。
+        // 拒绝它会连带拒掉计时动作 new Set(0, null)。
+        assertThat(new OneRepMax.Set(0, 8).weight()).isZero();
     }
 
     @Test

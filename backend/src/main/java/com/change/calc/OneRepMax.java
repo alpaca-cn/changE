@@ -2,6 +2,7 @@ package com.change.calc;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalDouble;
 
 /**
  * 估算 1RM。
@@ -10,6 +11,10 @@ import java.util.Objects;
  * 中间几个月曲线是平的；1RM 由每次的「重量 × 次数」估算，每次训练都能让曲线动一点。
  *
  * 用 Epley 公式：1RM = w × (1 + reps / 30)。
+ *
+ * Epley 的适用域是 reps >= 2。reps = 1 时本方法直接返回实测重量——
+ * 1RM 的定义就是「一组只能做一次的最大重量」，不需要外推，
+ * 而 Epley 在这一点上会给出 3.3% 的系统性高估（w × 31/30）。
  */
 public final class OneRepMax {
 
@@ -29,6 +34,11 @@ public final class OneRepMax {
      * 这里挡掉的是 {@code NaN} 与 {@code ±∞}：{@code NaN} 会绕过 {@code weight < 0}
      * （比较恒为 false），一路走到 {@link Round#to2} 变成 {@code 0.0}——
      * 静默给出「1RM 是 0」这个看起来像数字的错答案。
+     *
+     * <p>注意 {@code weight == 0} **能构造出来**（0 是合法重量：上面那条校验只管负数与 NaN），
+     * 但它**不可估算**：{@link #bestOf} 把 {@code weight <= 0} 当成「不是一次真实的负重」跳过。
+     * 「能构造」与「可估算」是两件事——构造器若拒绝 0，会连带拒掉计时动作
+     * {@code new Set(0, null)} 这种正常输入。所以 0 的处置落在 {@code bestOf}，不在这里。
      */
     public record Set(double weight, Integer repetitions) {
 
@@ -51,6 +61,9 @@ public final class OneRepMax {
     /**
      * Epley 公式估算单组 1RM。
      *
+     * <p>{@code reps == 1} 时**不外推**，直接返回实测 {@code weight}——
+     * Epley 的适用域是 {@code reps >= 2}，理由见类注释。
+     *
      * @param weight 重量；必须是有限且非负的
      * @param reps   次数；{@code 1..}{@link #MAX_REPS}。超过 {@link #MAX_REPS} 直接拒绝——
      *               Epley 在 15 次以上误差迅速变大，宁可不算也不要给个假精确的数
@@ -71,6 +84,13 @@ public final class OneRepMax {
         if (weight < 0) {
             throw new IllegalArgumentException("weight 不能为负: " + weight);
         }
+        if (reps == 1) {
+            // 1RM 的定义就是「一组只能做一次的最大重量」，reps=1 不需要外推。
+            // Epley 是给 reps>=2 做的拟合，它在 reps=1 处给 w*31/30，即 3.3% 的系统性高估——
+            // 而这是最可靠的一个数据点，高估它会让人不信任整条曲线。
+            // 所以 Epley 的适用域写成 reps>=2，reps=1 直接返回实测重量。
+            return weight;
+        }
         return Round.to2(weight * (1 + reps / 30.0));
     }
 
@@ -81,18 +101,27 @@ public final class OneRepMax {
      * 一次训练里混着平板支撑和卧推是正常的，因为一组平板支撑让整条曲线算不出来才是不正常的。
      *
      * @param sets 组列表；不能为 null，也不能含 null 元素
-     * @return 最大的估算 1RM；列表为空（或全部被跳过）时返回 {@code 0}，
-     *         这个 0 表示「本次没有可估算的组」，不是「1RM 是 0」
+     * @return 最高的 1RM；**没有任何可估算的组时返回 {@link java.util.OptionalDouble#empty()}**。
+     *         刻意不用 0.0 当哨兵：0 是一个看起来像数字的答案，会被画成曲线上的一个点，
+     *         把进步曲线拽到地板上（一次只做了平板支撑的训练就是这种情况）。
+     *         计时动作（repetitions 为 null）、次数超出 1..12、以及**重量不为正**的组都不可估算。
      */
-    public static double bestOf(List<Set> sets) {
+    public static OptionalDouble bestOf(List<Set> sets) {
         Objects.requireNonNull(sets, "sets 不能为 null");
-        double best = 0;
+        OptionalDouble best = OptionalDouble.empty();
         for (Set s : sets) {
             Objects.requireNonNull(s, "sets 不能含 null 元素");
-            if (s.repetitions() == null || s.repetitions() < 1 || s.repetitions() > MAX_REPS) {
-                continue;   // 计时动作或超范围，跳过
+            Integer reps = s.repetitions();
+            if (reps == null || reps < 1 || reps > MAX_REPS) {
+                continue;   // 计时动作，或次数超出可估算范围
             }
-            best = Math.max(best, epley(s.weight(), s.repetitions()));
+            if (s.weight() <= 0) {
+                continue;   // 0 kg 不是一次真实的负重——自重动作记 0 或漏填都会走到这里
+            }
+            double oneRm = epley(s.weight(), reps);
+            if (best.isEmpty() || oneRm > best.getAsDouble()) {
+                best = OptionalDouble.of(oneRm);
+            }
         }
         return best;
     }
