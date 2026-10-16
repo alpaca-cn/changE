@@ -142,7 +142,7 @@ frontend/                                  ← 新增，与 backend/ 平级
 - Create: `frontend/src-tauri/src/lib.rs`
 - Modify: `.gitignore`
 
-- [ ] **Step 1: 建 `frontend/package.json`**
+- [x] **Step 1: 建 `frontend/package.json`**
 
 ```json
 {
@@ -183,7 +183,7 @@ frontend/                                  ← 新增，与 backend/ 平级
 > 会让 `node_modules` 里出现两份 vite，并让 `vitest.config.ts` 必然报 `TS2769`
 > （与 `exclude` 的关系见 Task 2 末尾的「两份 `vite`」一节）。
 
-- [ ] **Step 2: 建 `frontend/vite.config.ts`**
+- [x] **Step 2: 建 `frontend/vite.config.ts`**
 
 ```ts
 import { defineConfig } from 'vite'
@@ -206,7 +206,7 @@ export default defineConfig({
 })
 ```
 
-- [ ] **Step 3: 建 `frontend/tsconfig.json`（只有一份）**
+- [x] **Step 3: 建 `frontend/tsconfig.json`（只有一份）**
 
 ```json
 {
@@ -251,7 +251,7 @@ export default defineConfig({
 > 它**不在 Step 1 的 fence 里**（那份 fence 是「首次创建 `package.json`」的原样口径），
 > 由 Step 12 安装后手动加进 `devDependencies`：`"@types/node": "^22"`。
 
-- [ ] **Step 4: 建 `frontend/index.html`**
+- [x] **Step 4: 建 `frontend/index.html`**
 
 **注意 `background-color` 那个内联样式**——它是防白屏闪的第一道（WebView 在 Vue 挂载前会先渲染这个 HTML）：
 
@@ -275,7 +275,7 @@ export default defineConfig({
 </html>
 ```
 
-- [ ] **Step 5: 建 `frontend/src/main.ts` 与 `frontend/src/App.vue`**
+- [x] **Step 5: 建 `frontend/src/main.ts` 与 `frontend/src/App.vue`**
 
 `main.ts`：
 
@@ -319,7 +319,7 @@ p  { color: #6b7480; margin: 0; }
 </style>
 ```
 
-- [ ] **Step 6: 建 `frontend/src-tauri/Cargo.toml`**
+- [x] **Step 6: 建 `frontend/src-tauri/Cargo.toml`**
 
 ```toml
 [package]
@@ -344,7 +344,7 @@ serde_json = "1"
 
 > **注意这里没有 `tauri-plugin-shell`。** 本计划用标准库 `std::process` 拉后台进程——省掉插件注册与 capabilities 授权两层配置，而且端口解析逻辑可以脱离 Tauri 运行时被单元测试覆盖（Task 4）。
 
-- [ ] **Step 7: 建 `frontend/src-tauri/build.rs`**
+- [x] **Step 7: 建 `frontend/src-tauri/build.rs`**
 
 ```rust
 fn main() {
@@ -352,7 +352,7 @@ fn main() {
 }
 ```
 
-- [ ] **Step 8: 建 `frontend/src-tauri/tauri.conf.json`**
+- [x] **Step 8: 建 `frontend/src-tauri/tauri.conf.json`**
 
 ```json
 {
@@ -395,7 +395,7 @@ fn main() {
 1. **`backgroundColor: "#0d0f12"`** —— Tauri 在 WebView 加载出内容之前会先画窗口底色。不设它就会闪一下白（设计文档要求避免白屏，而窗口自身那一层闪烁是 HTML 里的样式管不到的）。
 2. **CSP 里 `connect-src` 允许 `http://127.0.0.1:*`** —— 端口是**运行时才知道**的，而 CSP 是静态的，所以只能用端口通配 `*`。**不要图省事写 `"csp": null`**：那等于关掉整个 CSP，而这是一个要分发给朋友的客户端。
 
-- [ ] **Step 9: 建 `frontend/src-tauri/capabilities/default.json`**
+- [x] **Step 9: 建 `frontend/src-tauri/capabilities/default.json`**
 
 ```json
 {
@@ -409,7 +409,7 @@ fn main() {
 
 > 本计划只用 `invoke` 命令（`core:default` 已覆盖），没有文件系统、没有 shell 插件，所以权限清单保持最小。
 
-- [ ] **Step 10: 建 `frontend/src-tauri/src/lib.rs` 与 `main.rs`**
+- [x] **Step 10: 建 `frontend/src-tauri/src/lib.rs` 与 `main.rs`**
 
 `lib.rs`：
 
@@ -433,7 +433,7 @@ fn main() {
 }
 ```
 
-- [ ] **Step 11: 更新 `.gitignore`**
+- [x] **Step 11: 更新 `.gitignore`**
 
 在现有 `.gitignore` 末尾追加：
 
@@ -445,7 +445,7 @@ frontend/src-tauri/target/
 frontend/src-tauri/gen/
 ```
 
-- [ ] **Step 12: 安装依赖**
+- [x] **Step 12: 安装依赖**
 
 Run:
 ```powershell
@@ -491,7 +491,7 @@ Expected: 装完无 error。**如果 `pnpm` 不在 PATH**，用绝对路径 `& '
 > 将来某个包**确实**需要跑构建脚本时（症状：包能装上但功能报错，且报错指向它自己的
 > postinstall 产物缺失），把那一行改成 `true` 并重跑 `pnpm install`。
 
-- [ ] **Step 12b: 生成图标（`tauri icon` 的输入是可复现的脚本）**
+- [x] **Step 12b: 生成图标（`tauri icon` 的输入是可复现的脚本）**
 
 图标是**离线生成一次、然后入库**的产物，不是构建期步骤。首版计划漏了这一步：当时的源图是
 临时造的、放在 `%TEMP%`、没有入库，于是「重新生成一次图标」这件事不可复现。现在源图是代码。
@@ -528,7 +528,7 @@ Expected: 两条都退出 0；`src-tauri/icons/` 下出现 `icon.ico` / `icon.pn
 > 所以对本项目无实际影响。**验收时不要把它当成差异**；想保持工作区干净就
 > `git checkout -- src-tauri/icons/icon.icns`。这件事在 `frontend/README.md` 里也记了一份。
 
-- [ ] **Step 12c: 给 `pnpm-workspace.yaml` 补上理由注释**
+- [x] **Step 12c: 给 `pnpm-workspace.yaml` 补上理由注释**
 
 `pnpm install` 生成的那个文件只有干巴巴的 `esbuild: false` / `vue-demi: false`（见 Step 12 的
 表），**一个字的解释都没有**——下一个人会以为它是样板而删掉它。就在文件里把 Step 12 那张表的
@@ -543,7 +543,7 @@ Expected: 两条都退出 0；`src-tauri/icons/` 下出现 `icon.ico` / `icon.pn
 `mvn package`（Task 5 起需要）」写清楚。**它是「图标从哪来」这个问题的答案**，
 所以 Step 12b 的两条命令要原样写进去。
 
-- [ ] **Step 13: 验证「能起来」——这是本任务真正的验收**
+- [x] **Step 13: 验证「能起来」——这是本任务真正的验收**
 
 Run:
 ```powershell
@@ -561,7 +561,7 @@ Expected:
 
 **如果第 3 步起不来**：停下来报告实际报错。这一步是两个未知（Tauri+Vite 集成、pnpm 依赖解析）的交汇点，**不要靠猜去改配置**。
 
-- [ ] **Step 13b: `pnpm build` 必须退出 0 —— 本缺陷的回归守卫**
+- [x] **Step 13b: `pnpm build` 必须退出 0 —— 本缺陷的回归守卫**
 
 Run:
 ```powershell
@@ -581,7 +581,7 @@ Expected: **退出码 0**，并产出 `frontend/dist/`（`dist/index.html` + `di
 > 也就是说：`tauri dev` 绿 ≠ 前端能构建。凡是 `beforeBuildCommand` 会跑的，
 > 都要在 Task 1 就被跑过一次。
 
-- [ ] **Step 14: 提交**
+- [x] **Step 14: 提交**
 
 ```bash
 git add frontend/package.json frontend/pnpm-lock.yaml frontend/vite.config.ts \
@@ -613,7 +613,7 @@ git commit -m "feat(frontend): Tauri 2 + Vue 3 + Vite 骨架跑通，深色窗�
 - Create: `frontend/src/styles/theme.css`（覆盖 Task 1 的空占位）
 - Test: `frontend/src/styles/theme.spec.ts`
 
-- [ ] **Step 1: 建 `frontend/vitest.config.ts`**
+- [x] **Step 1: 建 `frontend/vitest.config.ts`**
 
 ```ts
 import { defineConfig } from 'vitest/config'
@@ -636,7 +636,7 @@ export default defineConfig({
 > 硬依赖 `^5.0.0`，`node_modules` 里因此存在两份 vite。完整记录见本任务末尾的
 > 「两份 vite」一节，**不要**再用 `tsconfig.json` 的 `exclude` 去绕。
 
-- [ ] **Step 2: 写失败的测试**
+- [x] **Step 2: 写失败的测试**
 
 ```ts
 import { readFileSync } from 'node:fs'
@@ -701,13 +701,13 @@ describe('主题 token', () => {
 })
 ```
 
-- [ ] **Step 3: 跑测试，确认它失败**
+- [x] **Step 3: 跑测试，确认它失败**
 
 Run: `cd frontend && pnpm test src/styles/theme.spec.ts`
 
 Expected: FAIL —— 8 条全红，因为 `theme.css` 现在是空文件，所有 `token(...)` 返回 `undefined`。
 
-- [ ] **Step 4: 写实现**
+- [x] **Step 4: 写实现**
 
 ```css
 /*
@@ -810,7 +810,7 @@ button:hover { border-color: var(--accent); }
 a { color: var(--accent); }
 ```
 
-- [ ] **Step 5: 跑测试，确认通过**
+- [x] **Step 5: 跑测试，确认通过**
 
 Run: `cd frontend && pnpm test src/styles/theme.spec.ts`
 
@@ -822,7 +822,7 @@ Expected: `Tests  8 passed`
 > 才会变红。它们是替将来守门的，不是替现在的实现提要求的：**不要**因为「空文件也能过」
 > 就把它们删掉，也**不要**因此以为实现没做完。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add frontend/vitest.config.ts frontend/src/styles/theme.css frontend/src/styles/theme.spec.ts
@@ -906,7 +906,7 @@ vitest.config.ts(6,3): error TS2769: No overload matches this call.
 - Test: `frontend/src/components/AppToolbar.spec.ts`
 - 复用（不重建）: `frontend/vitest.config.ts`——Task 2 Step 1 已建
 
-- [ ] **Step 1: 确认 `frontend/vitest.config.ts` 已存在（不要重建）**
+- [x] **Step 1: 确认 `frontend/vitest.config.ts` 已存在（不要重建）**
 
 它由 **Task 2 Step 1** 建立（`environment: 'jsdom'` + `include: ['src/**/*.spec.ts']`），
 本任务的组件测试用的就是它。**不要在这里再写一份**——两份配置迟早会漂移，而它们的行为
@@ -916,7 +916,7 @@ vitest.config.ts(6,3): error TS2769: No overload matches this call.
 > `tsconfig.node.json` 管，而那个 config 已随 project references 一起删除。**这里不需要再动
 > tsconfig。**
 
-- [ ] **Step 2: 写失败的测试（导航数据）**
+- [x] **Step 2: 写失败的测试（导航数据）**
 
 ```ts
 import { describe, it, expect } from 'vitest'
@@ -958,13 +958,13 @@ describe('导航分组', () => {
 })
 ```
 
-- [ ] **Step 3: 跑测试，确认失败**
+- [x] **Step 3: 跑测试，确认失败**
 
 Run: `cd frontend && pnpm test src/nav.spec.ts`
 
 Expected: FAIL —— `Failed to resolve import "./nav"`
 
-- [ ] **Step 4: 写 `frontend/src/nav.ts`**
+- [x] **Step 4: 写 `frontend/src/nav.ts`**
 
 ```ts
 /**
@@ -1040,13 +1040,13 @@ export function allRoutes(): NavItem[] {
 }
 ```
 
-- [ ] **Step 5: 跑测试，确认通过**
+- [x] **Step 5: 跑测试，确认通过**
 
 Run: `cd frontend && pnpm test src/nav.spec.ts`
 
 Expected: `Tests  5 passed`
 
-- [ ] **Step 6: 建 9 个占位页**
+- [x] **Step 6: 建 9 个占位页**
 
 每个都长这样（以 `TodayView.vue` 为例，其余 8 个把标题与说明换掉即可）：
 
@@ -1084,7 +1084,7 @@ h2 { font-size: 26px; margin: var(--gap-sm) 0 var(--gap-md); }
 | `SettingsView.vue` | 我的 | 设置 | 后面接：数据目录、Redis 连接状态、模型接口。 |
 | `AboutView.vue` | 我的 | 关于与致谢 | 后面接：数据源许可证署名（设计文档「七、数据源与许可证」要求）。 |
 
-- [ ] **Step 7: 建 `frontend/src/router/index.ts`**
+- [x] **Step 7: 建 `frontend/src/router/index.ts`**
 
 ```ts
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
@@ -1128,7 +1128,7 @@ export const router = createRouter({
 })
 ```
 
-- [ ] **Step 8: 写失败的测试（侧边栏）**
+- [x] **Step 8: 写失败的测试（侧边栏）**
 
 ```ts
 import { describe, it, expect } from 'vitest'
@@ -1172,13 +1172,13 @@ describe('侧边栏', () => {
 })
 ```
 
-- [ ] **Step 9: 跑测试，确认失败**
+- [x] **Step 9: 跑测试，确认失败**
 
 Run: `cd frontend && pnpm test src/components/AppSidebar.spec.ts`
 
 Expected: FAIL —— `Failed to resolve import "./AppSidebar.vue"`
 
-- [ ] **Step 10: 写 `frontend/src/components/AppSidebar.vue`**
+- [x] **Step 10: 写 `frontend/src/components/AppSidebar.vue`**
 
 ```vue
 <script setup lang="ts">
@@ -1298,7 +1298,7 @@ const bottom = NAV_GROUPS.filter((g) => g.pinnedBottom)
 </style>
 ```
 
-- [ ] **Step 10b: 写 `frontend/src/components/AppToolbar.vue`**
+- [x] **Step 10b: 写 `frontend/src/components/AppToolbar.vue`**
 
 布局的另一半。设计文档写的是「左侧分组导航 + **顶部工具条** + 右侧工作区」，工具条显示当前页名：
 
@@ -1381,13 +1381,13 @@ describe('顶部工具条', () => {
 })
 ```
 
-- [ ] **Step 11: 跑测试，确认通过**
+- [x] **Step 11: 跑测试，确认通过**
 
 Run: `cd frontend && pnpm test src/components/AppSidebar.spec.ts src/components/AppToolbar.spec.ts`
 
 Expected: `Tests  7 passed`（侧边栏 4 + 工具条 3）
 
-- [ ] **Step 12: 改 `main.ts` 与 `App.vue` 用上路由、侧边栏与工具条**
+- [x] **Step 12: 改 `main.ts` 与 `App.vue` 用上路由、侧边栏与工具条**
 
 `main.ts`：
 
@@ -1430,7 +1430,7 @@ import AppToolbar from './components/AppToolbar.vue'
 
 > Task 6 会往 `.main` 里再加一个底部的状态栏，届时 `App.vue` 再改一次。
 
-- [ ] **Step 13: 跑全部前端测试 + 手动看一眼**
+- [x] **Step 13: 跑全部前端测试 + 手动看一眼**
 
 Run:
 ```powershell
@@ -1441,7 +1441,7 @@ pnpm tauri dev
 
 Expected: 测试 `Tests  20 passed`（8 主题 + 5 导航 + 4 侧边栏 + 3 工具条）；窗口里出现左侧深色侧边栏（四个分组、「人体图」带「预留」角标、「我的」贴底带分隔线）+ 顶部工具条显示当前页名；点各分组能切页，工具条跟着变。
 
-- [ ] **Step 14: 提交**
+- [x] **Step 14: 提交**
 
 ```bash
 git add frontend/src
@@ -1464,7 +1464,7 @@ git commit -m "feat(frontend): 侧边栏分组与路由骨架，布局按设计�
 - Create: `frontend/src-tauri/src/backend.rs`
 - Modify: `frontend/src-tauri/src/lib.rs`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 在 `frontend/src-tauri/src/backend.rs` 里**先只写测试与函数签名**：
 
@@ -1703,7 +1703,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 跑测试，确认它失败**
+- [x] **Step 2: 跑测试，确认它失败**
 
 Run: `cd frontend/src-tauri && cargo test`
 
@@ -1711,7 +1711,7 @@ Expected: 编译通过但 **18 条测试全部 panic**，消息是 `not yet impl
 
 （`todo!()` 让「先写测试、确认它失败」这一步在 Rust 里也能成立——编译不会挡住你。）
 
-- [ ] **Step 3: 写实现（把两个 `todo!()` 换掉）**
+- [x] **Step 3: 写实现（把两个 `todo!()` 换掉）**
 
 ```rust
 pub fn parse_port_line(line: &str) -> Option<u16> {
@@ -1744,13 +1744,13 @@ pub fn resolve_java(configured: Option<&str>, java_home: Option<&str>) -> PathBu
 
 > `rejects_zero_because_os_never_assigns_it` 与 `accepts_the_full_port_range` 这两条一起，把「0 拒绝、1 与 65535 接受、65536 拒绝」这个边界钉死了。
 
-- [ ] **Step 4: 跑测试，确认通过**
+- [x] **Step 4: 跑测试，确认通过**
 
 Run: `cd frontend/src-tauri && cargo test`
 
 Expected: `test result: ok. 18 passed`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add frontend/src-tauri/src/backend.rs \
