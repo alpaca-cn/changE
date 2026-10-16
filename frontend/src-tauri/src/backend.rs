@@ -177,6 +177,101 @@ impl BackendState {
     }
 }
 
+/// 后端健康端点 `/api/health` 的响应，形状与前端 `Health` interface 一致。
+///
+/// **两个字段都不可省、都不可给默认值**：这是**跨语言契约**——Rust 这边
+/// 序列化出来的字段名，就是前端 `src/api/backend.ts` 里那个 `Health` interface
+/// 读的字段名。两处是手写定义的，可以漂移而没有任何东西会报警（TS 不校验
+/// 线上来的 JSON）。所以这里刻意不留 `#[serde(default)]`：
+/// 后端少给一个字段时应当**报错**（用户能看见一句话），而不是静默显示空文案。
+///
+/// `camelCase` 是防御性的、一个字符都不改：`status` 与 `cache` 本来就是单数小写词，
+/// 而写上它能让「以后加一个多词字段时忘了转换」这件事在代码里有个锚点。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Health {
+    /// 后端自报的状态。当前恒为 `"up"`。
+    pub status: String,
+    /// 缓存的一句话描述，形如「缓存：未启用（配置为关闭）」。
+    pub cache: String,
+}
+
+/// 健康检查失败的**分类**。
+///
+/// 分类而不是直接拼字符串的原因：错误消息是给用户看的（状态栏右侧原样渲染），
+/// 所以「连不上」「超时」「非 2xx」「JSON 畸形」必须各说各的话；而测试要断言的是
+/// **哪一类**错误，不该去匹配一段会随风改动的文案。
+///
+/// 用一个自有枚举而不是 `String` 或 `Box<dyn Error>`：`String` 会让上面那条
+/// 「按类断言」变成不可能，而 `Box<dyn Error>` 对这三条自带消息的路径毫无增益。
+#[derive(Debug)]
+pub enum HealthError {
+    /// `TcpStream::connect` 都没成功——端口上没人监听，或后端还没起来。
+    Connect {
+        addr: String,
+        source: std::io::Error,
+    },
+    /// 连上了，但写请求或读响应出错。**超时走的就是这一条**。
+    Read {
+        addr: String,
+        source: std::io::Error,
+    },
+    /// HTTP 状态码不是 200。
+    NotOk { code: u16 },
+    /// 状态行/分块编码/JSON 有一处对不上。
+    Malformed { detail: String },
+}
+
+impl HealthError {
+    /// 转成给用户看的一句话。
+    ///
+    /// `is_timeout()` 那一步是刻意的：超时在 `std::io` 里只是一个
+    /// `ErrorKind::WouldBlock`/`TimedOut` 的 `io::Error`，如果直接把它 `to_string()`
+    /// 出来，用户看到的是「资源暂时不可用」这种**完全指不出下一步**的话，
+    /// 而真正的意思很简单：「后端没在 2 秒内回话」。
+    pub fn into_message(self) -> String {
+        match self {
+            HealthError::Connect { addr, source } => {
+                format!("连不上后端 {addr}：{source}")
+            }
+            HealthError::Read { addr, source } => {
+                if is_timeout(&source) {
+                    format!(
+                        "后端 {addr} 超过 {} 毫秒没有回话",
+                        crate::http::HEALTH_TIMEOUT.as_millis()
+                    )
+                } else {
+                    format!("与后端 {addr} 通信失败：{source}")
+                }
+            }
+            HealthError::NotOk { code } => {
+                format!("后端健康检查返回了 HTTP {code}（期望 200）")
+            }
+            HealthError::Malformed { detail } => {
+                format!("后端健康检查的响应读不懂：{detail}")
+            }
+        }
+    }
+}
+
+/// 这个 `io::Error` 是不是超时。
+///
+/// Windows 上的 socket 读超时**不一定**报 `TimedOut`（实测常见的是
+/// `WouldBlock` 或 `ConnectionAborted`），所以三种都算，并且按 `to_string()` 里的
+/// 关键词兜一道底——多认一种不会把非超时说成超时，漏认一种却会让用户看到
+/// 「资源暂时不可用」这种没有下一步的话。
+fn is_timeout(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind;
+    if matches!(
+        e.kind(),
+        ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted
+    ) {
+        return true;
+    }
+    let text = e.to_string().to_ascii_lowercase();
+    text.contains("timed out") || text.contains("timeout") || text.contains("would block")
+}
+
 /// 后端子进程的句柄与状态。放在 Tauri 的 managed state 里。
 pub struct Backend {
     pub state: Arc<Mutex<BackendState>>,
@@ -931,5 +1026,57 @@ mod tests {
         let guard = b.child.lock().unwrap();
         assert!(guard.is_none(), "shutdown 之后不该还留着子进程句柄");
         drop(guard);
+    }
+
+    /// 真的拉起后端 jar，用**外壳自己那条 HTTP 路径**（`crate::http::get_health`）
+    /// 打一次 `/api/health`，并断言解析出来的 `cache` 与计划 1 的格式一致。
+    ///
+    /// 这条是 Task 8 的核心 e2e：它走的是 `get_health` 会走的全部代码
+    /// （真 socket → 真 chunked → 真 JSON → `Health`），所以「外壳代发」这件事
+    /// 不只是纯函数层面成立。
+    ///
+    /// `#[ignore]`：与上面那条同理，它要 79 MB 的 jar 与一个 JDK。
+    /// 跑它：`cargo test -- --ignored --nocapture`
+    #[test]
+    #[ignore = "需要 backend/target 下的 jar 与一个 JDK；用 cargo test -- --ignored 跑"]
+    fn end_to_end_reads_a_real_health_response_through_the_shell_http_path() {
+        let jar = find_backend_jar().unwrap_or_else(|e| panic!("{e}"));
+        let java = java_for_e2e();
+        println!("[e2e-health] java = {}", java.display());
+        println!("[e2e-health] jar  = {}", jar.display());
+
+        let b = Backend::spawn(java, jar, vec![]).expect("后端进程应当能起");
+        let (st, took) = poll_until_settled(&b, Duration::from_secs(30), Duration::from_millis(50));
+        println!("[e2e-health] spawn → 离开 Starting 用了 {:.2} 秒", took.as_secs_f64());
+        assert!(matches!(st.status, BackendStatus::Ready), "后端没能就绪：{st:?}");
+        let port = st.port.expect("Ready 状态必须带端口");
+
+        // 打的这一刻起一个表：这条路径的超时上限是 2 秒，
+        // 真的走通要在毫秒级，把实测值打出来供计划文档引用。
+        let start = Instant::now();
+        let h = crate::http::get_health(port).unwrap_or_else(|e| {
+            panic!("外壳代发 GET /api/health 失败：{e}（端口 {port}）")
+        });
+        println!("[e2e-health] GET /api/health 用了 {:?}", start.elapsed());
+        println!("[e2e-health] status = {:?}", h.status);
+        println!("[e2e-health] cache  = {:?}", h.cache);
+
+        assert_eq!(h.status, "up", "后端自报的状态");
+        // **格式断言**：计划 1 的降级设计规定了缓存文案的两种形态之一。
+        // 本机没配 Redis，所以一定是「未启用」那一支；但这里不断言具体哪一种，
+        // 而是断言它**必须**是这两种之一——否则缓存那一层的描述漂了。
+        assert!(
+            h.cache.starts_with("缓存："),
+            "缓存文案该以「缓存：」开头，实际 {:?}",
+            h.cache
+        );
+        assert!(
+            h.cache.contains("未启用") || h.cache.contains("已连接") || h.cache.contains("熔断"),
+            "缓存文案不在计划 1 规定的形态里，实际 {:?}",
+            h.cache
+        );
+
+        b.shutdown();
+        println!("[e2e-health] shutdown() 已调用");
     }
 }

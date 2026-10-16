@@ -33,14 +33,22 @@ describe('整壳结构', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     invokeMock.mockReset()
-    // 结构测试不关心数据，给个 starting 就够。
-    invokeMock.mockResolvedValue({ status: 'starting', port: null, message: '正在启动后端…' })
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }))
+    // 结构测试不关心数据，给个 starting 就够——状态栏因此不会去打 get_health。
+    // 按命令名分派：健康检查已经从 `fetch` 改成 `get_health` 了，
+    // 一个笼统的 mockResolvedValue 会让两条命令拿到同一个外壳状态对象。
+    invokeMock.mockImplementation(async (cmd: unknown) => {
+      if (cmd === 'get_backend_status') {
+        return { status: 'starting', port: null, message: '正在启动后端…' }
+      }
+      if (cmd === 'get_health') {
+        return { status: 'up', cache: '缓存：未启用（配置为关闭）' }
+      }
+      throw new Error(`测试没有为命令 ${String(cmd)} 准备应答`)
+    })
   })
 
   afterEach(() => {
     vi.useRealTimers()
-    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 

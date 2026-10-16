@@ -7,6 +7,13 @@ export interface BackendState {
   message: string
 }
 
+/** `/api/health` 的响应，与 Rust 侧 `http::Health` 对应。
+ *
+ * **两处手写定义，靠契约测试钉住**：Rust 侧的
+ * `the_health_struct_serializes_with_the_field_names_the_frontend_reads`
+ * 与这里的 `Rust 真的序列化出来的 Health JSON 字段名，前端能读出来`
+ * 用的是同一段 JSON 字符串。改字段名要同时改两边，否则一侧会红。
+ */
 export interface Health {
   status: string
   /** 形如「缓存：已连接 127.0.0.1:6399」或「缓存：未启用（配置为关闭）」。 */
@@ -45,11 +52,28 @@ export function describeState(s: BackendState): { text: string; tone: Tone } {
   }
 }
 
-/** 查后端健康端点。 */
-export async function checkHealth(port: number): Promise<Health> {
-  const res = await fetch(`http://127.0.0.1:${port}/api/health`)
-  if (!res.ok) {
-    throw new Error(`后端返回 ${res.status}`)
-  }
-  return (await res.json()) as Health
+/**
+ * 查后端健康端点。
+ *
+ * **不发 HTTP，也没有端口参数。**
+ *
+ * 旧版是 `checkHealth(port)` + `fetch('http://127.0.0.1:' + port + '/api/health')`，
+ * 真机验收时它稳定失败：页面的源（dev 是 `http://127.0.0.1:1420`，打包后是
+ * `tauri://localhost`）与后端的**随机端口**不同源，响应里没有
+ * `Access-Control-Allow-Origin`，浏览器把响应拦掉，前端只拿到
+ * `TypeError: Failed to fetch`。
+ *
+ * 两个概念要分清：**CSP 与 CORS 是两道独立且都要过的门**。CSP 管「页面能不能发
+ * 这个请求」，CORS 管「浏览器肯不肯把响应交给脚本」。`tauri.conf.json` 里给
+ * `connect-src` 放行了 `http://127.0.0.1:*`，只过了第一道。
+ *
+ * 现在这条请求由外壳（Rust 的 `get_health` 命令）去发——它不经浏览器，
+ * 天生不在同源策略的管辖范围内。所以：
+ * - 端口**留在 Rust 侧**，前端不再经手（签名因此一个参数都不收）；
+ * - 前端不再需要 `connect-src` 的通配，CSP 收紧了；
+ * - 失败走 invoke 的 reject：Rust 侧把「连不上 / 超时 / 非 2xx / JSON 畸形」
+ *   分成四句不同的话，调用方原样显示即可。
+ */
+export function checkHealth(): Promise<Health> {
+  return invoke<Health>('get_health')
 }

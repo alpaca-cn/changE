@@ -48,9 +48,26 @@ function stopHealthPolling() {
 }
 
 async function pollHealth() {
-  if (state.value.port === null) return
+  // **就绪守卫**：改成 invoke 之后端口不再由前端关心，所以守卫不能再写
+  // `state.value.port === null`——那个条件是「端口」的代理，而真正的前提是
+  // **后端已经就绪**。两者今天等价（端口只在 Ready 时才有值），但哪天
+  // 外壳换个方式给出端口，用端口当守卫就会悄悄失效。
+  //
+  // 这道守卫是必需的：`get_health` 在 `Starting` 时直接返回一句「后端还在启动中」，
+  // 而那句错误一旦落进 `cacheError`，状态栏右侧就会从「后端启动需要几秒，请稍候」
+  // 变成一句吓人的话。
+  //
+  // **诚实标注（Task 8 变异实测）**：它今天是**不可达的**——`pollHealth` 的两个
+  // 调用点（`onReady` 里那次直接调用，与它注册的 `healthTimer`）都在「已经就绪」
+  // 之后，所以启动期它一次也不会被调到。**删掉这一行，全部测试依然全绿（变异存活，
+  // 已实测并记在计划文档的变异表里）。** 留着它是因为守住这条边界比依赖
+  // 「两个调用点恰好都在就绪之后」更稳：哪天有人把 `pollHealth` 挪进 `tick`
+  // （那是个很自然的想法），这行就是唯一拦得住它的东西，
+  // 而 `BackendStatusBar.spec.ts` 的「启动期不去问 health」那条用例
+  // （断言调用次数为 0 且界面文案不变）会在同一刻变红。
+  if (state.value.status !== 'ready') return
   try {
-    const h = await checkHealth(state.value.port)
+    const h = await checkHealth()
     cacheText.value = h.cache
     cacheError.value = ''
   } catch (e) {
