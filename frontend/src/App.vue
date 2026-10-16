@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AppSidebar from './components/AppSidebar.vue'
 import AppToolbar from './components/AppToolbar.vue'
+import BackendStatusBar from './components/BackendStatusBar.vue'
 </script>
 
 <template>
@@ -11,6 +12,7 @@ import AppToolbar from './components/AppToolbar.vue'
       <main class="workspace">
         <RouterView />
       </main>
+      <BackendStatusBar />
     </div>
   </div>
 </template>
