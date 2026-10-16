@@ -37,7 +37,17 @@ class HealthControllerTest {
         // 查值，不是查键名：只查键名时 cache 的值改成 "" 或 "totally-bogus" 都能存活。
         // 质量审查轮实测过这两个变异体都能全绿——而 Task 11 的验收标准正是要求
         // 这个字段「如实报告」缓存状态，所以必须是值断言。
-        assertThat(r.getBody()).contains("\"cache\":\"disabled(placeholder)\"");
+        //
+        // Task 11：CacheConfig 的占位实现（"disabled(placeholder)"）已换成真实现。
+        // 这里**只断言前缀**，原因是完整描述含主机与端口
+        // （「缓存：未启用（连不上 192.168.100.128:6379）」），把它逐字写进测试
+        // 等于把配置钉死在测试里：改 application.yml 或换一台 Redis 都会让测试无意义地红。
+        // 测试环境里 Redis 不可达（那台虚拟机常关），所以真实现必然走 NoOp 分支，
+        // 值必然以「缓存：未启用」开头。
+        //
+        // 覆盖缺口来源：Task 10 审查发现原断言只查键名不查值（cache 改成任意串都能过）。
+        // 现在改成查值，并且查的是**真实现**产出的值。
+        assertThat(r.getBody()).contains("\"cache\":\"缓存：未启用");
     }
 
     @Test
