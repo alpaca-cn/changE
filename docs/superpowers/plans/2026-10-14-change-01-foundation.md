@@ -4979,7 +4979,7 @@ M05 本身是刻意设计的反证对照，**保留不动**。
 - Create: `backend/src/main/java/com/change/service/ChangeLogService.java`
 - Test: `backend/src/test/java/com/change/service/ChangeLogServiceTest.java`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```java
 package com.change.service;
@@ -5008,6 +5008,20 @@ class ChangeLogServiceTest {
         return jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
     }
 
+    /**
+     * 绕过服务层直写一行 change_log，用来构造「库里已经有一行服务层写不出来的坏数据」：
+     * target_table 不在白名单、before_json 的键不是合法列名。
+     * 服务层的正常路径写不出这种行，所以只能手工造——但库里的行**可以**长这样
+     * （target_table 上没有 CHECK），undo 必须自己扛住。
+     */
+    private long insertRawLog(String action, String targetTable, String beforeJson) {
+        jdbc.update("INSERT INTO change_log(changed_at, origin, action, target_table, " +
+                    "target_id, before_json, after_json, undone) VALUES (?,?,?,?,?,?,?,0)",
+                "2026-10-16T00:00:00", "agent", action, targetTable, 1L,
+                beforeJson, "{\"x\":1}");
+        return jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+    }
+
     @Test
     void records_an_insert_with_null_before() {
         long id = insertFood("测试食物A", 100);
@@ -5021,6 +5035,26 @@ class ChangeLogServiceTest {
         assertThat(row.get("action")).isEqualTo("insert");
         assertThat(row.get("before_json")).isNull();
         assertThat((String) row.get("after_json")).contains("测试食物A");
+    }
+
+    @Test
+    void records_the_chat_session_id_when_there_is_one() {
+        // chat_session_id 是设计文档给 ChangeLog 列的字段之一（「会话 id」），
+        // 而在此之前**没有任何测试传过非 null 的值**——把它整个写成 null 的变异能活下来
+        // （实测 M17：11 条全绿）。所以补这一条，把「日志行真的挂在会话上」钉住。
+        // 注意 change_log.chat_session_id 上没有 REFERENCES，这里仍先建一行会话，
+        // 走的是将来真实调用会走的形状。
+        jdbc.update("INSERT INTO chat_session(title, created_at) VALUES (?,?)",
+                "会话", "2026-10-16T00:00:00");
+        long sessionId = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+
+        long id = insertFood("测试食物I", 900);
+        long logId = logs.recordInsert("food", id, Map.of("name_zh", "测试食物I"),
+                "agent", sessionId);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT chat_session_id FROM change_log WHERE id = ?", Long.class, logId))
+                .isEqualTo(sessionId);
     }
 
     @Test
@@ -5072,17 +5106,122 @@ class ChangeLogServiceTest {
                 Map.of("x", 1), "agent", null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("白名单");
+        // 两条写入路径共用 write() 里的白名单校验，但「共用」是实现的巧合而不是契约，
+        // 所以 recordUpdate 这一侧也单独钉一条（before 合法，卡住的只能是表名）。
+        long id = insertFood("测试食物H", 800);
+        assertThatThrownBy(() -> logs.recordUpdate("drop_table_attempt", id,
+                Map.of("kcal_per100", 800.0), Map.of("kcal_per100", 801.0), "agent", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("白名单");
+    }
+
+    @Test
+    void every_allowed_table_has_a_single_integer_id_column() {
+        // 回退靠 WHERE id = ? 定位目标行。复合主键的表（exercise_muscle）定位不到，
+        // 所以白名单的准入条件是「必须有单列整型主键 id」。
+        // 这条测试是给未来的自己设的闸：往白名单加表时忘了这个条件，它会立刻红。
+        for (String table : com.change.service.ChangeLogService.ALLOWED_TABLES) {
+            // 表名只能拼进 SQL（pragma_table_info 的参数是标识符，不是绑定值）；
+            // 它来自本项目的常量，不是外部输入。
+            // 另：PRAGMA table_info(...) 是**表函数**，只取一列——取多列会让
+            // queryForList(sql, String.class) 抛 IncorrectResultSetColumnCountException。
+            var cols = jdbc.queryForList(
+                    "SELECT name FROM pragma_table_info('" + table + "')", String.class);
+            assertThat(cols).as("表 %s 的列", table).contains("id");
+
+            String idType = jdbc.queryForMap(
+                    "SELECT type, pk FROM pragma_table_info('" + table + "') WHERE name = 'id'")
+                    .get("type").toString().toUpperCase();
+            assertThat(idType).as("表 %s 的 id 类型", table).isEqualTo("INTEGER");
+
+            Integer pkCount = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM pragma_table_info('" + table + "') WHERE pk > 0",
+                    Integer.class);
+            assertThat(pkCount).as("表 %s 的主键列数", table).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void undo_rejects_a_non_identifier_column_name() {
+        // 参数占位符保护值，保护不了标识符——列名是拼进 SQL 的。
+        long id = insertFood("测试食物E", 500);
+        long logId = logs.recordUpdate("food", id,
+                Map.of("kcal_per100 = 1, name_zh", 1.0),   // 恶意键
+                Map.of("kcal_per100", 1.0), "agent", null);
+
+        assertThatThrownBy(() -> logs.undo(logId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("非法的列名");
+    }
+
+    @Test
+    void record_update_requires_a_before_snapshot() {
+        long id = insertFood("测试食物F", 600);
+        assertThatThrownBy(() -> logs.recordUpdate("food", id, null,
+                Map.of("kcal_per100", 1.0), "agent", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("before")
+                // ⚠️ 只断言 "before" 是不够判别的一句话：数据库侧的
+                // CHECK 报错原文里含 "before_json"，也含 "before"。
+                // 再加一条只有 Java 侧文案才有的词，这条断言才真的在钉「Java 先拦」。
+                .hasMessageContaining("快照");
+        assertThatThrownBy(() -> logs.recordUpdate("food", id, Map.of(),
+                Map.of("kcal_per100", 1.0), "agent", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("before")
+                .hasMessageContaining("快照");
+    }
+
+    @Test
+    void rejects_empty_after_and_unknown_origin() {
+        long id = insertFood("测试食物G", 700);
+        assertThatThrownBy(() -> logs.recordInsert("food", id, null, "agent", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("after");
+        assertThatThrownBy(() -> logs.recordInsert("food", id, Map.of(), "agent", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("after");
+        assertThatThrownBy(() -> logs.recordInsert("food", id,
+                Map.of("name_zh", "x"), "robot", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("origin");
+    }
+
+    @Test
+    void undo_of_an_unknown_log_id_is_rejected() {
+        assertThatThrownBy(() -> logs.undo(999_999L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("找不到");
+    }
+
+    @Test
+    void undo_rejects_a_target_table_outside_the_whitelist() {
+        // undo 的 target_table 来自**数据库**，不是来自本次调用的参数——
+        // 库里一行坏数据就是一条越权回退路径（能删/改白名单外的任何表）。
+        // 删掉 undo 里的 requireAllowed(table) 时，只有这条测试会红。
+        long logId = insertRawLog("insert", "drop_table_attempt", null);
+
+        assertThatThrownBy(() -> logs.undo(logId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("白名单");
+        // 拦住之后不能留下「已撤销」的半截状态，否则再点一次撤销就无事可做。
+        assertThat(jdbc.queryForObject(
+                "SELECT undone FROM change_log WHERE id = ?", Integer.class, logId))
+                .isZero();
     }
 }
 ```
 
-- [ ] **Step 2: 跑测试，确认失败**
+- [x] **Step 2: 跑测试，确认失败**
 
 Run: `cd backend && mvn -B test -Dtest=ChangeLogServiceTest`
 
 Expected: 编译失败，`cannot find symbol: class ChangeLogService`
 
-- [ ] **Step 3: 写实现**
+> ℹ️ 实跑（本机 Maven 的 locale 是 zh_CN，编译器输出的是同一句话的中文）：
+> `[ERROR] ChangeLogServiceTest.java:[18,16] 找不到符号` /
+> `[ERROR]   符号:   类 ChangeLogService`，即 `cannot find symbol: class ChangeLogService`。
+> 那两个行号属于首版 5 条测试的文件，已随 fence 同步失效；
+> 「首次运行必然编译失败（`ChangeLogService` 还不存在）」这一事实不变。原始输出见 6.1。
+
+- [x] **Step 3: 写实现**
 
 ```java
 package com.change.service;
@@ -5094,8 +5233,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * 变更日志：让「智能体可写」这件事有安全带。
@@ -5108,12 +5250,34 @@ import java.util.Set;
 @Service
 public class ChangeLogService {
 
-    /** 允许被记录与回退的表。加表必须改这里，改这里必须同时加测试。 */
+    /**
+     * 允许被记录与回退的表。
+     *
+     * **准入条件：必须有单列整型主键 `id`。** 回退靠 `WHERE id = ?` 定位目标行，
+     * 复合主键的表（如 exercise_muscle，主键是 (exercise_id, muscle_group_id)）
+     * 定位不到，所以不进白名单——它的增删应通过所属的 exercise 记录来审计。
+     *
+     * 加表必须改这里，改这里必须同时加测试（见 ChangeLogServiceTest 的白名单自检）。
+     */
     public static final Set<String> ALLOWED_TABLES = Set.of(
             "food", "food_portion", "meal", "meal_item",
-            "exercise", "exercise_muscle",
+            "exercise",
             "workout_session", "session_exercise", "workout_set",
             "body_metric", "photo");
+
+    /**
+     * 合法的变更来源。必须与 {@code V4__auxiliary.sql} 里
+     * {@code change_log.origin} 的 {@code CHECK (origin IN ('user','agent'))} 一致。
+     *
+     * <p>用 {@link List} 而不是 {@code Set}：报错文案要把它拼进消息，而 {@code Set.of}
+     * 的迭代顺序按 JVM 运行随机（同一个集合两次运行可能给出不同顺序），
+     * 拼进消息就成了「同一处错误、两种文案」。包内 {@code VolumeCalculator.VALID_ROLES}
+     * 出于同一理由也是 {@code List}。
+     */
+    public static final List<String> ALLOWED_ORIGINS = List.of("user", "agent");
+
+    /** 合法的 SQL 标识符：字母或下划线开头，其余为字母/数字/下划线。 */
+    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
@@ -5131,6 +5295,12 @@ public class ChangeLogService {
 
     public long recordUpdate(String table, long targetId, Map<String, Object> before,
                              Map<String, Object> after, String origin, Long chatSessionId) {
+        if (before == null || before.isEmpty()) {
+            // 数据库侧有 CHECK (action <> 'update' OR before_json IS NOT NULL) 兜底，
+            // 但在 Java 侧先拦能给出能读懂的报错，而不是一句 CHECK constraint failed。
+            throw new IllegalArgumentException(
+                    "update 记录必须带 before 快照，否则撤销时无从恢复");
+        }
         return write(table, targetId, "update", before, after, origin, chatSessionId);
     }
 
@@ -5138,6 +5308,18 @@ public class ChangeLogService {
                        Map<String, Object> before, Map<String, Object> after,
                        String origin, Long chatSessionId) {
         requireAllowed(table);
+        if (!ALLOWED_ORIGINS.contains(origin)) {
+            // schema 侧同样有 CHECK (origin IN ('user','agent')) 兜底；
+            // 在这里先拦的理由与上面 before 那条相同：把约束翻译成能读懂的话。
+            throw new IllegalArgumentException(
+                    "origin 必须是 " + String.join(" 或 ", ALLOWED_ORIGINS)
+                            + "，实际为 " + origin);
+        }
+        if (after == null || after.isEmpty()) {
+            // 不拦的话 toJson(null) 会写出**字面量字符串 "null"**：after_json 是 NOT NULL，
+            // 于是库里留下一行「看起来合法、语义为空」的记录。
+            throw new IllegalArgumentException("after 快照不能为空");
+        }
         jdbc.update("INSERT INTO change_log(changed_at, origin, action, target_table, " +
                     "target_id, before_json, after_json, chat_session_id, undone) " +
                     "VALUES (?,?,?,?,?,?,?,?,0)",
@@ -5148,9 +5330,15 @@ public class ChangeLogService {
 
     /** 回退一条改动。insert 的回退是删除该行；update 的回退是写回 before 值。 */
     public void undo(long logId) {
-        Map<String, Object> row = jdbc.queryForMap(
+        // 用 queryForList 而不是 queryForMap：查不到时前者给一个空列表，
+        // 后者抛 Spring 的 EmptyResultDataAccessException——对调用方是一句读不懂的话。
+        List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT action, target_table, target_id, before_json, undone " +
                 "FROM change_log WHERE id = ?", logId);
+        if (rows.isEmpty()) {
+            throw new IllegalArgumentException("找不到这条变更记录: " + logId);
+        }
+        Map<String, Object> row = rows.get(0);
 
         if (((Number) row.get("undone")).intValue() == 1) {
             throw new IllegalStateException("这条改动已经撤销过了: " + logId);
@@ -5159,6 +5347,9 @@ public class ChangeLogService {
         String table = (String) row.get("target_table");
         long targetId = ((Number) row.get("target_id")).longValue();
         String action = (String) row.get("action");
+        // target_table 来自**数据库**（不是本次调用的参数，那个在写入时已经查过一遍），
+        // 而 target_table 上没有 CHECK：一行被写坏的日志就能变成一条越权回退路径
+        // （删掉/改写白名单之外的任何表）。所以这里必须重新校验。
         requireAllowed(table);
 
         if ("insert".equals(action)) {
@@ -5168,14 +5359,21 @@ public class ChangeLogService {
             if (before == null || before.isEmpty()) {
                 throw new IllegalStateException("update 记录缺少 before 快照: " + logId);
             }
-            String sets = before.keySet().stream()
-                    .map(k -> k + " = ?")
-                    .reduce((a, b) -> a + ", " + b).orElseThrow();
-            Object[] values = before.values().toArray();
-            Object[] args = new Object[values.length + 1];
-            System.arraycopy(values, 0, args, 0, values.length);
-            args[values.length] = targetId;
-            jdbc.update("UPDATE " + table + " SET " + sets + " WHERE id = ?", args);
+            // sets 与 values 必须来自**同一次** entrySet() 迭代。
+            // 「keySet() 与 values() 顺序一致」是实现细节而不是 Map 的契约：
+            // 两次独立迭代一旦错位，就会把 A 列的值写给 B 列——静默写错数据，且不报错。
+            StringBuilder sets = new StringBuilder();
+            List<Object> values = new ArrayList<>();
+            for (Map.Entry<String, Object> e : before.entrySet()) {
+                requireIdentifier(e.getKey());
+                if (sets.length() > 0) {
+                    sets.append(", ");
+                }
+                sets.append(e.getKey()).append(" = ?");
+                values.add(e.getValue());
+            }
+            values.add(targetId);
+            jdbc.update("UPDATE " + table + " SET " + sets + " WHERE id = ?", values.toArray());
         }
 
         jdbc.update("UPDATE change_log SET undone = 1 WHERE id = ?", logId);
@@ -5185,6 +5383,20 @@ public class ChangeLogService {
         if (!ALLOWED_TABLES.contains(table)) {
             throw new IllegalArgumentException(
                     "表「" + table + "」不在白名单里，拒绝记录或回退");
+        }
+    }
+
+    /**
+     * 校验一列列名是合法的 SQL 标识符。
+     *
+     * 为什么必须校验：undo 的 UPDATE 路径要把列名拼进 SQL——
+     * 参数占位符只能保护**值**，保护不了**标识符**。
+     * 目前 before 的键由本项目的服务层构造，但这是一条注入面，
+     * 一旦将来有人把外部来源（模型输出、导入文件）的键传进来就会失效。
+     */
+    private static void requireIdentifier(String column) {
+        if (column == null || !IDENTIFIER.matcher(column).matches()) {
+            throw new IllegalArgumentException("非法的列名: " + column);
         }
     }
 
@@ -5207,19 +5419,287 @@ public class ChangeLogService {
 }
 ```
 
-- [ ] **Step 4: 跑测试，确认通过**
+- [x] **Step 4: 跑测试，确认通过**
 
 Run: `cd backend && mvn -B test -Dtest=ChangeLogServiceTest`
 
-Expected: `Tests run: 5, Failures: 0, Errors: 0`
+Expected（原计划写 5，**实测 12**）：原计划 5 条 + A2/B/C/D/E 的 5 条 + 本轮自查
+补的 2 条（undo 白名单、chat_session_id）= **`Tests run: 12, Failures: 0, Errors: 0`**。
+原始输出见 6.1，两条补测的依据见 6.3 的 M09 / M17。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add backend/src/main/java/com/change/service/ChangeLogService.java \
         backend/src/test/java/com/change/service/ChangeLogServiceTest.java
 git commit -m "feat: 变更日志与一键回退，表名白名单 + 禁止二次撤销"
 ```
+
+> ℹ️ 本轮实际提交：提交信息写成「做了什么 + 为什么」的完整中文说明（A–F 八处收口逐条写清
+> 依据），并用 `git commit -F <文件>` 提交；本计划文档与两个源文件一起进同一次提交
+> （与 Task 5–8 各轮的提交口径一致）。上面这段原计划的命令**保留不动**。
+
+- [x] **Step 6（落地轮新增）：A–F 全部落地 + 17 个变异体实测 + schema 交叉验证**
+
+> 本轮（Task 9 落地轮）的改动记档。Step 1 / Step 3 两个 ```java fence 已**首次同步为磁盘原文**
+> （测试 12 条 225 行、实现 193 行），由脚本逐字比对，identical=True
+> （sha256 `c857ade0963530bf…` / `a7a0037955e400c6…`；两份文件无 BOM、无 U+FFFD、CRLF=0）。
+>
+> **原计划 5 条测试 → 落地 12 条**：A2/B/C/D/E 各 1 条（共 10 条），另 2 条是本轮**变异测试实测**
+> 出来的零覆盖项——undo 的表名白名单（M09）、`chat_session_id`（M17）。两条都不是顺手多写，
+> 而是先看到变异存活才补的。
+
+#### 6.1 TDD 三步的原始输出
+
+Step 2（先写测试、跑一次确认失败）：
+```text
+[ERROR] COMPILATION ERROR : 
+[ERROR] /E:/idea/program/change/backend/src/test/java/com/change/service/ChangeLogServiceTest.java:[18,16] 找不到符号
+[ERROR] /E:/idea/program/change/backend/src/test/java/com/change/service/ChangeLogServiceTest.java:[119,47] 找不到符号
+[ERROR] 2 errors 
+[INFO] BUILD FAILURE
+[ERROR]   符号:   类 ChangeLogService
+[ERROR]   位置: 类 com.change.service.ChangeLogServiceTest
+```
+（本机 Maven 的 locale 是 zh_CN，`cannot find symbol: class ChangeLogService` 显示为
+`找不到符号 / 符号: 类 ChangeLogService`，是同一句话。）
+
+Step 4（写实现后单类跑绿；**删 `target` 后重跑**，避免拿到陈旧 class）：
+```text
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.076 s -- in com.change.service.ChangeLogServiceTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+```
+
+Step 5 全量回归（**删 `target` 后** `cd backend && mvn -B test`）：
+```text
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0 -- in com.change.calc.NutritionCalculatorTest
+[INFO] Tests run: 13, Failures: 0, Errors: 0, Skipped: 0 -- in com.change.calc.OneRepMaxTest
+[INFO] Tests run: 15, Failures: 0, Errors: 0, Skipped: 0 -- in com.change.calc.PortionConverterTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0 -- in com.change.calc.VolumeCalculatorTest
+[INFO] Tests run:  2, Failures: 0, Errors: 0, Skipped: 0 -- in com.change.ChangeApplicationTests
+[INFO] Tests run:  3, Failures: 0, Errors: 0, Skipped: 0 -- in com.change.config.DataDirectoryInitializerTest
+[INFO] Tests run:  5, Failures: 0, Errors: 0, Skipped: 0 -- in com.change.MigrationTest
+[INFO] Tests run:  2, Failures: 0, Errors: 0, Skipped: 0 -- in com.change.repo.TrainingRepoTest
+[INFO] Tests run:  9, Failures: 0, Errors: 0, Skipped: 0 -- in com.change.SchemaTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0 -- in com.change.service.ChangeLogServiceTest
+[INFO] Tests run: 91, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+```
+79 → **91**（+12）。`SchemaTest` 9 条不变——本轮**没有动 schema**。
+
+#### 6.2 A–F 的落地
+
+**A1 先核实**：`V2__training.sql:70-75`
+
+```sql
+CREATE TABLE exercise_muscle (
+    exercise_id     INTEGER NOT NULL REFERENCES exercise(id) ON DELETE CASCADE,
+    muscle_group_id INTEGER NOT NULL REFERENCES muscle_group(id) ON DELETE CASCADE,
+    role            TEXT    NOT NULL CHECK (role IN ('primary', 'secondary')),
+    PRIMARY KEY (exercise_id, muscle_group_id)
+);
+```
+
+主键是 `(exercise_id, muscle_group_id)`，**没有 `id` 列**——`undo` 的
+`DELETE FROM <table> WHERE id = ?` 对它必然抛 `no such column: id`。
+计划的 5 条测试全用 `food`，所以这个缺陷测不出来。
+落地：把 `exercise_muscle` 移出 `ALLOWED_TABLES`，并在常量 javadoc 里把准入条件写成
+**「必须有单列整型主键 `id`」**；A2 的自检测试（`pragma_table_info` 逐表核 `id` /
+`INTEGER` / 主键列数）把这条条件钉死——M01 反证实测：把它加回白名单，只有 A2 那条红。
+
+**B** `undo` 的 UPDATE 路径加 `requireIdentifier`（列名是拼进 SQL 的，占位符保护不了标识符），
+并补一条**真会执行注入**的测试（键名 `kcal_per100 = 1, name_zh`）。M02：去掉校验 → 该测试红
+（说明注入的 SQL 确实被执行，而不是「本来就不可达」）。
+
+**C** `recordUpdate` 前置拒绝 `null` / 空 `before`。M03：去掉 Java 侧校验后抛的是
+`UncategorizedSQLException`，消息 `CHECK constraint failed: action <> 'update' OR
+before_json IS NOT NULL` —— 正是「读不懂的报错」。
+
+**D1** `write` 前置拒绝 `null` / 空 `after`。M04 的实测输出把失效形态写得很清楚：
+`expected: null but was: "null"` —— 不拦的话 `toJson(null)` 写出**字面量字符串 `"null"`**，
+`after_json` 是 NOT NULL，于是库里留下一行「看起来合法、语义为空」的记录。
+
+**D2** `origin` 白名单 `ALLOWED_ORIGINS = List.of("user","agent")`，与
+`change_log.origin` 的 `CHECK` 逐字一致；用 `List` 而非 `Set` 是为了让拼进报错文案的顺序确定
+（`Set.of` 的迭代顺序按 JVM 运行随机）。M05：去掉校验 → `CHECK constraint failed:
+origin IN ('user','agent')`。
+
+**E** `undo` 改用 `queryForList` + 空列表检查，对不存在的 `logId` 抛
+`IllegalArgumentException("找不到这条变更记录: …")`。M06：去掉检查 → `IndexOutOfBoundsException`。
+
+**F** `sets` 与 `values` 改为**同一次 `entrySet()` 迭代**构造。注意：M07（退回两次独立迭代）
+**存活**——在当前设计下 `before` 总是经 Jackson 反序列化回来的 `LinkedHashMap`，
+两次迭代顺序一致，所以 F 是纵深防御、**没有测试钉住**，不假装它被测住（见 6.6 顾虑 1）。
+
+#### 6.3 G：变异测试（17 个变异体，**16 杀 / 1 存活**）
+
+每个变异体都是对**磁盘原文**做一处逐字文本替换（脚本先断言「替换点唯一」，不唯一就中止：
+M03 的替换点起初写法命中了 2 处——`undo` 里那处缩进更深，8 空格串是 12 空格串的**子串**，
+带上后即唯一），删掉 `backend/target`，再跑 `mvn -B test -Dtest=ChangeLogServiceTest`；
+跑完由脚本 `finally` 恢复原文并校验 sha256
+（主轮 16 次 + M17 两轮，**18/18 次 `RESTORED ok=True sha=a7a0037955e400c6…`**）。
+
+> 两次跑的测试条数不同：M01–M16 与 M17 的补测前一轮都跑在 **11 条**测试的文件上
+> （那是补 `chat_session_id` 那条之前），M17 的补测后一轮跑在 **12 条**上——
+> 这个条数差本身就是「新增覆盖确实来自新断言」的证据。
+
+| # | 变异（对磁盘原文做一处逐字替换） | 结果 | 变红的测试 |
+| --- | --- | --- | --- |
+| M01 | 把 `exercise_muscle` 加回 `ALLOWED_TABLES`（反证 A1） | **杀** | `every_allowed_table_has_a_single_integer_id_column` |
+| M02 | 删掉 UPDATE 路径的 `requireIdentifier`（B） | **杀** | `undo_rejects_a_non_identifier_column_name` |
+| M03 | 删掉 `recordUpdate` 的 before 前置校验（C） | **杀** | `record_update_requires_a_before_snapshot` |
+| M04 | 删掉 `write` 的 after 前置校验（D1） | **杀** | `rejects_empty_after_and_unknown_origin` |
+| M05 | 删掉 origin 白名单校验（D2） | **杀** | `rejects_empty_after_and_unknown_origin` |
+| M06 | 删掉 undo 的「找不到」空检查（E） | **杀** | `undo_of_an_unknown_log_id_is_rejected` |
+| M07 | 退回「keySet() 拼 sets + values() 取数」两次独立迭代（F） | **存活**（反证，见 6.6） | —（11 条全绿） |
+| M08 | 删掉写入侧 `requireAllowed(table)`（白名单） | **杀** | `rejects_unknown_table` |
+| M09 | 删掉回退侧 `requireAllowed(table)`（白名单） | **杀** | `undo_rejects_a_target_table_outside_the_whitelist` |
+| M10 | 删掉二次撤销检查 | **杀** | `cannot_undo_twice` |
+| M11 | insert 时 before 写成字面量 `"null"` 而不是 SQL NULL | **杀** | `records_an_insert_with_null_before` |
+| M12 | undo 永远走 update 分支 | **杀** | `cannot_undo_twice`、`rollback_of_an_insert_deletes_the_row` |
+| M13 | undo 的 insert 分支不真的删行 | **杀** | `rollback_of_an_insert_deletes_the_row` |
+| M14 | undo 完成后不标记 undone | **杀** | `cannot_undo_twice`、`rollback_of_an_insert_deletes_the_row` |
+| M15 | update 回退拿 after 快照冒充 before | **杀** | `rollback_of_an_update_restores_previous_values`、`undo_rejects_a_non_identifier_column_name` |
+| M16 | 回退时把列名当值写回（键值错配） | **杀** | `rollback_of_an_update_restores_previous_values` |
+| M17 | `chat_session_id` 写成 null | **杀** | `records_the_chat_session_id_when_there_is_one` |
+
+原始输出摘录（每个变异体都先删 `target`）：
+```text
+M01 → Tests run: 11, Failures: 1, Errors: 0  [表 exercise_muscle 的列] Expecting ["exercise_id","muscle_group_id","role"] to contain ["id"]
+M02 → Tests run: 11, Failures: 1, Errors: 0  undo_rejects_a_non_identifier_column_name:148 Expecting code to raise a throwable.
+M03 → Tests run: 11, Failures: 1, Errors: 0  ... but was: UncategorizedSQLException ... CHECK constraint failed: action <> 'update' OR before_json IS NOT NULL
+M06 → Tests run: 11, Failures: 1, Errors: 0  ... but was: java.lang.IndexOutOfBoundsException: Index 0 out of bounds for length 0
+M07 → Tests run: 11, Failures: 0, Errors: 0  BUILD SUCCESS   ← 唯一存活
+M09 → Tests run: 11, Failures: 1, Errors: 0  ... DELETE FROM drop_table_attempt WHERE id = ? （白名单没拦住就会被执行）
+M11 → Tests run: 11, Failures: 1, Errors: 0  records_an_insert_with_null_before:52 expected: null but was: "null"
+M16 → Tests run: 11, Failures: 1, Errors: 0  rollback_of_an_update_restores_previous_values:84 expected: 300.0 but was: 0.0
+```
+
+M17 分两次跑，用来证明补测**确实**是覆盖的来源（与 Task 8 的 M21–M24 同一手法）：
+```text
+补测前（11 条）：M17 SURVIVED Tests run: 11, Failures: 0, Errors: 0, Skipped: 0 []
+补测后（12 条）：M17 KILLED   Tests run: 12, Failures: 1, Errors: 0, Skipped: 0 ['records_the_chat_session_id_when_there_is_one']
+```
+
+**M09 是本节最重要的一条**：去掉 `undo` 里的 `requireAllowed(table)` 时，
+计划里的 10 条测试**全绿**——`rejects_unknown_table` 用的是 `recordInsert`，
+`recordUpdate` / `undo` 两条路径都没被表名白名单覆盖。而 `undo` 的 `target_table`
+来自**数据库**（不是调用参数）、该列上又没有 `CHECK`，所以一行被写坏的日志就是一条
+真实的越权回退路径。补测后才被杀。
+
+#### 6.4 G：恒真断言自查
+
+- 没有 `hasMessageContaining("null")` 这类恒真写法（JDK 裸 NPE 的消息本身就含 `null`）。
+- 但本轮发现了**同一类、更隐蔽**的一处：`record_update_requires_a_before_snapshot`
+  里 `hasMessageContaining("before")` **在消息层面不判别**——DB 兜底报错原文
+  `CHECK constraint failed: action <> 'update' OR before_json IS NOT NULL` 里含 `before_json`，
+  也含子串 `before`（M03 日志实测）。同理 `rejects_empty_after_and_unknown_origin` 里
+  `hasMessageContaining("origin")` 也命中 DB 原文 `origin IN ('user','agent')`（M05 日志实测）。
+  这两条断言的判别力来自 `isInstanceOf(IllegalArgumentException.class)`
+  （DB 侧抛的是 `UncategorizedSQLException`）。
+  处置：给 before 那条补了 `hasMessageContaining("快照")`——DB 原文里没有「快照」，
+  于是它在消息层面也判别。
+- **最弱的一条**：`records_an_insert_with_null_before` 只断言了
+  `origin` / `action` / `before_json` / `after_json` 四列，而这条 SQL **查了 5 列**
+  （`target_table` 查出来却没用）。`target_table` / `target_id` 只是被 undo 的测试
+  **间接**覆盖（undo 从库里读它们）；`chat_session_id` 在本轮之前**零覆盖**（M17 存活）。
+
+#### 6.5 H：schema 交叉验证（读迁移文件 + 机械核对，不凭推理）
+
+`V4__auxiliary.sql:69-87` 的 `change_log` 原文：
+
+```sql
+CREATE TABLE change_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    changed_at  TEXT    NOT NULL,
+    origin      TEXT    NOT NULL CHECK (origin IN ('user','agent')),
+    action      TEXT    NOT NULL CHECK (action IN ('insert','update')),
+    target_table TEXT   NOT NULL,
+    target_id   INTEGER NOT NULL,
+    before_json TEXT,                  -- insert 时为 NULL
+    after_json  TEXT    NOT NULL,
+    chat_session_id INTEGER,
+    undone      INTEGER NOT NULL DEFAULT 0,
+    CHECK (action <> 'update' OR before_json IS NOT NULL)
+);
+CREATE INDEX ix_change_log_target ON change_log(target_table, target_id);
+CREATE INDEX ix_change_log_time ON change_log(changed_at);
+```
+
+逐列与实现对账：
+
+| 列 | schema | 实现 | 一致？ |
+| --- | --- | --- | --- |
+| `id` | INTEGER PK AUTOINCREMENT | 不回写，只读 `last_insert_rowid()` | ✅ |
+| `changed_at` | TEXT NOT NULL（**无**形状 CHECK） | `LocalDateTime.now().format(ISO_LOCAL_DATE_TIME)` | ✅（见下） |
+| `origin` | NOT NULL + `CHECK (origin IN ('user','agent'))` | D2 的 `ALLOWED_ORIGINS` 逐字一致 | ✅ |
+| `action` | NOT NULL + `CHECK (action IN ('insert','update'))` | 只由 `recordInsert`/`recordUpdate` 写死两个字面量，无 delete | ✅ |
+| `target_table` | TEXT NOT NULL（**无** CHECK） | 写入前 `requireAllowed`；回退前**再查一次**（值来自库） | ✅（M08/M09） |
+| `target_id` | INTEGER NOT NULL | `long` | ✅ |
+| `before_json` | TEXT（可空） | insert 写 SQL NULL；update 前置拒绝 null/空 | ✅（M03/M11） |
+| `after_json` | **TEXT NOT NULL** | D1 前置拒绝 null/空 | ✅（M04） |
+| `chat_session_id` | INTEGER（可空，**无** REFERENCES） | 直传 | ✅（M17） |
+| `undone` | NOT NULL DEFAULT 0 | 显式写 0，回退后写 1 | ✅（M14） |
+
+- **CHECK 与 Java 校验的一致性**：三处 Java 校验都比 DB 更**早**、报错更**可读**，
+  而不是更宽松——DB 约束是兜底。唯一的**刻意不对称**是 C：DB 只要求
+  `before_json IS NOT NULL`（`'{}'` 合法），Java 连**空快照**也拒——因为空快照回到
+  `undo` 时会被「update 记录缺少 before 快照」挡住，那一行永远撤销不了（M12 实测了这句报错）。
+- **`changed_at` 的格式**：schema 只有 `TEXT NOT NULL`，**没有**日期形状 CHECK——这与
+  `meal.meal_date` / `body_metric.measured_on` / `photo.taken_on` /
+  `workout_session.session_date` 四个**纯日期**列的 `GLOB 'YYYY-MM-DD'` 是刻意的对照
+  （`V4:17-18` 对 `eaten_at` 有同款注释：真时间戳不该加日期形状 CHECK）。
+  `ISO_LOCAL_DATE_TIME` 与它一致。**实测（JDK 25 单文件探针，不是推理）**：
+
+  ```text
+  [2026-10-16T10:06:00]  len=19  parse-back=2026-10-16T10:06
+  [2026-10-16T10:06:30]  len=19  parse-back=2026-10-16T10:06:30
+  [2026-10-16T10:06:30.123456]  len=26  parse-back=2026-10-16T10:06:30.123456
+  [2026-10-16T10:06:00.000000001]  len=29  parse-back=2026-10-16T10:06:00.000000001
+  ```
+  秒**总是**在（原以为「秒为 0 时会被省略」，探针否掉了这个猜测）；纳秒非 0 时才追加
+  `.SSSSSS`（3/6/9 位）。前 19 字符定长，字典序 == 时间序
+  （`…T10:06:00` < `…T10:06:00.000000001`，实测 -10），所以 `ix_change_log_time` 上的
+  范围扫描与排序成立；同一个 formatter 也能 parse 回来。
+  **遗留（本轮不改）**：schema 与测试都没把「`changed_at` 必须是这个形状」钉住。
+- **白名单 10 张表的 `id`（机械核对 V1–V4 的 DDL 文本，不是推理）**：
+  10/10 都是 `id INTEGER PRIMARY KEY AUTOINCREMENT`、主键列数 = 1；
+  `exercise_muscle` 无 `id` 列，且是唯一的表级复合主键。
+  V1–V4 共 16 条 `CREATE TABLE`，其中 `schema_probe` 在 `V2:33` 被 `DROP`，余 15 张 = 「十五张表」。
+- **`exercise_muscle` 移出白名单之后的审计路径（判断 + 建议，本轮未改别的代码）**：
+  它为 `exercise` 而存在（两列都是 `ON DELETE CASCADE` 的子键，自身没有独立身份，
+  `role` 只是关系的属性），所以**审计单元应该是 exercise，而不是这条关系**——
+  一次「给动作加/删肌群」应当落成一条挂在 `exercise` 上的 `action='update'` 日志，
+  由 before/after 快照承载肌群映射集合。**但当前快照格式承载不了它**：
+  `before/after` 是扁平 `Map<String,Object>`，`undo` 只会拼 `列 = ?`。
+  因此建议（留给做「动作编辑工具」的那个任务）：要么给快照加一个受控的
+  `muscle_map` 段（形如 `[{"muscle_group_id":3,"role":"primary"}]`）由服务层解释，
+  要么把 undo 的口径定成「按快照里的映射集合**整组重建** join 行」。
+  **现在这一步不能省**：白名单拒绝写入 `exercise_muscle` 是对的（工具层不许直接写它），
+  但如果不换成 exercise 级的审计，肌群映射的改动就会落在 `change_log` 之外——
+  而 `undo` 一条 exercise 的 insert 会**级联**删掉它的映射行，
+  快照里若没有映射，「撤销后再重做」就会静默丢掉肌群标注。
+
+#### 6.6 自查发现与顾虑（本轮**未**改的项）
+
+1. **F 没有测试钉住（M07 存活）**。当前 `before` 一律来自 Jackson 的 `LinkedHashMap`，
+   两次独立迭代的顺序一致，所以旧写法在本设计下不可达——F 是纵深防御。
+   要真钉住它得喂一个 `keySet()` 与 `values()` 顺序不一致的 `Map`，而 JSON 往返会把这种
+   分歧抹平（`undo` 只从库里读快照），所以在现有形状下**测不到**。不留假测试。
+2. **undo 可能被外键挡下，而报错读不懂**。undo 一条 `insert` 是物理 `DELETE`：
+   若这条 `food` 已被 `meal_item.food_id` 引用（`foreign_keys=true`，且该外键没有
+   `ON DELETE` 动作），`DELETE` 会抛 FK 违例，用户看到的是一句 SQLite 报错。
+   建议后续在 `undo` 里接住并翻译成「这条记录已被 X 引用，请先撤销 X」。
+   本轮**不在 A–F 范围内**，未改。
+3. **`ALLOWED_ORIGINS` 与 DDL 没有防漂移测试**。`VolumeCalculator.VALID_ROLES` 有
+   `SchemaTest.role_whitelist_matches_the_ddl` 做双向收口，`ALLOWED_ORIGINS` 与
+   `change_log.origin` / `action` 的 `CHECK` 目前只靠注释对齐。建议后续把
+   「Java 侧白名单 ↔ `sqlite_master.sql` 里的值集」的比对扩到 `origin` / `action`。
+4. **`changed_at` 的形状没被钉住**（见 6.5）：schema 没有 CHECK，测试也没断言。
+   现状一致，但将来换 `Instant` / 带 `Z` 的格式时没有任何东西会提醒。
+5. 本轮**没有**动 `V1–V4`、`application.yml`、`pom.xml`、`spike/`、`calc/`；
+   `SchemaTest` 的 9 条结构快照全绿。
 
 ---
 
