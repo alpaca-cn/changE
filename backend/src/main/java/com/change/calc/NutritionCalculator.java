@@ -28,11 +28,11 @@ public final class NutritionCalculator {
             throw new IllegalArgumentException("grams 必须是有限值，实际为 " + grams);
         }
         if (grams < 0) {
-            throw new IllegalArgumentException("grams 不能为负: " + grams);
+            throw new IllegalArgumentException("grams 不能为负，实际为 " + grams);
         }
         if (grams > MAX_GRAMS) {
             throw new IllegalArgumentException(
-                    "grams 超出上限 " + MAX_GRAMS + ": " + grams);
+                    "grams 超出上限 " + MAX_GRAMS + "，实际为 " + grams);
         }
         double k = grams / 100.0;
         return new Nutrition(
@@ -57,6 +57,21 @@ public final class NutritionCalculator {
             Objects.requireNonNull(n, "items 不能含 null 元素");
             kcal += n.kcal(); p += n.protein(); c += n.carb();
             f += n.fat();     fi += n.fiber();   na += n.sodium();
+        }
+        // 溢出守卫必须在构造器**之前**：两项各 1.7e308 相加得 Infinity，
+        // 不作声地交给 Nutrition 的话，报错会落在 "kcal 必须是有限值" 这个**单字段**名上，
+        // 而真相是「合计溢出」——字段名把人指向错误的方向（去看某一项的数据，
+        // 而每一项其实都合法）。写成 !(x <= Double.MAX_VALUE) 而不是 Double.isFinite(x)，
+        // 理由与包内其他比较类守卫一致：NaN 与任何比较都返回 false，
+        // 用 isFinite 会把 NaN 也归到「溢出」这条消息上，而 NaN 是另一回事
+        // （它由 Nutrition 的构造器按字段点名，信息更准）。
+        if (!(kcal <= Double.MAX_VALUE) || !(p <= Double.MAX_VALUE)
+                || !(c <= Double.MAX_VALUE) || !(f <= Double.MAX_VALUE)
+                || !(fi <= Double.MAX_VALUE) || !(na <= Double.MAX_VALUE)) {
+            throw new IllegalArgumentException(
+                    "合计溢出：营养值之和超出 double 可表示范围，请检查输入（kcal=" + kcal
+                            + ", protein=" + p + ", carb=" + c + ", fat=" + f
+                            + ", fiber=" + fi + ", sodium=" + na + "）");
         }
         return new Nutrition(Round.to2(kcal), Round.to2(p), Round.to2(c),
                              Round.to2(f), Round.to2(fi), Round.to2(na));

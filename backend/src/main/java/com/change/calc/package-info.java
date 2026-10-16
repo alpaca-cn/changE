@@ -24,8 +24,14 @@
  * 比较类场景用 {@code !(x <= MAX)}（NaN 与任何比较都返回 false，所以
  * {@code x > MAX} 这种写法放 NaN 过去；见
  * {@link PortionConverter#toGrams} 里克数上界那一段）。
- * 理由：这个包已经因为 NaN 静默变成 {@code 0.0} / {@code IN_RANGE} 栽过两次
- * （{@link Round#to2} 与 {@link VolumeCalculator#classify}）——NaN 不会崩，
+ * <b>包内四个数值入口</b>（{@link NutritionCalculator#forGrams}、
+ * {@link NutritionCalculator#sum}、{@link PortionConverter#toGrams}、
+ * {@link OneRepMax#epley}）加 {@link VolumeCalculator#classify}，无一例外。
+ * 理由：这个包<b>栽过两次</b>——NaN 静默变成 {@code 0.0}（{@link Round#to2}）
+ * 与 {@code IN_RANGE}（{@link VolumeCalculator#classify}）。
+ * <b>这两处都已经修好</b>（{@code classify} 的守卫是
+ * {@code if (!(sets >= 0))}，排在 {@code return IN_RANGE} 之前），
+ * 这里留下来是因为教训而不是现状：NaN 不会崩，
  * 它会给出一个看起来正常的错答案。
  *
  * <p><b>四、可空的领域配置不得兜底，必须进入类型或状态。</b>

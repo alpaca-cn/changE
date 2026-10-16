@@ -79,11 +79,11 @@ public final class OneRepMax {
      */
     public static double epley(double weight, int reps) {
         if (reps < 1) {
-            throw new IllegalArgumentException("reps 必须 >= 1: " + reps);
+            throw new IllegalArgumentException("reps 必须 >= 1，实际为 " + reps);
         }
         if (reps > MAX_REPS) {
             throw new IllegalArgumentException(
-                    "reps 超过 " + MAX_REPS + " 时 Epley 估算不可靠: " + reps);
+                    "reps 超过 " + MAX_REPS + " 时 Epley 估算不可靠，实际为 " + reps);
         }
         if (!Double.isFinite(weight)) {
             // 排在 weight < 0 之前：NaN 与任何比较都返回 false，会绕过 `weight < 0`，
@@ -91,7 +91,7 @@ public final class OneRepMax {
             throw new IllegalArgumentException("weight 必须是有限值，实际为 " + weight);
         }
         if (weight < 0) {
-            throw new IllegalArgumentException("weight 不能为负: " + weight);
+            throw new IllegalArgumentException("weight 不能为负，实际为 " + weight);
         }
         if (reps == 1) {
             // 1RM 的定义就是「一组只能做一次的最大重量」，reps=1 不需要外推。

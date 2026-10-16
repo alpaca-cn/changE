@@ -68,7 +68,7 @@ public final class PortionConverter {
         }
         // 对齐 schema：meal_item.amount 是 CHECK (amount > 0)，与 Unit.grams 的 grams <= 0 同一口径。
         if (amount <= 0) {
-            throw new IllegalArgumentException("amount 必须为正: " + amount);
+            throw new IllegalArgumentException("amount 必须为正，实际为 " + amount);
         }
         if (unit == null || unit.isBlank()) {
             return amount;
@@ -85,7 +85,8 @@ public final class PortionConverter {
             // 写成 !(grams <= MAX) 而不是 grams > MAX，是因为 NaN 与 > 比较恒为 false。
             // 本类已有的 NaN 处理用的是同一个套路。
             throw new IllegalArgumentException(
-                    "换算后的克数超出单次录入上限 " + NutritionCalculator.MAX_GRAMS + ": " + grams);
+                    "换算后的克数超出单次录入上限 " + NutritionCalculator.MAX_GRAMS
+                            + "，实际为 " + grams);
         }
         return grams;
     }

@@ -172,7 +172,7 @@ class ChangeLogServiceTest {
         assertThatThrownBy(() -> logs.undo(logId))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("kcal_per100 = 1, name_zh")
-                .hasMessageContaining("可回退写入的列");
+                .hasMessageContaining("可记录的列");
     }
 
     @Test
@@ -335,6 +335,28 @@ class ChangeLogServiceTest {
         assertThatThrownBy(() -> logs.recordInsert("food", id,
                 Map.of("name_zh", "x"), "robot", null))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("origin");
+    }
+
+    @Test
+    void after_snapshot_keys_are_validated_like_before() {
+        // 收口不能只做一半：before 的键在 undo 里逐列校验，after 的键此前完全不校验。
+        // after_json 至今没有读路径，所以写错了永远不会被发现。
+        long id = insertFood("测试食物K", 1100);
+
+        assertThatThrownBy(() -> logs.recordInsert("food", id,
+                Map.of("name_zh_typo", "x"), "agent", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("name_zh_typo");
+
+        // 主键别名同样要拒（与 undo 对 before 的口径一致）
+        assertThatThrownBy(() -> logs.recordInsert("food", id,
+                Map.of("rowid", 7L), "agent", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("rowid");
+
+        // 正常键不受影响
+        assertThat(logs.recordInsert("food", id, Map.of("name_zh", "测试食物K"), "agent", null))
+                .isPositive();
     }
 
     @Test

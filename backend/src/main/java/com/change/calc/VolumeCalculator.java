@@ -24,8 +24,9 @@ public final class VolumeCalculator {
      * 的 {@code CHECK} 一致（DDL 原文：{@code role IN ('primary', 'secondary')}）。
      *
      * <p>抽成常量是为了让「Java 侧白名单」与「DDL 侧白名单」两侧**互相收口**：
-     * {@code SchemaTest.role_whitelist_matches_the_ddl} 会把这里的值集与
-     * {@code sqlite_master.sql} 里抽出来的值集逐项比对，任何一侧改了另一侧就红。
+     * {@code SchemaTest.java_whitelist_matches_the_ddl}（参数化用例，同时覆盖
+     * {@code exercise_muscle.role} 与 {@code workout_set.set_type}）会把这里的值集与
+     * {@code sqlite_master.sql} 里抽出来的值集逐项比对（含顺序），任何一侧改了另一侧就红。
      * 构造器与 {@link #accumulate} 的 {@code switch} 都引用它，所以不存在
      * 「常量改了但校验没跟着改」这种中间态。
      */
@@ -170,16 +171,18 @@ public final class VolumeCalculator {
         if (!(sets >= 0)) {
             // 用 !(sets >= 0) 而不是 sets < 0：NaN 与任何比较都返回 false，
             // 所以 NaN 会绕过 sets < 0，一路落到最后的 return IN_RANGE——
-            // 给出「达标」这个最危险的错答案。包内另三个数值入口都用了同一个套路。
+            // 给出「达标」这个最危险的错答案。包内另四个数值入口
+            // （forGrams / sum / toGrams / epley）都用了同一个套路。
+            // 这里曾经真的漏过：classify(NaN, 10, 20) 返回 IN_RANGE（见 package-info 约定三）。
             throw new IllegalArgumentException(
                     "sets 必须是有限且非负的组数，实际为 " + sets);
         }
         if (min < 0) {
-            throw new IllegalArgumentException("区间下限不能为负: " + min);
+            throw new IllegalArgumentException("区间下限不能为负，实际为 " + min);
         }
         if (max < min) {
             throw new IllegalArgumentException(
-                    "区间上限不能小于下限: min=" + min + ", max=" + max);
+                    "区间上限不能小于下限，实际为 min=" + min + ", max=" + max);
         }
         if (sets <= 0) return Status.UNTRAINED;
         if (sets < min) return Status.BELOW;

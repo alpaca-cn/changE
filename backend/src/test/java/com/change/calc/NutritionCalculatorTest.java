@@ -136,4 +136,22 @@ class NutritionCalculatorTest {
         // （Cannot invoke "com.change.calc.Nutrition.kcal()" because "n" is null），
         // 用 "null" 断言就恒真了——实测过，它拦不住「删掉校验」的变异。
     }
+
+    @Test
+    void sum_reports_overflow_as_an_overflow_not_as_a_single_field() {
+        // 两项各 1e308 求和得 Infinity（double 的上限约 1.8e308）。没有这条守卫时，
+        // 唯一拦下它的是 Nutrition 的紧凑构造器，报错落在 "kcal 必须是有限值" 这个
+        // **单字段**名上——而 kcal 这一项本身完全合法，真相是「合计溢出」。
+        // 断言「合计溢出」而不是字段名：这条测试守的正是「别把溢出归咎于某个字段」。
+        Nutrition large = new Nutrition(1e308, 1e308, 0, 0, 0, 0);
+        assertThatThrownBy(() -> NutritionCalculator.sum(List.of(large, large)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("合计溢出");
+
+        // 反过来说：大但可表示的和不能被误报为溢出——守卫若写成 `x > someLimit`
+        // 就会把合法输入也拦下。1e308 + 0 仍在 double 范围内。
+        assertThat(NutritionCalculator.sum(List.of(large, new Nutrition(0, 0, 0, 0, 0, 0))))
+                .as("合法的大值必须放行（注意 Round.to2 会把 1e308 饱和成 9.2e16，那是另一条既有行为）")
+                .isEqualTo(NutritionCalculator.sum(List.of(large)));
+    }
 }

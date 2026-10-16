@@ -1,7 +1,11 @@
 package com.change;
 
 import com.change.calc.VolumeCalculator;
+import com.change.domain.WorkoutSet;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -373,26 +378,39 @@ class SchemaTest {
     }
 
     /**
-     * 「Java 侧白名单 == DDL 侧白名单」的防漂移测试。
+     * 「Java 侧白名单 == DDL 侧白名单」的防漂移测试，**参数化覆盖两处**。
      *
      * 上面那条只钉住了 **DB 侧**（`sqlite_master.sql` 里逐字的
      * `CHECK (role IN ('primary', 'secondary'))`）。缺的是另一半：
-     * `VolumeCalculator.Entry` 的合法角色集是**另一份手写拷贝**，某一侧改了另一侧不会红。
+     * Java 侧的合法值集是**另一份手写拷贝**，某一侧改了另一侧不会红。
      * 这条把两份值集拉在一起逐项比对（含**顺序**——DDL 里写的就是
      * `'primary', 'secondary'`），任何一侧改动都会失败。
      *
-     * 将来若合法的肌群角色扩容（比如加 `'stabilizer'`），**两处都要改**：
-     * `V2__training.sql` 的 CHECK 与 `VolumeCalculator.VALID_ROLES`。迁移一旦发布
+     * <p><b>为什么从一条测试改成参数化。</b>`workout_set.set_type` 有同一类问题的更坏版本：
+     * 它的九个合法值此前只以**注释**形式手抄在 `WorkoutSet` 里，连拷贝都不是——
+     * 注释里的清单和 DDL 之间没有任何机械收口，DDL 加了第十种组类型，注释照样写着九种，
+     * 谁也不报错。现在两处都走同一套机制。
+     *
+     * <p>九处 `TEXT + CHECK (x IN (...))` 里，只有这两处有 Java 侧白名单；
+     * 其余七处（food.source / photo.kind / meal.slot / meal_item.origin /
+     * chat_message.role / change_log.origin / change_log.action）对应的表**连实体都没有**，
+     * 白名单无处安放。它们已记入计划文档的待办（不是遗忘）。
+     *
+     * <p>将来若合法值扩容（比如肌群角色加 `'stabilizer'`、组类型加 `'cluster'`），
+     * **两处都要改**：迁移里的 CHECK 与 Java 侧的常量。迁移一旦发布
      * 就不能再原地改（见本类顶部的说明），所以那种扩容只能新加一份迁移去重建该列的约束。
      */
-    @Test
-    void role_whitelist_matches_the_ddl() {
-        String ddl = ddlOf("exercise_muscle");
+    @ParameterizedTest(name = "{1} 的白名单必须与 DDL 一致")
+    @MethodSource("enumWhitelistCases")
+    void java_whitelist_matches_the_ddl(String table, String column, List<String> javaValues) {
+        String ddl = ddlOf(table);
 
-        // 只取 role 那一条 CHECK 的 IN (...) 值集
-        Matcher m = Pattern.compile("role\\s+IN\\s*\\(([^)]*)\\)").matcher(ddl);
+        // 只取该列那一条 CHECK 的 IN (...) 值集。
+        // 列名用 Pattern.quote 而不是直接拼：DDL 原文来自 sqlite_master，
+        // 里面带下划线与其他正则元字符的列名（set_type、photo_id…）不该被当模式解释。
+        Matcher m = Pattern.compile(Pattern.quote(column) + "\\s+IN\\s*\\(([^)]*)\\)").matcher(ddl);
         assertThat(m.find())
-                .as("exercise_muscle 的 DDL 里应当有 role IN (...) 形式的 CHECK：%s", ddl)
+                .as("%s 的 DDL 里应当有 %s IN (...) 形式的 CHECK：%s", table, column, ddl)
                 .isTrue();
         List<String> fromDdl = new ArrayList<>();
         Matcher v = Pattern.compile("'([^']*)'").matcher(m.group(1));
@@ -401,11 +419,23 @@ class SchemaTest {
         }
 
         assertThat(fromDdl)
-                .as("DDL 里的合法角色集")
+                .as("%s.%s 在 DDL 里的合法值集", table, column)
                 .isNotEmpty();
-        assertThat(VolumeCalculator.VALID_ROLES)
-                .as("Java 侧 VALID_ROLES 必须与 exercise_muscle.role 的 CHECK 逐项一致")
+        assertThat(javaValues)
+                .as("Java 侧白名单必须与 %s.%s 的 CHECK 逐项一致（含顺序）", table, column)
                 .containsExactlyElementsOf(fromDdl);
+    }
+
+    /**
+     * 参数：表名 / 列名 / Java 侧常量。
+     *
+     * 值直接从常量取（`WorkoutSet.VALID_SET_TYPES`），不在这里再抄一份——
+     * 在这条防漂移测试里手抄一份值集，等于把它自身的失效模式复制进来。
+     */
+    private static Stream<Arguments> enumWhitelistCases() {
+        return Stream.of(
+                Arguments.of("exercise_muscle", "role", VolumeCalculator.VALID_ROLES),
+                Arguments.of("workout_set", "set_type", WorkoutSet.VALID_SET_TYPES));
     }
 
     // ------------------------------------------------------------------

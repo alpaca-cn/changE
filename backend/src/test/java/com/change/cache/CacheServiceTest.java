@@ -175,8 +175,7 @@ class CacheServiceTest {
     }
 
     @Test
-    void dirty_cache_data_never_trips_the_breaker_and_never_raises_the_count() {
-        // 语义：脏数据（类型不匹配）对熔断状态必须是**中性**的——既不计入失败，也不清零。
+    void dirty_cache_data_never_trips_the_breaker_and_never_raises_the_count() {        // 语义：脏数据（类型不匹配）对熔断状态必须是**中性**的——既不计入失败，也不清零。
         //
         // ⚠️ 实测修正（报告 F）：计划把这个改动说成「不改就会让一条脏数据把整个缓存关掉」，
         // 但把实现退回计划原稿实测后，行为**完全相同**——原稿把 onSuccess() 放在反序列化之前，
@@ -217,6 +216,94 @@ class CacheServiceTest {
         assertThat(c.get("k", String.class)).isEmpty();
         assertThat(c.isAvailable())
                 .as("脏数据中性时，第 3 次真实故障必须跳闸；若脏读被计过数，这里早就跳了")
+                .isFalse();
+    }
+
+    @Test
+    void the_breaker_trips_under_concurrent_failures() {
+        // 计数器非原子时，并发下读-改-写会丢失更新，熔断可能永不触发——
+        // 而熔断失效的后果是「每个请求都白等 300ms 连接超时」。
+        //
+        // ⚠️ 关于这条测试到底守住了什么，必须如实写清（实测数据见报告的「第 4 条」）：
+        //
+        // (1) **它是负载下的回归守卫，不是「非原子 → 丢失更新」的判别器。**
+        //     实测：把 RedisCacheService 整体退回普通 int / Instant（逻辑不变，
+        //     只把 AtomicInteger/AtomicReference 换掉），这条测试**依然全绿**。
+        //     根因是 x86 上普通 int 的 `consecutiveFailures++` 编译出来就是一条
+        //     读-改-写指令（inc dword ptr [r]）：用下面的会合点把 20 个线程对齐到
+        //     同一次自增上、连跑 100 轮，计数**每一轮都精确等于 20**，一次都不丢。
+        //     「读-改-写窗口」在真实编译产物里根本没有打开过。
+        //     对照实验（证明断言本身对真实的丢失更新是敏感的）：把那句自增人为撑宽成
+        //     「读出 + 空转 20 万次 + 写回」，同一个会合点下计数立刻远低于 20，
+        //     这条断言当场变红。
+        //     所以选 AtomicInteger 的理由是**可移植的正确性**——JLS 不保证 int++ 原子，
+        //     其他架构或未来的 JIT 可能真的把它拆成 load/add/store；不是本机可复现的缺陷。
+        //     **不要因为它现在是绿的，就以为「并发安全有测试守着」。**
+        //
+        // (2) **仍然必须断言计数的精确值，不能只断言「熔断跳没跳」。**
+        //     阈值只有 3，任何并发实现哪怕丢了大半更新，计数也远超 3、
+        //     isAvailable() 恒为 false——那种断言对并发语义零判别力。
+        //     精确值断言至少守得住「计数被整体重置/崩塌」这类退化。
+        //
+        // (3) **会合点让 20 个线程真正同时动手**，而不是靠 sleep 碰运气。
+        //     没有它，线程是散开的，这条测试就退化成「多线程跑一遍不炸」。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        // 前两次「Redis 在工作但未命中」= 成功（不该动失败计数），之后全部失败。
+        Mockito.when(valueOps.get(ArgumentMatchers.anyString()))
+                .thenReturn(null)
+                .thenReturn(null)
+                .thenThrow(new QueryTimeoutException("down"));
+
+        RedisCacheService c = new RedisCacheService(template, "h", 6379);
+
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.isAvailable()).as("2 次未命中是成功，不该熔断").isTrue();
+        assertThat(c.consecutiveFailureCount()).as("未命中是成功，不该记失败").isZero();
+
+        int threads = 20;
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        var gate = new java.util.concurrent.CyclicBarrier(threads);
+        var done = new java.util.concurrent.CountDownLatch(threads);
+        RedisCacheService.failureRendezvous = gate;
+        try {
+            for (int i = 0; i < threads; i++) {
+                pool.submit(() -> {
+                    try {
+                        c.get("k", String.class);
+                    } catch (Throwable ignored) {
+                        // 缓存抽象承诺「不向上抛异常」；但计数是否丢失与它无关，
+                        // 所以这里不让异常掩盖下面的计数断言。
+                    } finally {
+                        done.countDown();
+                    }
+                });
+            }
+            try {
+                assertThat(done.await(20, java.util.concurrent.TimeUnit.SECONDS))
+                        .as("%d 个线程都应在 20 秒内结束", threads)
+                        .isTrue();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+        } finally {
+            RedisCacheService.failureRendezvous = null;   // 绝不让会合点泄漏到别的测试
+            pool.shutdownNow();
+        }
+
+        // 20 个线程各失败一次：计数必须精确等于 20，一次更新都不能丢。
+        assertThat(c.consecutiveFailureCount())
+                .as("%d 个线程各失败一次，计数必须精确等于 %d（丢了就是读-改-写没做成原子）",
+                        threads, threads)
+                .isEqualTo(threads);
+
+        // 熔断本身也要跳（用户可观测的那一面）
+        assertThat(c.isAvailable())
+                .as("%d 个线程各失败一次，熔断必须已触发（阈值 %d）",
+                        threads, RedisCacheService.FAILURE_THRESHOLD)
                 .isFalse();
     }
 

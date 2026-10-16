@@ -2,6 +2,8 @@ package com.change.domain;
 
 import jakarta.persistence.*;
 
+import java.util.List;
+
 /**
  * 三层结构的最内层：一个动作下的一组。
  *
@@ -23,6 +25,24 @@ import jakarta.persistence.*;
 @Table(name = "workout_set")
 public class WorkoutSet {
 
+    /**
+     * 合法的组类型。必须与 {@code V2__training.sql} 里 {@code workout_set.set_type}
+     * 的 {@code CHECK} 一致（DDL 原文：{@code set_type IN ('normal','warmup','dropset',
+     * 'myo','partial','forced','tut','iso','jump')}）。
+     *
+     * <p>与 {@link com.change.calc.VolumeCalculator#VALID_ROLES} 同一套路：把「Java 侧白名单」
+     * 提成常量，好让 {@code SchemaTest} 把它与 {@code sqlite_master.sql} 里抽出来的值集
+     * **逐项比对**（含顺序），任何一侧改了另一侧就红。
+     *
+     * <p>在此之前这张清单只以**注释**形式手抄在本类里（下面 {@link #setType} 那行），
+     * 注释与 DDL 之间没有任何机械收口——DDL 加了第十种组类型，注释照样写着九种。
+     *
+     * <p>用 {@link List} 而不是 {@code Set}：报错与文档要按声明顺序读，
+     * 而 {@code Set.of} 的迭代顺序按 JVM 运行随机。
+     */
+    public static final List<String> VALID_SET_TYPES = List.of(
+            "normal", "warmup", "dropset", "myo", "partial", "forced", "tut", "iso", "jump");
+
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     public Long id;
 
@@ -33,7 +53,10 @@ public class WorkoutSet {
     @Column(name = "set_index", nullable = false)
     public int setIndex;
 
-    /** 组类型：normal / warmup / dropset / myo / partial / forced / tut / iso / jump（库里有 CHECK 白名单）。 */
+    /**
+     * 组类型。合法值见 {@link #VALID_SET_TYPES}（九种，库里有 CHECK 白名单）；
+     * 这里**不再手抄**那份清单——抄一份就多一份会过期的东西。
+     */
     @Column(name = "set_type", nullable = false)
     public String setType = "normal";
 

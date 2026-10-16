@@ -108,6 +108,17 @@ public class ChangeLogService {
             // 于是库里留下一行「看起来合法、语义为空」的记录。
             throw new IllegalArgumentException("after 快照不能为空");
         }
+        // 与 undo 对 before 的校验对称：after 的键也必须是该表上真实存在、
+        // 且不是主键的列。不校验的话，拼写错误/多余键/主键别名会被原样写进
+        // after_json 并记一条成功的日志——而 after_json 至今没有读路径，
+        // 写错了永远不会被发现（本项目一路在消灭的「静默失效」）。
+        for (String column : after.keySet()) {
+            if (!writableColumns(table).contains(column)) {
+                throw new IllegalArgumentException(
+                        "列名「" + column + "」不是 " + table + " 上可记录的列"
+                                + "（必须真实存在且不是主键——SQLite 的 rowid/_rowid_/oid 是主键别名）");
+            }
+        }
         jdbc.update("INSERT INTO change_log(changed_at, origin, action, target_table, " +
                     "target_id, before_json, after_json, chat_session_id, undone) " +
                     "VALUES (?,?,?,?,?,?,?,?,0)",
@@ -166,8 +177,11 @@ public class ChangeLogService {
                 for (Map.Entry<String, Object> e : before.entrySet()) {
                     String column = e.getKey();
                     if (!writable.contains(column)) {
+                        // 措辞与 write() 里对 after 的同一道校验**逐字一致**：
+                        // 两处守的是同一条规则（键必须是该表上真实存在且不是主键的列），
+                        // 用两种说法会让人以为其中一处是别的约束。
                         throw new IllegalArgumentException(
-                                "列名「" + column + "」不是 " + table + " 上可回退写入的列"
+                                "列名「" + column + "」不是 " + table + " 上可记录的列"
                                         + "（必须真实存在且不是主键——SQLite 的 rowid/_rowid_/oid 是主键别名）");
                     }
                     if (sets.length() > 0) {

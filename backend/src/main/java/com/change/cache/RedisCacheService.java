@@ -10,6 +10,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Redis 实现。
@@ -19,6 +21,14 @@ import java.util.Set;
  *   2. 连续失败达阈值后熔断一段时间，避免每次请求都白等 300 ms 连接超时
  *   3. **反序列化失败不计入熔断**：缓存里一条类型不匹配的脏数据不该把整个缓存关掉
  *      （那是「一条脏数据 → 缓存整体瘫痪」）。脏数据按未命中处理，只记日志。
+ *
+ * <p><b>熔断状态必须是原子的。</b>本 Bean 在 {@code CacheConfig} 里装配为单例，
+ * 服务多线程的 Spring MVC。计数器若只是普通 {@code int}，并发下
+ * {@code consecutiveFailures++} 的「读-改-写」不是原子操作，更新会丢失——
+ * {@code >= FAILURE_THRESHOLD} 可能永远不成立，熔断器静默失效，
+ * 退化回「每个请求都白等 300 ms 连接超时」。这里用 {@link AtomicInteger} /
+ * {@link AtomicReference} 而不是 volatile：volatile 只给可见性，
+ * 不给读-改-写的原子性，而丢计数正是这个缺陷的核心。
  */
 public class RedisCacheService implements CacheService {
 
@@ -29,13 +39,33 @@ public class RedisCacheService implements CacheService {
     /** 熔断持续多久。 */
     static final Duration BREAK_DURATION = Duration.ofSeconds(30);
 
+    /**
+     * 并发测试用的会合点，生产代码里恒为 {@code null}。
+     *
+     * <p><b>为什么需要它。</b>要让「读-改-写」的窗口真正被覆盖，并发用例必须把线程
+     * 对齐到**同一次** {@code consecutiveFailures} 更新上，而不是靠 sleep 碰运气。
+     * 会合点必须落在自增之前，所以只能由被改造的类提供。
+     *
+     * <p><b>诚实说明（实测）。</b>有了会合点，{@code CacheServiceTest} 那条并发用例
+     * 在**非原子实现下依然全绿**：x86 上普通 int 的 {@code ++} 就是一条读-改-写指令
+     * （inc dword ptr [r]），20 个线程对齐后连跑 100 轮，计数每轮都精确等于 20、
+     * 一次更新都不丢。所以原子类型买的是**可移植的正确性**（JLS 不保证 int++ 原子，
+     * 其他架构或未来的 JIT 可能真的把它拆成 load/add/store），不是本机可复现的缺陷。
+     * 那条测试因此是「负载下的回归守卫」，不是「丢失更新的判别器」——
+     * 详见 {@code CacheServiceTest#the_breaker_trips_under_concurrent_failures}。
+     *
+     * <p>它不改动任何生产行为（null 时是一次几乎免费的 null 检查），
+     * 也不会被 Spring 装配进任何东西。测试类在 try/finally 里设置与清理。
+     */
+    static volatile java.util.concurrent.CyclicBarrier failureRendezvous = null;
+
     private final StringRedisTemplate redis;
     private final ObjectMapper json = new ObjectMapper();
     private final String endpoint;
     private final Clock clock;
 
-    private int consecutiveFailures = 0;
-    private Instant brokenUntil = Instant.EPOCH;
+    private final AtomicInteger consecutiveFailures = new AtomicInteger();
+    private final AtomicReference<Instant> brokenUntil = new AtomicReference<>(Instant.EPOCH);
 
     public RedisCacheService(StringRedisTemplate redis, String host, int port) {
         this(redis, host, port, Clock.systemUTC());
@@ -46,6 +76,20 @@ public class RedisCacheService implements CacheService {
         this.redis = redis;
         this.endpoint = host + ":" + port;
         this.clock = clock;
+    }
+
+    /**
+     * 当前连续失败次数。<b>包级可见，仅供测试</b>（生产代码只用 {@link #isAvailable()}）。
+     *
+     * <p>为什么要暴露它：并发用例必须断言这个计数的**精确值**。
+     * 只断言「熔断跳没跳」在结构上没有判别力——阈值只有 3，而 N 个线程并发失败时
+     * 哪怕丢了大半更新，计数也远超 3，熔断照跳（实测 64 线程并发失败计数 8~12，
+     * 期望 64，仍然跳闸）。精确值断言才守得住「计数被整体重置/崩塌」这类退化。
+     *
+     * <p>注意它**测不出**「非原子 → 丢失更新」：见 {@link #failureRendezvous} 的实测说明。
+     */
+    int consecutiveFailureCount() {
+        return consecutiveFailures.get();
     }
 
     @Override
@@ -141,49 +185,81 @@ public class RedisCacheService implements CacheService {
 
     @Override
     public String describe() {
-        if (Instant.now(clock).isBefore(brokenUntil)) {
-            return "缓存：已熔断（" + endpoint + " 连续失败 " + consecutiveFailures + " 次）";
+        // 先读一次 brokenUntil，再读一次计数——不要先读计数再问状态：
+        // 那样两个值来自不同时刻，可能出现「已熔断」配「连续失败 0 次」的自相矛盾文案。
+        // 这里读到的计数一定 >= 触发熔断时的那个值，所以不会是 0。
+        Instant until = brokenUntil.get();
+        if (Instant.now(clock).isBefore(until)) {
+            return "缓存：已熔断（" + endpoint + " 连续失败 " + consecutiveFailures.get() + " 次）";
         }
         return "缓存：已连接 " + endpoint;
     }
 
+    /**
+     * 熔断期是否生效；顺带做「熔断期结束后把计数归零」这件事。
+     *
+     * <p>为什么清零必须**恰好一次**：本方法在 get/put/invalidatePrefix 里是每个操作的
+     * 第一步，而「清零」与「本次失败 +1」是两步。若清零无条件发生（计划原稿的写法），
+     * 每次调用都会先把计数抹回 0、再加 1，{@code consecutiveFailures} 永远到不了
+     * {@link #FAILURE_THRESHOLD}——熔断器永不触发。这是本项目修过的第一个 Critical。
+     *
+     * <p>清零用 {@code compareAndSet(expired, EPOCH)} 而不是先 get 再 set：
+     * 只有真正把 {@code brokenUntil} 从「已过期」推进到 {@code EPOCH} 的那个线程才清零，
+     * 进来的其他线程 CAS 失败、不动计数。顺带保证「一个熔断周期只清零一次」。
+     */
     private boolean isBroken() {
-        Instant now = Instant.now(clock);
-        if (now.isBefore(brokenUntil)) {
+        Instant until = brokenUntil.get();
+        if (Instant.now(clock).isBefore(until)) {
             return true;
         }
-        // 熔断期结束，给一次机会。⚠️ 这里必须限定「刚结束熔断」这个条件：
-        // 计划原稿写的是无条件的 `if (consecutiveFailures > 0) consecutiveFailures = 0;`，
-        // 而 isBroken() 在 get/put/invalidatePrefix 里是每个操作的第一步——
-        // 于是每次调用都先把计数器清零，再累加本次的 1 次失败，
-        // consecutiveFailures 永远到不了 FAILURE_THRESHOLD，熔断器永远不跳。
-        // （计划自带的两条熔断测试就会红：见 redis_failures_trip_the_circuit_breaker_...）
-        // 现在只在 brokenUntil 真的过期时清零一次，计数才能跨调用累积。
-        if (!brokenUntil.equals(Instant.EPOCH) && consecutiveFailures > 0) {
-            consecutiveFailures = 0;
+        // 熔断期已过（或从未熔断）。把 brokenUntil 归位这件事只让一个线程做成：
+        // 谁成功了谁负责清计数——否则「CAS 归位」与「计数清零」两个动作之间
+        // 会插进别的线程的失败累加，那一次失败会被随后的清零无声抹掉。
+        if (brokenUntil.compareAndSet(until, Instant.EPOCH) && until != Instant.EPOCH) {
+            consecutiveFailures.set(0);
         }
         return false;
     }
 
     private void onSuccess() {
-        consecutiveFailures = 0;
+        consecutiveFailures.set(0);
     }
 
     private void onFailure(String op, Exception e) {
-        consecutiveFailures++;
+        // 测试会合点：让并发用例能把所有线程对齐到这一次「读-改-写」上。
+        // 生产路径下恒为 null，代价是一次 null 检查。
+        java.util.concurrent.CyclicBarrier gate = failureRendezvous;
+        if (gate != null) {
+            try {
+                gate.await(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+                // 超时/中断都不该改变熔断语义：继续按正常失败处理。
+            }
+        }
+        int failures = consecutiveFailures.incrementAndGet();
         // 用 >= 而不是 ==：== 只在计数**恰好**等于阈值那一次跳闸，
         // 一旦计数滑过阈值（3 -> 4 -> 5…）就再也不等于它，熔断器等于「一辈子只跳一次」。
         // 外加 `!isBefore(brokenUntil)`，保证只有当前不在熔断期时才重置 brokenUntil，
         // 否则连续失败会把熔断期一直往后推，Redis 一直坏就永远不恢复。
         //
         // 诚实说明：>= 相对 == 目前**本仓库的测试无法区分**——把这里退回 ==，
-        // CacheServiceTest 8 条全绿（已实测）。现有用例里计数最多走到阈值 3，
+        // CacheServiceTest 全绿（已实测）。现有用例里计数最多走到阈值 3，
         // 没有任何路径让计数跳过阈值。保留 >= 是因为 == 的脆弱性真实存在（见上），
         // 但不要误以为有测试在守护它。
-        if (consecutiveFailures >= FAILURE_THRESHOLD && !Instant.now(clock).isBefore(brokenUntil)) {
-            brokenUntil = Instant.now(clock).plus(BREAK_DURATION);
-            log.warn("Redis {} 连续失败 {} 次，熔断 {} 秒。原因: {}",
-                    op, consecutiveFailures, BREAK_DURATION.toSeconds(), e.toString());
+        //
+        // 并发下的重复跳闸：多个线程可能同时跨过阈值，各自尝试把 brokenUntil 从
+        // 「过去」推进到「未来」。check-then-act 不是原子的，所以用 compareAndSet——
+        // 只有赢的那个线程写日志并推进熔断期。输的线程什么都不做（不是重试：
+        // 熔断期已由赢家设好，重试只会把熔断期往后推）。
+        if (failures >= FAILURE_THRESHOLD) {
+            Instant until = brokenUntil.get();
+            if (!Instant.now(clock).isBefore(until)) {
+                Instant next = Instant.now(clock).plus(BREAK_DURATION);
+                if (brokenUntil.compareAndSet(until, next)) {
+                    log.warn("Redis {} 连续失败 {} 次，熔断 {} 秒。原因: {}",
+                            op, failures, BREAK_DURATION.toSeconds(), e.toString());
+                }
+            }
         }
     }
 }
