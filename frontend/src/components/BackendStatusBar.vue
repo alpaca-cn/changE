@@ -78,6 +78,15 @@ async function tick() {
   try {
     state.value = await getBackendState()
   } catch (e) {
+    // **失败即终态，这里刻意不重试。**
+    //
+    // `get_backend_status` 是一条纯内存读取的 Tauri 命令
+    // （`backend.state.lock().unwrap().clone()`），它不具备瞬时失败的机理：
+    // 没有 IO、没有网络、没有超时——invoke 抛错只可能意味着「命令没注册」
+    // 或「State 没 manage」，两者都是永久性的，重试一万次也一样。
+    //
+    // 所以把界面停在错误态是对的：继续按 SHELL_POLL_MS 重试只会制造失败风暴，
+    // 而用户看到的东西一个字都不会变。真要重来，重启外壳。
     state.value = { status: 'failed', port: null, message: `与外壳通信失败：${String(e)}` }
   }
 

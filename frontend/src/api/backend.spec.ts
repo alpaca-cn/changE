@@ -21,6 +21,21 @@ describe('describeState', () => {
     expect(d.text).toBe('后端启动超时')
   })
 
+  it('遇到没见过的状态时显示出来，而不是渲染成空白', () => {
+    // Rust 侧加了第四个 BackendStatus 变体而忘了同步这里时，
+    // 旧的穷尽 switch 会返回 undefined：状态栏一片空白、没有任何提示。
+    // 这条测试守的是「宁可显示看不懂，也不要静默变空」。
+    //
+    // **它与「喂想象出来的对象去测正常路径」不同**：那种测试是拿假数据
+    // 冒充真实输入（假数据一变，测试仍然绿，等于没测）。这里喂的假状态
+    // 不是要冒充哪个真实状态，而是**专门去走 `default` 这个真实存在的
+    // 防御分支**——它测的是代码里那条防御路径本身，不是某条正常路径。
+    const weird = { status: 'hibernating', port: null, message: '' } as unknown as BackendState
+    const d = describeState(weird)
+    expect(d.tone).toBe('error')
+    expect(d.text).toContain('hibernating')
+  })
+
   // 跨语言契约：Rust 的 BackendState 与这里的 interface 是**两处手写定义**，
   // 它们可以漂移而没有任何东西会报警（TS 不校验线上来的 JSON）。
   // 唯一能证明两边形状一致的方式，是拿 Rust 真的序列化出来的字符串喂进来。

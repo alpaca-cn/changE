@@ -2271,6 +2271,15 @@ git commit -m "feat(shell): 拉起后端子进程并读 stdout 的 CHANGE_PORT
 - Create: `frontend/src/components/BackendStatusBar.vue`
 - Modify: `frontend/src/App.vue`
 - Test: `frontend/src/api/backend.spec.ts`
+- Test: `frontend/src/components/BackendStatusBar.spec.ts`
+- Test: `frontend/src/App.spec.ts`（**本任务新增的整壳测试**，见 Step 6b）
+
+> **Step 6b 为什么必须存在**：Task 3 把 `<AppToolbar />` 加进 `App.vue`，但
+> `AppToolbar.spec.ts` 是**单独 mount 那个组件**的——它会照样绿，而模板里漏掉
+> `<AppToolbar />` 这行改动**没有任何测试会红**，工具条在真机上静默消失。
+> 也就是说，**在 Task 6 之前没有任何测试 mount 过完整的 `App.vue`**。
+> 补 `App.spec.ts` 就是把整壳结构（侧边栏 / 工具条 / 工作区 / 状态栏四者都在、
+> 且层级与顺序正确）钉住，让这类「模板里漏了一行」的改动变成红的。
 
 - [ ] **Step 1: 写失败的测试（API 客户端）**
 
@@ -2296,6 +2305,21 @@ describe('describeState', () => {
     const d = describeState(s)
     expect(d.tone).toBe('error')
     expect(d.text).toBe('后端启动超时')
+  })
+
+  it('遇到没见过的状态时显示出来，而不是渲染成空白', () => {
+    // Rust 侧加了第四个 BackendStatus 变体而忘了同步这里时，
+    // 旧的穷尽 switch 会返回 undefined：状态栏一片空白、没有任何提示。
+    // 这条测试守的是「宁可显示看不懂，也不要静默变空」。
+    //
+    // **它与「喂想象出来的对象去测正常路径」不同**：那种测试是拿假数据
+    // 冒充真实输入（假数据一变，测试仍然绿，等于没测）。这里喂的假状态
+    // 不是要冒充哪个真实状态，而是**专门去走 `default` 这个真实存在的
+    // 防御分支**——它测的是代码里那条防御路径本身，不是某条正常路径。
+    const weird = { status: 'hibernating', port: null, message: '' } as unknown as BackendState
+    const d = describeState(weird)
+    expect(d.tone).toBe('error')
+    expect(d.text).toContain('hibernating')
   })
 })
 
@@ -2372,6 +2396,14 @@ export function describeState(s: BackendState): { text: string; tone: Tone } {
       return { text: `后端已连接 · 端口 ${s.port}`, tone: 'ok' }
     case 'failed':
       return { text: s.message || '后端启动失败', tone: 'error' }
+    default:
+      // 到不了这里，除非 Rust 侧新增了一个 BackendStatus 变体而忘了同步这里。
+      // 那时旧的写法会返回 undefined → 状态栏渲染成空白、且没有任何提示，
+      // 是典型的静默失效。这里宁可显示一句「看不懂」也要让人一眼看见。
+      return {
+        text: `未知的后端状态：${String((s as { status: unknown }).status)}`,
+        tone: 'error',
+      }
   }
 }
 
@@ -2389,7 +2421,11 @@ export async function checkHealth(port: number): Promise<Health> {
 
 Run: `cd frontend && pnpm test src/api/backend.spec.ts`
 
-Expected: `Tests  6 passed`
+Expected: `Tests  9 passed`（describeState 4 条 + Rust 序列化契约 2 条 + checkHealth 3 条）
+
+> 原先这里写的是 `6 passed`——那是**契约测试与 `default` 分支测试补上之前的旧数**。
+> `backend.spec.ts` 最后一条 describeState 用例（`遇到没见过的状态时显示出来`）
+> 守的是 Step 3 里 `default` 这个真实分支，所以它与实现同批进文件。
 
 - [ ] **Step 5: 写 `frontend/src/components/BackendStatusBar.vue`**
 
@@ -2398,40 +2434,107 @@ Expected: `Tests  6 passed`
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { getBackendState, describeState, checkHealth, type BackendState } from '../api/backend'
 
-// 后端起得慢（实测 3.8–6.8 秒），所以轮询而不是只问一次。
-const POLL_MS = 500
+/**
+ * 启动期的轮询间隔。
+ *
+ * 后端起得慢（实测 3.8–6.8 秒），只问一次的话用户要盯着「正在启动后端…」
+ * 直到超时。500ms 是「看起来像立刻亮起来」与「别把 IPC 打满」的折中：
+ * 启动期总共也就十几次调用，代价可以忽略。
+ */
+const SHELL_POLL_MS = 500
+
+/**
+ * 稳态下刷新缓存文案的间隔。
+ *
+ * **不能沿用 500ms**：外壳状态就绪之后永远不会回到 `starting`（Rust 侧
+ * `with_port` / `child_exited` / `timed_out` 都以 `status == Ready` 提前返回，
+ * 由 `a_ready_state_is_never_overwritten_by_a_later_failure` 守着），
+ * 所以再问外壳状态纯属白烧；而 health 每次都是一个真实的 HTTP 请求，
+ * 500ms 一条就是每秒 2 个请求永远不停，打在一个本地服务上毫无意义。
+ *
+ * 但也不只查一次：缓存描述是**会变的**——Redis 掉线后 `describe()` 会从
+ * 「已连接」变成「已熔断」。这个变化很慢，5 秒足够及时，而稳态开销
+ * 从 2 次/秒降到 0.2 次/秒。
+ */
+const HEALTH_POLL_MS = 5000
 
 const state = ref<BackendState>({ status: 'starting', port: null, message: '' })
 const cacheText = ref<string>('')
 const cacheError = ref<string>('')
 
-let timer: number | undefined
+let shellTimer: number | undefined
+let healthTimer: number | undefined
+
+function stopShellPolling() {
+  if (shellTimer !== undefined) {
+    window.clearInterval(shellTimer)
+    shellTimer = undefined
+  }
+}
+
+function stopHealthPolling() {
+  if (healthTimer !== undefined) {
+    window.clearInterval(healthTimer)
+    healthTimer = undefined
+  }
+}
+
+async function pollHealth() {
+  if (state.value.port === null) return
+  try {
+    const h = await checkHealth(state.value.port)
+    cacheText.value = h.cache
+    cacheError.value = ''
+  } catch (e) {
+    // 一次失败不清空上一次成功的文案：Redis 抖一下就把「缓存：已连接」
+    // 换成错误提示，比继续显示旧值更让人困惑。
+    cacheError.value = String(e)
+  }
+}
+
+/**
+ * 就绪 → 停掉外壳轮询、立刻查一次 health、按稳态节奏继续刷新。
+ *
+ * `void` 而不是 `await`：health 是旁路，不该拖慢状态栏本身——
+ * 端口一到就先把「后端已连接」显示出来。
+ */
+function onReady() {
+  stopShellPolling()
+  void pollHealth()
+  if (healthTimer === undefined) {
+    healthTimer = window.setInterval(() => void pollHealth(), HEALTH_POLL_MS)
+  }
+}
 
 async function tick() {
   try {
     state.value = await getBackendState()
   } catch (e) {
+    // **失败即终态，这里刻意不重试。**
+    //
+    // `get_backend_status` 是一条纯内存读取的 Tauri 命令
+    // （`backend.state.lock().unwrap().clone()`），它不具备瞬时失败的机理：
+    // 没有 IO、没有网络、没有超时——invoke 抛错只可能意味着「命令没注册」
+    // 或「State 没 manage」，两者都是永久性的，重试一万次也一样。
+    //
+    // 所以把界面停在错误态是对的：继续按 SHELL_POLL_MS 重试只会制造失败风暴，
+    // 而用户看到的东西一个字都不会变。真要重来，重启外壳。
     state.value = { status: 'failed', port: null, message: `与外壳通信失败：${String(e)}` }
   }
 
-  if (state.value.status === 'ready' && state.value.port !== null) {
-    try {
-      const h = await checkHealth(state.value.port)
-      cacheText.value = h.cache
-      cacheError.value = ''
-    } catch (e) {
-      cacheError.value = String(e)
-    }
-  }
+  if (state.value.status === 'starting') return // 还没起来，继续按 SHELL_POLL_MS 问
+  stopShellPolling() // 就绪与失败都是单向的，再问也只会得到同一个答案
+  if (state.value.status === 'ready') onReady()
 }
 
 onMounted(() => {
   void tick()
-  timer = window.setInterval(tick, POLL_MS)
+  shellTimer = window.setInterval(() => void tick(), SHELL_POLL_MS)
 })
 
 onUnmounted(() => {
-  if (timer !== undefined) window.clearInterval(timer)
+  stopShellPolling()
+  stopHealthPolling()
 })
 
 const desc = computed(() => describeState(state.value))
@@ -2481,11 +2584,31 @@ const desc = computed(() => describeState(state.value))
 </style>
 ```
 
+> **⚠️ 这份 fence 曾经是坏的：它只有 `const POLL_MS = 500` 同时驱动外壳状态与
+> health，等于「每秒 2 个请求永远不停」。现在是两个常量分档 + 就绪/失败后停表。**
+>
+> 为什么**不能**沿用 500ms 一档到底，两条理由各自独立：
+>
+> 1. **外壳状态是单向的，就绪之后永远是 `ready`。** Rust 侧 `with_port` /
+>    `child_exited` / `timed_out` 都以 `status == Ready` 提前返回，由常驻测试
+>    `a_ready_state_is_never_overwritten_by_a_later_failure` 守着。既然答案不会变，
+>    就绪之后再按 500ms 问外壳纯属白烧，所以 `stopShellPolling()` 在就绪与失败
+>    两条路径上都要停表（失败同样是终态，见 `tick` 的 `catch` 分支注释）。
+> 2. **health 每一次都是一个真实的 HTTP 请求。** 500ms 一条就是每秒 2 个请求
+>    打在一个本地服务上，毫无意义。但也不能只查一次：缓存描述**会变**
+>    （Redis 掉线后 `describe()` 从「已连接」变「已熔断」），只是变得很慢，
+>    所以 `HEALTH_POLL_MS = 5000`——稳态开销从 2 次/秒降到 0.2 次/秒。
+>
+> 这两条被 `BackendStatusBar.spec.ts` 里两条反面断言钉住：「就绪之后不再问外壳
+> 状态」与「稳态下 health 按 5 秒节奏刷新，而不是 500ms」（后者断言 60 秒内
+> 不超过 14 次——若跟着 500ms 走会是 120 次）。
+
 - [ ] **Step 6: 改 `App.vue`，把状态栏挂上**
 
 ```vue
 <script setup lang="ts">
 import AppSidebar from './components/AppSidebar.vue'
+import AppToolbar from './components/AppToolbar.vue'
 import BackendStatusBar from './components/BackendStatusBar.vue'
 </script>
 
@@ -2493,6 +2616,7 @@ import BackendStatusBar from './components/BackendStatusBar.vue'
   <div class="shell">
     <AppSidebar />
     <div class="main">
+      <AppToolbar />
       <main class="workspace">
         <RouterView />
       </main>
@@ -2508,11 +2632,133 @@ import BackendStatusBar from './components/BackendStatusBar.vue'
 </style>
 ```
 
+> **⚠️ 这份 fence 曾经漏掉了 `AppToolbar`。** 旧的写法只有 `AppSidebar` 与
+> `BackendStatusBar` 两个 import，**没有 `<AppToolbar />`**——Task 3 刚把工具条加进
+> `App.vue`，照抄那个版本会让它在真机上**静默消失**。
+>
+> 这个缺陷之所以能溜过 Task 3，是因为**没有任何测试 mount 过完整的 `App.vue`**：
+> `AppToolbar.spec.ts` 是**单独 mount 那个组件**的，模板里少一行 `<AppToolbar />`
+> 它照样绿。所以 Task 6 补了 `App.spec.ts`（Step 6b），把整壳结构钉住。
+> **改动 `App.vue` 时以这份 fence 为准，它有三个子组件，一个都不能少。**
+
+- [ ] **Step 6b: 写 `frontend/src/App.spec.ts`（整壳测试——补上被漏掉的那道守卫）**
+
+如果只有组件各自的测试，`App.vue` 的模板内容就是**完全没人守**的地方：少一个
+`import`、少一个 `<AppToolbar />`、把状态栏挪到 `workspace` 上面，全都不会有测试变红。
+这个文件是**唯一 mount 完整 `App.vue` 的地方**，它钉三件事：三个子组件都在、
+`toolbar → workspace → status` 的顺序正确、侧边栏与 `.main` 平级。
+
+```ts
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia } from 'pinia'
+import { createRouter, createWebHistory } from 'vue-router'
+import App from './App.vue'
+import { allRoutes } from './nav'
+
+// 整壳测试：**唯一 mount 完整 App.vue 的地方**。
+// AppToolbar.spec.ts 是单独 mount 组件的，不经过 App.vue——
+// 所以「App.vue 的模板里漏掉了 <AppToolbar />」这个改动
+// 曾经能让全部测试保持绿色，而顶部工具条在真机上静默消失。
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+import { invoke } from '@tauri-apps/api/core'
+const invokeMock = vi.mocked(invoke)
+
+async function mountApp() {
+  const router = createRouter({
+    history: createWebHistory(),
+    routes: allRoutes().map((r) => ({
+      path: r.path,
+      name: r.name,
+      component: { template: '<div/>' },
+    })),
+  })
+  await router.push('/today')
+  await router.isReady()
+  const w = mount(App, { global: { plugins: [router, createPinia()] } })
+  await flushPromises()
+  return w
+}
+
+describe('整壳结构', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    invokeMock.mockReset()
+    // 结构测试不关心数据，给个 starting 就够。
+    invokeMock.mockResolvedValue({ status: 'starting', port: null, message: '正在启动后端…' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('三块都在：侧边栏、顶部工具条、底部状态栏', async () => {
+    const w = await mountApp()
+    expect(w.find('.sidebar').exists()).toBe(true)
+    expect(w.find('.toolbar').exists()).toBe(true)
+    expect(w.find('.status').exists()).toBe(true)
+  })
+
+  it('工具条在 workspace 之上，状态栏在 workspace 之下', async () => {
+    // 光断言「存在」不够：顺序错了布局就反了（状态栏跑到顶部）。
+    const w = await mountApp()
+    const main = w.find('.main')
+    expect(main.exists()).toBe(true)
+    const children = main.element.children
+    const classes = Array.from(children).map((el) => el.className)
+    expect(classes).toHaveLength(3)
+    expect(classes[0]).toContain('toolbar')
+    expect(classes[1]).toContain('workspace')
+    expect(classes[2]).toContain('status')
+  })
+
+  it('侧边栏不在 .main 里，工具条与状态栏是 .main 的直接子节点', async () => {
+    const w = await mountApp()
+    const main = w.find('.main').element
+    expect(main.children[0].className).toContain('toolbar')
+    expect(main.children[2].className).toContain('status')
+    // 侧边栏必须与 .main 平级，而不是被塞进 .main
+    expect(main.querySelector('.sidebar')).toBeNull()
+    expect(w.find('.shell').element.children[0].className).toContain('sidebar')
+  })
+})
+```
+
 - [ ] **Step 7: 跑全部前端测试**
 
 Run: `cd frontend && pnpm test`
 
-Expected: `Tests  26 passed`（8 主题 + 5 导航 + 4 侧边栏 + 3 工具条 + 6 API）
+Expected: `Tests  46 passed`（Test Files 8 passed）
+
+逐 spec 分解（这些数字是实测出来的，用 `pnpm test` 的 per-file 行核对）：
+
+| spec | 条数 | 归属 |
+|---|---|---|
+| `src/styles/theme.spec.ts` | 8 | Task 2 |
+| `src/nav.spec.ts` | 5 | Task 3 |
+| `src/components/AppSidebar.spec.ts` | 6 | Task 3 |
+| `src/components/AppToolbar.spec.ts` | 3 | Task 3 |
+| `src/router/router.spec.ts` | 3 | Task 3 |
+| `src/api/backend.spec.ts` | 9 | Task 6 |
+| `src/components/BackendStatusBar.spec.ts` | 9 | Task 6 |
+| `src/App.spec.ts` | 3 | Task 6（Step 6b） |
+| **合计** | **46** | |
+
+> **原先这里写的是 `26 passed`（8 主题 + 5 导航 + 4 侧边栏 + 3 工具条 + 6 API），
+> 这个数错了两重：**
+>
+> 1. **那个 26 本身就是旧数。** 它按「侧边栏 4 条 + API 6 条」算，而 Task 3 实际
+>    产出的是**侧边栏 6 条**（多了「分隔线在「我的」分组内部」与「「我的」在 DOM 里
+>    排在所有功能区之后」两条）以及一个计划里没预料到的 **`router.spec.ts` 3 条**。
+>    也就是说 Task 3 结束时是 **25 条**，不是 21 条。
+> 2. **Task 6 又新增了三块。** 本任务落地时补的：`backend.spec.ts` 的 **Rust 序列化
+>    契约 2 条 + `default` 分支 1 条**、`BackendStatusBar.spec.ts` 9 条、`App.spec.ts` 3 条。
+>
+> `26 → 46` 不是「数错了」，是**前面几步的旧数没跟着实现走**。以后改测试计数请直接
+> 贴 `pnpm test` 的 per-file 输出，不要手算。
 
 - [ ] **Step 8: 提交**
 
@@ -2526,6 +2772,25 @@ git commit -m "feat(frontend): 加载提示与后端状态接线，第一次能�
   第一次有了可见的证据
 - 加载态用脉冲小圆点，不做大色块（设计文档要求靠对比而非填充）"
 ```
+
+> **实际提交时 `git add` 要带上两个新 spec**——`frontend/src/components/BackendStatusBar.spec.ts`
+> 与 `frontend/src/App.spec.ts`（上面那份清单是首版写的，漏了它们）：
+>
+> ```bash
+> git add frontend/src/api frontend/src/components/BackendStatusBar.vue \
+>         frontend/src/components/BackendStatusBar.spec.ts \
+>         frontend/src/App.vue frontend/src/App.spec.ts
+> ```
+>
+> 另外有三处**计划里的旧口径已按磁盘改正**，一起记在这里，免得下一个人照抄旧版：
+>
+> - **`App.vue` 的 fence 补回了 `<AppToolbar />`**。首版给的 App.vue 只有侧边栏与状态栏，
+>   照抄会让 Task 3 刚加的工具条**静默消失**（Step 6 的注里有完整说明）。
+> - **`BackendStatusBar.vue` 的 fence 换成了「外壳 500ms 启动期轮询 + health 5 秒稳态轮询 +
+>   就绪/失败后停表」**。首版那个 500ms 一档到底的版本是每秒 2 个请求永远不停（Step 5 的注）。
+> - **`describeState` 补了 `default` 分支**，把「Rust 加了第四个状态而忘了同步这里」这个
+>   静默失效变成界面上一句能看见的「未知的后端状态」。它由 `backend.spec.ts` 的一条用例守着，
+>   删掉 `default` 那条测试会红（变异验证过）。
 
 ---
 

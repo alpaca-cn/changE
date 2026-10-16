@@ -34,6 +34,14 @@ export function describeState(s: BackendState): { text: string; tone: Tone } {
       return { text: `后端已连接 · 端口 ${s.port}`, tone: 'ok' }
     case 'failed':
       return { text: s.message || '后端启动失败', tone: 'error' }
+    default:
+      // 到不了这里，除非 Rust 侧新增了一个 BackendStatus 变体而忘了同步这里。
+      // 那时旧的写法会返回 undefined → 状态栏渲染成空白、且没有任何提示，
+      // 是典型的静默失效。这里宁可显示一句「看不懂」也要让人一眼看见。
+      return {
+        text: `未知的后端状态：${String((s as { status: unknown }).status)}`,
+        tone: 'error',
+      }
   }
 }
 
