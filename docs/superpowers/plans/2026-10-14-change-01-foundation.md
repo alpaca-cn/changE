@@ -6156,10 +6156,17 @@ class HealthControllerTest {
 
     @Test
     void health_reports_ok_without_touching_redis() {
+        // ⚠️ 这条测试的名字比断言强：它断言的是「健康端点在 Redis 不可达时仍能响应」。
+        // 这本身就是隔离的证据——Spring 上下文能起来就说明缓存不是硬依赖
+        // （CacheConfig 的条件装配 + NoOp 兜底）。它**不是**「不碰 Redis」的机制断言，
+        // 没有拦在 Redis 客户端上的探针。
         ResponseEntity<String> r = http.getForEntity("/api/health", String.class);
         assertThat(r.getStatusCode().is2xxSuccessful()).isTrue();
         assertThat(r.getBody()).contains("\"status\":\"up\"");
-        assertThat(r.getBody()).contains("\"cache\"");
+        // 查值，不是查键名：只查键名时 cache 的值改成 "" 或 "totally-bogus" 都能存活。
+        // 质量审查轮实测过这两个变异体都能全绿——而 Task 11 的验收标准正是要求
+        // 这个字段「如实报告」缓存状态，所以必须是值断言。
+        assertThat(r.getBody()).contains("\"cache\":\"disabled(placeholder)\"");
     }
 
     @Test
@@ -6180,8 +6187,10 @@ class HealthControllerTest {
 
         String line = captured.toString(java.nio.charset.StandardCharsets.UTF_8).trim();
         assertThat(line).startsWith(PortReporter.PREFIX);
-        // 前缀后面必须是纯数字端口——外壳要 parseInt
-        assertThat(line.substring(PortReporter.PREFIX.length())).matches("\\d+");
+        // 这条是唯一能把「外壳拿到的是自己这个进程的端口」钉住的断言：
+        // report() 读 local.server.port，必须与注入进来的 @LocalServerPort 逐字相等。
+        // 只校验后缀是 \d+ 的话，打印出别的端口照样绿。
+        assertThat(line).isEqualTo(PortReporter.PREFIX + port);
     }
 }
 ```
@@ -6335,6 +6344,16 @@ Step 6 在原计划里只说「Expected: 有一行」。这不够——外壳真
   **不要**用 `split('\n')` 之类只切 `\n` 的写法，否则后缀变成 `"56934\r"`，
   `parse::<u16>()` 直接报错。Java 的 `Integer.parseInt` 恰好容忍尾部 `\r`，别被它骗过。
 
+**外壳侧必须实现的两条**（否则后端没有输出协议行时，外壳会无限等待）：
+
+1. **读取协议行必须有超时**（例如 30 秒——实测正常启动约 4–5 秒，30 秒足够宽松）。
+2. **子进程退出而未产出协议行 = 启动失败**，不是「继续等」。
+   实测：`--spring.main.web-application-type=none` 下后端 4.6 秒 exit 0 且**不打协议行**
+   （只打一行不含前缀的 WARN），外壳若只匹配前缀就会永远等下去。
+
+**协议行必须恰好一行**：外壳按前缀匹配并取第一行，出现第二行（例如将来把令牌
+写成第二个监听方法）不会报错，只会让外壳沉默地选错。把「恰好一行」写成协议的一部分。
+
 > 落地轮还补了一条**协议测试** `port_reporter_prints_the_agreed_protocol_line`（见 Step 1 的 fence）。
 > 理由：`PREFIX` 是外壳与后端的协议，改一个字符外壳就找不到后端，而原来没有任何测试守着它。
 > 实测有效：把 `PREFIX` 改成 `"CHANGE_PORTX="` → 该测试变红（失败在 `HealthControllerTest.java:40`）。
@@ -6349,47 +6368,70 @@ git add backend/src/main/java/com/change/config/PortReporter.java \
 git commit -m "feat: HTTP 骨架 + 端口协商（stdout 上报 CHANGE_PORT=）"
 ```
 
-### 给加写接口的任务的安全约定（Task 11 及以后，**增加第一个写接口之前必须落地**）
+### 给加写接口的任务的安全约定（Task 10 质量审查轮修正）
 
-Task 10 只加了 `GET /api/health`（只读、无副作用），所以下面这些还没做是对的。但从 Task 11 的
-`/api/chat` 开始，接口能**读写全部数据、能调模型 API**，威胁面就完全变了。落地写接口的任务
-**必须**同时把这一节做掉，不能留到「以后再说」。
+**适用范围**：任何会改数据的端点（`/api/chat` 及之后所有写接口）。
+**必须在第一个写接口落地之前完成**，不是「以后再说」。
 
-**1) 任何会改数据的端点都必须校验请求来源。**
+> 本节在 Task 10 质量审查轮**被整节重写**。原版把 **Origin 校验与自定义头令牌写成「二选一」的
+> 等效方案**，审查实测证明这是错的（Origin 校验在 DNS rebinding 下会放行攻击请求），
+> 而**唯一能挡住 rebinding 的 `Host` 校验在原版里根本没有提**。
+> 同时要说明：原版里「**CORS 只挡读响应、不挡发请求**」那一句**本身是对的**，本版保留。
 
-现状是「绑在 `127.0.0.1` + 无鉴权 + 随机端口」。这里有一个常见误解要写清楚：
+**一、必须做（两条都要，不是二选一）**
+
+1. **校验 `Host` 头**：只接受 `127.0.0.1:<当前端口>` 与 `localhost:<当前端口>`，其余一律 403。
+   这是**反 DNS rebinding** 的唯一最小措施，也是本节里最容易被漏掉的一条。
+   实测背景：本后端接受任意 `Host`（`Host: evil.example.com` → 200）。
+   没有它，rebinding 场景下攻击页面与目标**同源**，后面所有基于「跨站」的判断都会失效。
+
+2. **强制要求一个自定义请求头**（例如 `X-Change-Client: <启动时生成的一次性令牌>`）。
+   原理：自定义头会**强制触发 CORS 预检**，而服务端不返回 `Access-Control-Allow-*`，
+   预检失败 → **浏览器根本不发真实请求**（预检失败挡的是请求本身，不只是响应）。
+   实测背景：不配 CORS 时 `OPTIONS` 预检返回 403 且无任何 ACAO 头。
+   **端点必须强制要求该头存在**——如果允许省略，`Content-Type: text/plain`
+   这类「简单请求」不触发预检，请求会真的执行。
+   令牌用 `SecureRandom` 生成，只经 stdout 交付给外壳（与端口同一信道），
+   **不落盘、不进日志、不进前端 JS**——Vue 层一次 XSS 就等于令牌泄露。
+   校验放在一个 `HandlerInterceptor`（或 Filter）里，对「非只读方法 + 写路径」生效。
+   注意别把校验写成「头不存在就放行」——那等于没做。
+
+**二、Origin 校验：降级为补充，且启用前必须先实测**
+
+**不要把 Origin 校验当作上面两条的替代品**——它在 DNS rebinding 下会放行攻击请求
+（攻击页面与目标同源，Origin 是合法的 http(s)，且不触发预检）。
+
+如果仍要加它，注意一个**会锁死外壳自己**的坑：Tauri v2 在 Windows/WebView2 上的
+自定义协议来源是 `http://tauri.localhost`，属于 http 来源；而 Tauri 对本地 HTTP 请求
+是否携带 Origin 并无稳定承诺。所以**必须先实测外壳实际发送的 Origin 是什么**，
+再决定允许名单，否则会把外壳自己的请求判成攻击者。
+
+**三、别指望随机端口当安全措施**
+
+端口随机只增加猜中的成本，不是防护（页面可以扫端口）。这一点原版写对了，措辞保留：
 
 > **随机端口不能挡住跨站请求。CORS 只挡「读响应」，不挡「发请求」。**
 > 用户浏览器里任何一个网页都能向 `http://127.0.0.1:<端口>/api/...` 发 POST——请求真的会被
 > 后端执行，只是网页读不到响应而已。对「写数据」这种有副作用的操作，读不到响应**不等于**
-> 没造成损害。端口随机只是让攻击者多扫几秒（页面可以直接扫端口段），**不是防护措施**。
+> 没造成损害。
 
-最小可行做法（二选一，推荐第一个）：
+**四、边界（诚实写明挡不住什么）**
 
-- **要求一个自定义请求头**，例如 `X-Change-Client: <外壳启动时生成的一次性令牌>`。
-  自定义头会**强制触发 CORS 预检**（`OPTIONS` + `Access-Control-Request-Headers`），
-  而服务端不返回 `Access-Control-Allow-*`，预检就失败，浏览器**不会**发出真正的写请求。
-  校验放在一个 `HandlerInterceptor`（或 Filter）里，对「非只读方法 + 写路径」生效。
-  注意别把令牌校验写成「头不存在就放行」——那等于没做。
-- 或者**校验 `Origin` 头**：为空（非浏览器，例如 Tauri 外壳自己的原生 HTTP 客户端）
-  或非 `http(s)` 才放行；`http://` 与 `https://` 来源一律拒绝。
+- **挡不住本机同用户的其它进程**：令牌经 stdout 交付，同用户进程理论上可读
+  （Windows 需要 `OpenProcess` + 句柄复制权限，非默认但可得）。
+  真正的风险不是信道，而是「外壳把 stdout 落盘」——所以那条「不落盘」的约束是硬约束。
+- **更简单的等效替代**（按性价比）：
+  ① `Host` 白名单（上面第 1 条，反 rebinding 的唯一最小措施）；
+  ② 只要求「存在某个自定义头」（如 `X-Requested-With`）而不是随机令牌——
+     目的只是强制预检，不需要生成/交付/保管秘密；
+  ③ 写接口只接受 `application/json`（挡掉表单与纯文本这两个简单请求的 Content-Type）。
+- **如果以后要真正隔离**：Unix domain socket / 命名管道能让浏览器根本够不着，
+  安全上限最高，但 Windows 支持与 Tauri/Rust 侧工作量明显更大。
+  本项目规模下不推荐，但值得作为备选记录。
 
-**2) 令牌在启动时随机生成，只经 stdout 交给外壳**（与 `CHANGE_PORT=` 同一信道）。
-
-- 用 `SecureRandom` 生成，进程生命周期内一次性、不持久化。
-- **不落盘、不进日志**：打印令牌与打印端口不同，端口泄露无害，令牌泄露等于没了防护。
-  复用 `PortReporter` 那个信道时，令牌也必须走 stdout 的单独一行，且**不能**被
-  slf4j 日志包装（日志行带时间戳/线程名前缀，外壳按前缀匹配会拿到脏数据）。
-- 外壳把它作为常量请求头附在每个请求上；后端只比对，不回显。
-
-**3) 别指望随机端口当安全措施。** 见上面第 1 条的引用块：它增加的是扫描成本，不是防护。
-
-**4) 这条在增加第一个写接口之前必须落地。** 具体地说，Task 11 落地 `/api/chat` 时，
-**要么**同一个提交里带上来源校验，**要么**把 `/api/chat` 的写操作挡在未校验的来源之外
+**五、这条在增加第一个写接口之前必须落地。** 具体地说，Task 11 落地 `/api/chat` 时，
+**要么**同一个提交里带上上面第一、二条，**要么**把 `/api/chat` 的写操作挡在未校验的来源之外
 （例如先只上只读端点）。先上线一个能改数据的接口、再补校验，是不可接受的顺序。
-
-> 这套东西的边界要说清楚：它挡的是**网页发起的跨站请求**（浏览器会遵守 CORS 预检），
-> **挡不住**用户机器上其它本地进程直接发起的请求——那需要真正的鉴权，超出本计划范围。
 
 ---
 
@@ -6405,6 +6447,17 @@ Task 10 只加了 `GET /api/health`（只读、无副作用），所以下面这
 - Create: `backend/src/main/java/com/change/cache/RedisCacheService.java`
 - Modify: `backend/src/main/java/com/change/config/CacheConfig.java`
 - Test: `backend/src/test/java/com/change/cache/CacheServiceTest.java`
+
+> ⚠️ **Step 1 必须同时把 `HealthControllerTest` 的 `cache` 断言换成查新实现的值。**
+> 质量审查轮已把那条断言从「只查键名」改成查值
+> （`HealthControllerTest.java:33` 现在是
+> `assertThat(r.getBody()).contains("\"cache\":\"disabled(placeholder)\"")`）。
+> 但 `disabled(placeholder)` 是 Task 10 的**占位实现**的值；本任务 Step 5 把
+> `CacheStatus` 换成 `cache::describe` 之后它就不再成立，必须同步换成新实现真正会返回的值
+> （`change.redis.enabled=false` 下是 `缓存：未启用（配置为关闭）`）。
+> **这一步不能省**：留着一个对占位值成立、对真实现不成立的断言，等于把这个已知漏洞
+> 用「占位实现」的理由一路带过去——而本计划的完成标准里写明 `/api/health`
+> **「如实报告缓存状态」**，查值的断言正是那句话的唯一守卫。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -6863,4 +6916,98 @@ cd backend && mvn -B test
 约定四（可空的领域配置不得兜底，必须进入类型或状态）、
 以及约定一的判据从「输入或输出的聚合值」改成「**跨操作复用** vs 只属于单个操作」
 （原措辞与 `Entry` 这个**输入**条目嵌在操作类里的例子打着）。
+
+---
+
+# Task 10 质量审查轮记录（2026-10-18）
+
+> 本节记 **Task 10 的质量审查收口**。审查结论：**2 Critical / 2 Important / 4 Minor**。
+> 改动落在**计划文本 + 1 个测试断言**，**没有动任何生产代码**
+> （`PortReporter` / `HealthController` / `CacheConfig` 一行未动），
+> 也没有动 `application.yml`、`pom.xml`、迁移文件、`calc/`、`service/`。
+> 测试从 105 → **105**（断言换值、加对照，条数不变）。
+
+## C1（Critical）：安全约定把 Origin 校验写成了与令牌二选一的等效方案
+
+审查实测推翻了原版 Task 10 末尾那一节的第一个「最小可行做法（二选一）」：
+
+| 审查实测 | 结论 |
+|---|---|
+| `evil.example.com` 解析到 `127.0.0.1` 后，攻击页面与请求 URL **同源**、**不触发预检**，`Origin: http://evil.example.com` 是合法 http(s) | 按原版「非 http(s) 才放行」的规则，rebinding 攻击请求会被**放行** |
+| `Host: evil.example.com` → HTTP **200** | 后端接受任意 `Host`，这是 rebinding 的**前置条件**，而原版**完全没提 Host 校验** |
+| 不配 CORS 时 `OPTIONS` 预检返回 **403** 且**无任何 `Access-Control-Allow-*`** | 原版对的那一半：「自定义头确实能挡住浏览器发出的跨站写请求」成立——**前提是端点强制要求该头** |
+| — | 原版「CORS 只挡读响应、不挡发请求」那句**本身是对的**，重写时保留 |
+
+处置：**整节重写**（见 Task 10 末尾那一节），结构改为
+「一、必须做（Host 白名单 + 强制自定义头，两条都要）→ 二、Origin 校验降级为补充且启用前先实测
+→ 三、别指望随机端口 → 四、边界 → 五、落地时机」。
+
+## C2（Critical）：协议行的缺失是静默的
+
+审查实测：`--spring.main.web-application-type=none` 下 JPA / Flyway / Hikari 全部正常初始化、
+`Started ChangeApplication in 4.211 seconds`，然后 `PortReporter` 走 `log.warn`
+（**不含 `CHANGE_PORT`**），进程 **4.6 秒后 exit code 0**。
+
+外壳如果只做「等协议前缀」，会**无限等待**——用户看到永远不出现的窗口，且没有超时提示。
+
+处置：在 Task 10 的协议说明处（`CHANGE_PORT=` 那一段）补两条**外壳侧**硬约束
+（读取协议行必须有超时、子进程退出而未产出协议行 = 启动失败），
+并把「**协议行必须恰好一行**」写成协议的一部分。
+
+## I1（Important）：`cache` 断言只查键名不查值
+
+`HealthControllerTest.java:33` 原来是 `contains("\"cache\"")`。审查实测：把 `cache` 的值改成
+`""` 或 `"totally-bogus"` 都**存活**（Task 10 提交信息 D 节自己也记了这个结论）。
+而本计划的完成标准里写明 `/api/health` 必须**「如实报告缓存状态」**。
+
+处置：改成查值 `assertThat(r.getBody()).contains("\"cache\":\"disabled(placeholder)\"")`；
+并把「Task 11 Step 1 必须把这条断言换成查新实现的值」写进 Task 11 的步骤。
+
+## I2（Important）：`port_reporter` 测试的覆盖缺口
+
+`port_reporter_prints_the_agreed_protocol_line` 手动 `new PortReporter(env).report()`，所以：
+
+| 缺口 | 后果 |
+|---|---|
+| 不守 `@EventListener` 事件接线本身 | 删掉 `@EventListener` 它照样绿 |
+| 没有断言「恰好一行」 | 多打一行不会红 |
+| 只校验后缀 `\d+` | **打印出别的端口它照样绿** |
+
+处置：加一条把注入的 `@LocalServerPort` 作为对照的断言
+`assertThat(line).isEqualTo(PortReporter.PREFIX + port)`——
+这是唯一能把「外壳拿到的是**自己**的端口」钉住的断言。
+（`report()` 读 `local.server.port`，与注入的 `port` 实测一致，见验收 4。）
+
+## Minor 逐条
+
+| # | 位置 | 改法 |
+|---|---|---|
+| M1 | Task 10 提交信息里的测试数字 | **不改历史提交**（`amend` 会破坏「一次任务一次提交」的可追溯性，分支虽未推送也不用它）。改为在这里记档：`%B` 里的 **`Tests run: 104`** 是**补协议测试之前的中间态**，终值是 **105**——`104` 出现在「TDD 三步」的 GREEN 那一步（那时只加了 2 条测试），`105` 出现在后面「测试与验证」的全量一轮（补上协议测试后是 3 条） |
+| M2 | Task 10 提交信息里的变异计数口径 | 原写「**11 个变异体实测：8 杀、3 存活**」，把 **2 个对照组**（注释里加一个空格、删 `cacheStatus()` bean）混进了分母。**正确口径是「7 杀 / 2 存活 / 2 个对照」**（有效变异体 9 个：`PREFIX`、`status` 键、`"up"`→`"down"`、`cache` 键、`port > 65535`、去 `RANDOM_PORT` 单类、去 `RANDOM_PORT` 全量、`cache` 值→`""`、`cache` 值→假值） |
+| M3 | `health_reports_ok_without_touching_redis` 的名字 | 它只断言返回 200 且 JSON 里有 `cache` 键，**没有任何「不碰 Redis」的机制断言**，名字承诺得比断言强。处置：**加注释说明它实际验证的是什么**（健康端点**在 Redis 不可达时仍能响应**——这本身就是隔离的证据，因为 Spring 上下文起得来就说明没有强依赖），不改名 |
+| M4 | `_review/` 目录 | 见下 |
+
+## M4 的处置：`_review/` 清理
+
+- **删除 `_review/commit-msg-task10.txt`**：与 `git log -1 --format=%B` 逐字重复
+  （仅差一个结尾空行，实测 9262 B vs 9261 B，其余逐字节相同），是**第二份可能不一致的真相**。
+- **把 `_review/` 整体移出版本库**：`git rm -r --cached _review` + `.gitignore` 加 `_review/`。
+  理由有两条，都是审查实测的：① `_review/*.py` **硬编码了 `E:\maven\...` 与
+  `C:\Users\alpaca\.jdks\...`**，换机器就废，是单机调试产物而**不是可复跑验证**；
+  ② `t10_probe.py` 自身的期望值算错（打印「应为 17」而实测 18——`\r` 那一个字节）。
+- ⚠️ `git rm --cached` **只取消跟踪、不删磁盘文件**。本轮**没有**用 `rm`，
+  也没有删除任何脚本或日志文件，全部仍留在磁盘上。
+- **计划历史快照 `_review/plan-before-security-round.md`（355 KB）必须保留**：
+  它是那段时间计划演进的历史快照，删掉就不可追溯了。
+  本轮把它**留在磁盘上**（同时也不再被跟踪，与整个 `_review/` 一致）。
+
+## 本轮验收的原始输出
+
+见提交信息里的「验收」一节（7 条各自贴了原始输出）。关键两条：
+
+- **§3 的改法有效**：把 `CacheConfig` 的返回值临时改成 `""`，新值断言**变红**
+  （改前是绿的——这正是审查实测的漏洞）。
+- **§4 的改法有效**：把 `PortReporter.PREFIX` 改成 `PREFIX + "0" + port` 的输出逻辑后，
+  新的 `isEqualTo(PREFIX + port)` 断言**变红**。
+
 

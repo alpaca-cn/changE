@@ -49,3 +49,8 @@ logs/
 
 # ── PPT 任务派生物 ──
 ppt_tasks/*/render/*.pdf
+
+# ── _review/：单机调试产物，保留在磁盘但不入库 ──
+# 理由见计划「Task 10 质量审查轮记录」的 M4：里面的脚本硬编码本机路径
+# （E:\maven\...、C:\Users\alpaca\.jdks\...），换机器就废，不是可复跑验证。
+_review/
