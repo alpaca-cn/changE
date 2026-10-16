@@ -17,13 +17,5 @@
     "noEmit": true,
     "types": ["vite/client", "node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts", "vitest.config.ts"],
-  // vitest@2.1.8 把 vite 写成硬依赖（^5.0.0），项目用的是 vite@6，两套 vite
-  // 类型在同一个 config 对象里必然互斥：`plugins: [vue()]` 按 vite@5 校验
-  // vite@6 的插件实例，任何 `as` 都只是把同一个错误换个写法。
-  //
-  // 这里只把测试配置排除在 vue-tsc 之外 —— 它是 8 行、几乎不变的构建期配置，
-  // 且 vitest 自己会加载它（写错会当场报错）。src/**/*.spec.ts 仍在 include 里，
-  // 测试代码的类型检查一分不减。
-  "exclude": ["vitest.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts", "vitest.config.ts"]
 }

@@ -190,7 +190,7 @@ frontend/
 ├── pnpm-workspace.yaml   ← ★ 唯一的「不执行第三方构建脚本」声明处
 ├── tsconfig.json         ← 唯一一份，no-emit 纯检查
 ├── vite.config.ts        ← strictPort: 1420
-├── vitest.config.ts      ← Task 3 建
+├── vitest.config.ts      ← Task 2 建（jsdom 环境 + src/**/*.spec.ts）
 ├── scripts/
 │   ├── make-icon.py      ← ★ 图标的来源（可复现）
 │   └── icon-source.png   ← ★ 1024×1024 源图，入库

@@ -171,13 +171,17 @@ frontend/                                  ← 新增，与 backend/ 平级
     "jsdom": "^25.0.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
-    "vitest": "^2.1.8",
+    "vitest": "^3",
     "vue-tsc": "^2.2.0"
   }
 }
 ```
 
 > **版本号说明**：这里用的是各包的**大版本范围**（`^2` / `^3.5`），不是钉死的小版本。`pnpm install` 会解析到当时的最新兼容版本。**如果安装后 `pnpm tauri dev` 报版本不兼容，先报告实际报错再改**，不要盲目升降级。
+>
+> **`vitest` 必须是 `^3`，不要降回 2.x**：`vitest@2` 把 `vite` 写成硬依赖 `^5.0.0`，
+> 会让 `node_modules` 里出现两份 vite，并让 `vitest.config.ts` 必然报 `TS2769`
+> （与 `exclude` 的关系见 Task 2 末尾的「两份 `vite`」一节）。
 
 - [ ] **Step 2: 建 `frontend/vite.config.ts`**
 
@@ -605,10 +609,34 @@ git commit -m "feat(frontend): Tauri 2 + Vue 3 + Vite 骨架跑通，深色窗�
 把设计文档冻结的视觉方向变成**一处代码**。之后所有组件都从这里取值，不许写死颜色。
 
 **Files:**
+- Create: `frontend/vitest.config.ts`（前端第一个测试文件要能跑起来，测试环境从这里定下来）
 - Create: `frontend/src/styles/theme.css`（覆盖 Task 1 的空占位）
 - Test: `frontend/src/styles/theme.spec.ts`
 
-- [ ] **Step 1: 写失败的测试**
+- [ ] **Step 1: 建 `frontend/vitest.config.ts`**
+
+```ts
+import { defineConfig } from 'vitest/config'
+import vue from '@vitejs/plugin-vue'
+
+export default defineConfig({
+  plugins: [vue()],
+  test: {
+    environment: 'jsdom',
+    include: ['src/**/*.spec.ts'],
+  },
+})
+```
+
+> **为什么这份配置在 Task 2 就建，而不是留到 Task 3**：Task 2 是前端第一个有测试文件的
+> 任务，`pnpm test` 从这一步起才是有效信号；测试环境（jsdom）与 `include` 的约定，也该在
+> 有测试的那一刻就钉下来。**Task 3 只复用，不重建。**
+>
+> ⚠️ `plugins: [vue()]` 这一行曾经**必然**报 `TS2769`——根因是 `vitest@2` 把 `vite` 写成
+> 硬依赖 `^5.0.0`，`node_modules` 里因此存在两份 vite。完整记录见本任务末尾的
+> 「两份 vite」一节，**不要**再用 `tsconfig.json` 的 `exclude` 去绕。
+
+- [ ] **Step 2: 写失败的测试**
 
 ```ts
 import { readFileSync } from 'node:fs'
@@ -658,16 +686,28 @@ describe('主题 token', () => {
   it('不定义阴影（设计文档明确说不用阴影分层）', () => {
     expect(css).not.toMatch(/--shadow\s*:/)
   })
+
+  it('只有深色主题：不定义浅色覆盖（设计文档明确说不做浅色）', () => {
+    // 用 prefers-color-scheme 或 [data-theme] 开浅色分支就等于破掉了这条封板决定
+    expect(css).not.toMatch(/prefers-color-scheme\s*:\s*light/)
+    expect(css).not.toMatch(/\[data-theme\s*=\s*["']?light/)
+  })
+
+  it('强调色只在 --accent 定义一次，组件不许各写各的红', () => {
+    // 设计文档说「唯一的暖红」。全文件里 #e0453a 只该出现一次（就是 --accent 那行）。
+    const hits = css.match(/#e0453a/gi) ?? []
+    expect(hits).toHaveLength(1)
+  })
 })
 ```
 
-- [ ] **Step 2: 跑测试，确认它失败**
+- [ ] **Step 3: 跑测试，确认它失败**
 
 Run: `cd frontend && pnpm test src/styles/theme.spec.ts`
 
-Expected: FAIL —— 6 条全红，因为 `theme.css` 现在是空文件，所有 `token(...)` 返回 `undefined`。
+Expected: FAIL —— 8 条全红，因为 `theme.css` 现在是空文件，所有 `token(...)` 返回 `undefined`。
 
-- [ ] **Step 3: 写实现**
+- [ ] **Step 4: 写实现**
 
 ```css
 /*
@@ -678,6 +718,14 @@ Expected: FAIL —— 6 条全红，因为 `theme.css` 现在是空文件，所�
  *
  * 只做深色主题：厚重感一半来自深色底与高对比，再维护一套浅色主题
  * 会稀释这个方向，且测试成本翻倍（设计文档已封板）。
+ *
+ * **已知还没定义的 token 类别，现在刻意不加**：正文 400 字重、语义色
+ * （--danger / --warning）、肌肉色阶、比 --gap-xl 更大的一档留白、
+ * 把 --line 拆成 divider / border 两个。
+ *
+ * 加它们的时机是**消费它们的界面出现时**——那时才知道要几档、该叫什么名字。
+ * 提前定义就是一堆没人用的死值，而且每一个都要被 theme.spec.ts 钉住，
+ * 成本不是零。等真正需要的那一页写到那里再加。
  */
 :root {
   /* 背景三层 */
@@ -690,6 +738,10 @@ Expected: FAIL —— 6 条全红，因为 `theme.css` 现在是空文件，所�
 
   /* 文字 */
   --text: #d8dee6;
+  /* --text-dim 与 --eyebrow 今天同值（#6b7480），但语义不同、不要合并：
+     --text-dim 是正文里的次要文字，--eyebrow 是全大写小标签。两者将来完全
+     可能分叉（比如小标签要更暗一点），合成一个会把这个可能性堵死，
+     而保留两个的成本是零。 */
   --text-dim: #6b7480;
   --eyebrow: #6b7480;
 
@@ -758,22 +810,82 @@ button:hover { border-color: var(--accent); }
 a { color: var(--accent); }
 ```
 
-- [ ] **Step 4: 跑测试，确认通过**
+- [ ] **Step 5: 跑测试，确认通过**
 
 Run: `cd frontend && pnpm test src/styles/theme.spec.ts`
 
-Expected: `Tests  6 passed`
+Expected: `Tests  8 passed`
 
-- [ ] **Step 5: 提交**
+> **为什么是 8 条而不是 6 条**：fence 里最后两条是**否定式**断言（不定义浅色分支、
+> `#e0453a` 全文件只出现一次）。空文件天然满足它们，所以它们在写实现之前也是绿的——
+> 只有在**后人**加了 `prefers-color-scheme: light` 分支、或让第二个地方出现同一个色号时
+> 才会变红。它们是替将来守门的，不是替现在的实现提要求的：**不要**因为「空文件也能过」
+> 就把它们删掉，也**不要**因此以为实现没做完。
+
+- [ ] **Step 6: 提交**
 
 ```bash
-git add frontend/src/styles/theme.css frontend/src/styles/theme.spec.ts
+git add frontend/vitest.config.ts frontend/src/styles/theme.css frontend/src/styles/theme.spec.ts
 git commit -m "feat(frontend): 深色主题 token，并用测试钉住设计文档冻结的值
 
 视觉方向是最容易悄悄漂移的地方——改一个色值不会有任何东西报警。
 这里把设计文档里的值变成断言（与后端用 DDL 快照钉 schema 同一思路）。
-另加两条结构性断言：圆角必须落在 4–6px、不许定义阴影。"
+另加两条结构性断言：圆角必须落在 4–6px、不许定义阴影。
+同时建起 vitest.config.ts——前端第一批测试从这里开始。"
 ```
+
+### 两份 `vite`：`vitest` 2 的依赖冲突（给后来人）
+
+**现象**：`pnpm build`（= `vue-tsc --noEmit && vite build`）会在 `vitest.config.ts` 上以
+`TS2769` 退出 2，报错位置落在 `plugins: [vue()]` 那一行——**和主题 token 没有任何关系**。
+上一轮实测过：把 `vue()` 的结果往两个方向 `as`（vite@5 的类型 / vite@6 的类型）都不管用，
+因为两份 vite 的类型是**双向**不兼容的，`as` 只是把同一个错误换个写法。
+
+**根因**：`vitest@2.1.8` 把 `vite` 写成**硬依赖 `^5.0.0`**（不是 `peerDependency`），
+而项目自己用 `vite@^6`。于是 `node_modules` 里同时存在两份 vite：
+
+```
+vite@5.0.0   ← vitest / vite-node / @vitest/mocker 用
+vite@6.4.4   ← 项目与 @vitejs/plugin-vue 用
+```
+
+`vue-tsc` 从 `vitest/config` 拿到的 `defineConfig` 是按 **vite@5 的 `PluginOption`** 校验的，
+而 `vue()` 返回的是 **vite@6 的插件实例**，两套类型在同一个 config 对象里互斥——所以这是
+必然报错，不是写法问题。
+
+**这不是「pnpm 的正常行为」，而是依赖缺陷**：装两遍 vite、两套插件类型、插件实例跨版本
+混用，将来极难查。看到两份 vite 就该当成 bug，而不是忍下去。
+
+**处置**：把 `vitest` 升到 `^3`。`vitest@3.2.7` 对 vite 的依赖是**范围**
+`"^5.0.0 || ^6.0.0 || ^7.0.0-0"`，所以 pnpm 会直接复用项目那份 `vite@6.4.4`，
+`node_modules` 里只剩一份 vite，类型冲突从根上消失（升级后 `pnpm why vite` 输出
+`Found 1 version of vite`）。
+
+`jsdom` 与 `@vue/test-utils` **不用跟着动**：`vitest@3` 的 `peerDependencies` 里
+`jsdom` 是 `*`（当前 `^25.0.1` 就满足），而 `@vue/test-utils` 根本不在它的 peer 列表里。
+**不要凭记忆升降级，去读它的 `peerDependencies`。**
+
+**为什么不用 `tsconfig.json` 的 `exclude` 绕过**：曾经有一版就是这么修的——把
+`vitest.config.ts` 从 `include` 里排除，`pnpm build` 立刻变绿。那是**用看不见换不报错**：
+文件退出类型检查之后就再没有东西守着它的写法，而 vitest 自己加载配置时只会给运行期错误
+（`port: 'not-a-number'` 这类在运行期往往不疼不痒）。根因在依赖上就该在依赖上解决。
+本轮已把那个 `exclude` 拆掉，`tsconfig.json` 回到 Task 1 Step 3 fence 的样子，
+所以**不必**在 Files 清单里再列它。
+
+**回归守卫**——让「它确实在类型检查里」这件事可验证：往 `vitest.config.ts` 里塞一个错的
+选项，`pnpm build` 必须**变红**：
+
+```
+vitest.config.ts(6,3): error TS2769: No overload matches this call.
+  Object literal may only specify known properties, and 'port' does not exist in type 'UserConfigExport'.
+[ELIFECYCLE] Command failed with exit code 2.
+```
+
+**如果它还是绿的**，说明这个文件又不在类型检查里了——那时该去查 `include` / `exclude`，
+而不是怀疑 vitest 的版本。
+
+> 也可以直接用 `pnpm exec vue-tsc --noEmit --listFiles` 看它到底检查了哪些文件，
+> 输出里应当有 `frontend/vitest.config.ts`。
 
 ---
 
@@ -792,22 +904,13 @@ git commit -m "feat(frontend): 深色主题 token，并用测试钉住设计文�
 - Test: `frontend/src/nav.spec.ts`
 - Test: `frontend/src/components/AppSidebar.spec.ts`
 - Test: `frontend/src/components/AppToolbar.spec.ts`
-- Create: `frontend/vitest.config.ts`
+- 复用（不重建）: `frontend/vitest.config.ts`——Task 2 Step 1 已建
 
-- [ ] **Step 1: 建 `frontend/vitest.config.ts`**
+- [ ] **Step 1: 确认 `frontend/vitest.config.ts` 已存在（不要重建）**
 
-```ts
-import { defineConfig } from 'vitest/config'
-import vue from '@vitejs/plugin-vue'
-
-export default defineConfig({
-  plugins: [vue()],
-  test: {
-    environment: 'jsdom',
-    include: ['src/**/*.spec.ts'],
-  },
-})
-```
+它由 **Task 2 Step 1** 建立（`environment: 'jsdom'` + `include: ['src/**/*.spec.ts']`），
+本任务的组件测试用的就是它。**不要在这里再写一份**——两份配置迟早会漂移，而它们的行为
+差异只在跑测试时才显形。
 
 > 这个文件已经被 Task 1 Step 3 的 `tsconfig.json` 收进 `include` 了——原先它归
 > `tsconfig.node.json` 管，而那个 config 已随 project references 一起删除。**这里不需要再动
@@ -1336,12 +1439,12 @@ pnpm test
 pnpm tauri dev
 ```
 
-Expected: 测试 `Tests  18 passed`（6 主题 + 5 导航 + 4 侧边栏 + 3 工具条）；窗口里出现左侧深色侧边栏（四个分组、「人体图」带「预留」角标、「我的」贴底带分隔线）+ 顶部工具条显示当前页名；点各分组能切页，工具条跟着变。
+Expected: 测试 `Tests  20 passed`（8 主题 + 5 导航 + 4 侧边栏 + 3 工具条）；窗口里出现左侧深色侧边栏（四个分组、「人体图」带「预留」角标、「我的」贴底带分隔线）+ 顶部工具条显示当前页名；点各分组能切页，工具条跟着变。
 
 - [ ] **Step 14: 提交**
 
 ```bash
-git add frontend/vitest.config.ts frontend/src
+git add frontend/src
 git commit -m "feat(frontend): 侧边栏分组与路由骨架，布局按设计文档冻结
 
 - 导航用数据驱动（nav.ts）：分组、顺序、钉底、预留标记都在一处，
@@ -2193,7 +2296,7 @@ import BackendStatusBar from './components/BackendStatusBar.vue'
 
 Run: `cd frontend && pnpm test`
 
-Expected: `Tests  24 passed`（6 主题 + 5 导航 + 4 侧边栏 + 3 工具条 + 6 API）
+Expected: `Tests  26 passed`（8 主题 + 5 导航 + 4 侧边栏 + 3 工具条 + 6 API）
 
 - [ ] **Step 8: 提交**
 
