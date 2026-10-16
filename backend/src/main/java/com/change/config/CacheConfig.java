@@ -26,7 +26,11 @@ public class CacheConfig {
 
     @Bean
     public CacheService cacheService(
-            @Value("${change.redis.enabled:true}") boolean enabled,
+            // 默认值与 application.yml 里的 ${CHANGE_REDIS_ENABLED:false} 保持一致：
+            // 这是分发给他人的客户端，大多数使用者的机器上没有 Redis。
+            // 两处默认值不一致的话，单独跑本类的测试或改配置来源时会走另一条分支，
+            // 而且是**静默**地走——正是本项目一路在消灭的那类失效。
+            @Value("${change.redis.enabled:false}") boolean enabled,
             @Value("${spring.data.redis.host:127.0.0.1}") String host,
             @Value("${spring.data.redis.port:6379}") int port,
             ObjectProvider<StringRedisTemplate> templateProvider) {

@@ -35,6 +35,8 @@ spring:
     locations: classpath:db/migration
   data:
     redis:
+      # ⚠️ 这只是**示例值**（作者内网的一台虚拟机），不是本项目的一部分。
+      # 想用自己的 Redis：改这里或设 change.redis.host。
       host: ${change.redis.host:192.168.100.128}
       port: ${change.redis.port:6379}
       timeout: 500ms
@@ -51,4 +53,7 @@ change:
   # 静默把库写进盘根不可接受，所以这里逐级兜底到 user.home
   data-dir: ${CHANGE_DATA_DIR:${APPDATA:${user.home}/AppData/Roaming}/changE}
   redis:
-    enabled: true
+    # 默认关闭：这是要分发给他人的客户端，绝大多数使用者的机器上没有 Redis。
+    # 开着的话每位朋友的首次启动都要为一次连不上的探测白等约 0.5 秒（实测值）。
+    # 想用自己的 Redis：设 change.redis.enabled=true，并改 spring.data.redis.host。
+    enabled: ${CHANGE_REDIS_ENABLED:false}
