@@ -50,7 +50,20 @@ logs/
 # ── PPT 任务派生物 ──
 ppt_tasks/*/render/*.pdf
 
+# 前端
+frontend/node_modules/
+frontend/dist/
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
+
 # ── _review/：单机调试产物，保留在磁盘但不入库 ──
 # 理由见计划「Task 10 质量审查轮记录」的 M4：里面的脚本硬编码本机路径
 # （E:\maven\...、C:\Users\alpaca\.jdks\...），换机器就废，不是可复跑验证。
 _review/
+
+# ── _healthcheck/：Task 8 真机验收的临时产物，同样不入库 ──
+# 里面有抓帧得到的 PNG、OCR 文本、变异测试的中间输出，以及几个硬编码本机
+# 路径的探针脚本（WebView2 调试端口、本机 JDK 路径）。它们是一次性取证工具，
+# 不是可复跑验证；**结论与实测数字已经全部落进计划文档的 Task 8 一节**，
+# 所以这里不留档不会丢信息。
+_healthcheck/

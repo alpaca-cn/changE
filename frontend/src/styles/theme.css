@@ -1,0 +1,98 @@
+/*
+ * changE 的视觉 token —— 唯一来源。
+ *
+ * 值来自设计文档「九、界面与视觉方向」。任何组件都不许写死颜色，
+ * 一律 var(--xxx)。theme.spec.ts 会把下面这几个值钉住，防止悄悄漂移。
+ *
+ * 只做深色主题：厚重感一半来自深色底与高对比，再维护一套浅色主题
+ * 会稀释这个方向，且测试成本翻倍（设计文档已封板）。
+ *
+ * **已知还没定义的 token 类别，现在刻意不加**：正文 400 字重、语义色
+ * （--danger / --warning）、肌肉色阶、比 --gap-xl 更大的一档留白、
+ * 把 --line 拆成 divider / border 两个。
+ *
+ * 加它们的时机是**消费它们的界面出现时**——那时才知道要几档、该叫什么名字。
+ * 提前定义就是一堆没人用的死值，而且每一个都要被 theme.spec.ts 钉住，
+ * 成本不是零。等真正需要的那一页写到那里再加。
+ */
+:root {
+  /* 背景三层 */
+  --bg: #0d0f12;
+  --panel: #14171b;
+  --line: #262b31;
+
+  /* 唯一强调色：肌肉高亮、主按钮、进度条都用它 */
+  --accent: #e0453a;
+
+  /* 文字 */
+  --text: #d8dee6;
+  /* --text-dim 与 --eyebrow 今天同值（#6b7480），但语义不同、不要合并：
+     --text-dim 是正文里的次要文字，--eyebrow 是全大写小标签。两者将来完全
+     可能分叉（比如小标签要更暗一点），合成一个会把这个可能性堵死，
+     而保留两个的成本是零。 */
+  --text-dim: #6b7480;
+  --eyebrow: #6b7480;
+
+  /* 排版 */
+  --title-weight: 800;
+  --title-tracking: -0.015em;
+  --eyebrow-tracking: 0.16em;
+
+  /* 形状：靠描边与间距分层，不用阴影 */
+  --radius: 5px;
+  --line-width: 1px;
+
+  /* 间距：留白放宽，用空白而不是卡片边框分组 */
+  --gap-xs: 4px;
+  --gap-sm: 8px;
+  --gap-md: 16px;
+  --gap-lg: 28px;
+  --gap-xl: 44px;
+
+  --font: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-weight: var(--title-weight);
+  letter-spacing: var(--title-tracking);
+  margin: 0;
+}
+
+/* 小标签：全大写 + 宽字距 + 灰 */
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: var(--eyebrow-tracking);
+  color: var(--eyebrow);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: var(--line-width) solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button:hover { border-color: var(--accent); }
+
+a { color: var(--accent); }
