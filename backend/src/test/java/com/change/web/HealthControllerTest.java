@@ -40,14 +40,23 @@ class HealthControllerTest {
         //
         // Task 11：CacheConfig 的占位实现（"disabled(placeholder)"）已换成真实现。
         // 这里**只断言前缀**，原因是完整描述含主机与端口
-        // （「缓存：未启用（连不上 192.168.100.128:6379）」），把它逐字写进测试
+        // （「缓存：未启用（连不上 <一台内网虚拟机>:6379）」），把它逐字写进测试
         // 等于把配置钉死在测试里：改 application.yml 或换一台 Redis 都会让测试无意义地红。
-        // 测试环境里 Redis 不可达（那台虚拟机常关），所以真实现必然走 NoOp 分支，
-        // 值必然以「缓存：未启用」开头。
+        //
+        // 注意本测试默认跑在 change.redis.enabled=false 下（分发给他人时的默认值），
+        // 所以这里断言的是「配置为关闭」那条描述。**「连不上时降级」那条路径
+        // 由 CacheDegradationTest 显式设 enabled=true 保留覆盖**——否则它就是零覆盖，
+        // 而「Redis 挂了不影响业务」正是 Task 11 的核心验收标准。
+        // 本测试因此也顺带守住另一件事：**健康端点不得泄漏内网地址**——
+        // enabled=false 时描述里没有任何主机名，所以下面那条 doesNotContain 是恒真的。
         //
         // 覆盖缺口来源：Task 10 审查发现原断言只查键名不查值（cache 改成任意串都能过）。
         // 现在改成查值，并且查的是**真实现**产出的值。
         assertThat(r.getBody()).contains("\"cache\":\"缓存：未启用");
+        // 默认配置下不得把任何内网主机与端口打给使用者（会随仓库分发出去）。
+        assertThat(r.getBody())
+                .as("健康端点在默认配置下不得泄漏内网拓扑")
+                .doesNotContain("192.168.").doesNotContain("10.").doesNotContain("172.16.");
     }
 
     @Test

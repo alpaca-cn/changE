@@ -192,6 +192,11 @@ public class ChangeApplication {
 
 - [x] **Step 3: 写 application.yml**
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对）。
+> 本轮分发默认值改动：`change.redis.enabled` 默认改为 `${CHANGE_REDIS_ENABLED:false}`
+> （分发给他人时默认关闭，理由见 `application.yml` 里的注释），
+> 并把 `spring.data.redis.host` 那行标注为「示例值——你自己的 Redis 地址」。
+
 ```yaml
 spring:
   application:
@@ -200,6 +205,15 @@ spring:
     # busy_timeout=5000：SQLite 默认 busy_timeout=0，写冲突会立刻失败；给 5 秒让单写者排队
     # foreign_keys=true：SQLite 默认 PRAGMA foreign_keys=0，且该开关是「每连接」的；
     # 迁移里大量 REFERENCES ... ON DELETE CASCADE 不开这一项就只是装饰（级联删除不发生）
+    # journal_mode=WAL：默认的 journal_mode=delete + synchronous=FULL 每次 commit 都要 fsync，
+    # 且写完之前读者被阻塞。本应用的写入形状是「逐组记训练、逐条记饮食」——小事务、高频次，
+    # 这个组合会把每次点击都卡在一次磁盘同步上。WAL 让写者与读者互不阻塞。
+    # 只能走 URL 参数：SQLite 在事务内拒绝切 WAL（cannot change into wal mode from within a
+    # transaction），而 Flyway 默认把迁移包在事务里，-- flyway:executeInTransaction=false 也无效
+    # （已实测），所以迁移脚本这条路无论怎么走都是错的。
+    # 注意参数名必须与 PRAGMA 名逐字一致：xerial 驱动会把无法识别的 URL 参数当成 PRAGMA 名
+    # 执行，拼错大小写（如 journalMode=WAL）不是静默忽略，而是直接 SQLITE_CANTOPEN 连不上库。
+    # 哨兵见 MigrationTest#connection_pragmas_are_effective。
     url: jdbc:sqlite:${change.data-dir:./target/data}/change.db?busy_timeout=5000&foreign_keys=true&journal_mode=WAL
     driver-class-name: org.sqlite.JDBC
     hikari:
@@ -207,12 +221,11 @@ spring:
       connection-timeout: 3000      # 别用默认 30s：单连接池被占满时要快速失败而不是挂住
       # 约定：池只有 1 条连接，禁止 REQUIRES_NEW（会自己等自己）
   jpa:
-    # 必须用自建方言，不能用 community 的 SQLiteDialect。
-    # 实测：community 方言把 Long→bigint、boolean→boolean、LocalDate→date，
-    # 而 V1–V4 里逐字写的是 INTEGER/REAL/TEXT，validate 会逐列报错、上下文起不来：
-    #   Schema-validation: wrong column type encountered in column [id] in table [exercise];
-    #   found [integer (Types#INTEGER)], but expecting [bigint (Types#BIGINT)]
-    # ChangeSqliteDialect 覆写 columnType() 把类型映射回 schema 的四个存储类。
+    # ChangeSqliteDialect 是 community SQLiteDialect 的子类，只改类型名映射：
+    # community 方言把 Long/boolean/LocalDate/LocalDateTime/Double 报成
+    # bigint/boolean/date/timestamp/double，而 V1–V4 里写的是 INTEGER/TEXT/REAL（SQLite
+    # 只有这四个存储类），ddl-auto=validate 会因此整片报「wrong column type」、上下文起不来。
+    # 详见该类的注释：为什么这条规则放在方言里而不是每个实体字段上。
     database-platform: com.change.config.ChangeSqliteDialect
     hibernate:
       ddl-auto: validate            # 建表交给 Flyway，Hibernate 只校验
@@ -222,6 +235,8 @@ spring:
     locations: classpath:db/migration
   data:
     redis:
+      # ⚠️ 这只是**示例值**（作者内网的一台虚拟机），不是本项目的一部分。
+      # 想用自己的 Redis：改这里或设 change.redis.host。
       host: ${change.redis.host:192.168.100.128}
       port: ${change.redis.port:6379}
       timeout: 500ms
@@ -231,14 +246,17 @@ spring:
 
 server:
   address: 127.0.0.1                # 无鉴权的后端只许本机访问；Tauri 壳也走 127.0.0.1
-  port: 0                           # 由系统分配；实际端口由 PortReporter 上报（Task 10）
+  port: 0                           # 由系统分配；实际端口由 PortReporter 上报（后续任务）
 
 change:
   # APPDATA 存在且为空串时 ${APPDATA}/changE 会解析成 /changE，在 Windows 上等于「当前盘:\changE」，
-  # 静默把库写进盘根不可接受，所以这里逐级兜底到 user.home（空串情形另由 DataDirectoryInitializer 兜底）
+  # 静默把库写进盘根不可接受，所以这里逐级兜底到 user.home
   data-dir: ${CHANGE_DATA_DIR:${APPDATA:${user.home}/AppData/Roaming}/changE}
   redis:
-    enabled: true
+    # 默认关闭：这是要分发给他人的客户端，绝大多数使用者的机器上没有 Redis。
+    # 开着的话每位朋友的首次启动都要为一次连不上的探测白等约 0.5 秒（实测值）。
+    # 想用自己的 Redis：设 change.redis.enabled=true，并改 spring.data.redis.host。
+    enabled: ${CHANGE_REDIS_ENABLED:false}
 ```
 
 **注意 `server.address`**：不写这一行时 Tomcat 绑的是 `::`（等价 `0.0.0.0`），而这个后端**没有任何鉴权**，Task 10 之后还会有能读写全部数据、能调模型 API 的 `/api/chat`。设计文档写的是「本地 HTTP，127.0.0.1 随机端口」，所以必须显式绑回环。
@@ -306,6 +324,8 @@ change.data-dir=${user.dir}/target/data
 
 上面这条断言是恒真的（初始化器先回写、后读取，见 Step 5 的说明），所以另建一个补盲区的测试类。它不起 Spring 上下文，手搓 `MockEnvironment` 直接对初始化器下断言：
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+
 ```java
 package com.change.config;
 
@@ -338,7 +358,8 @@ class DataDirectoryInitializerTest {
 
     /**
      * 与 spring.factories 注册的构造函数一致：真实类依赖 DeferredLogFactory，
-     * 就用 DeferredLog 直接顶上，不为迁就测试去改生产代码的构造函数。
+     * 就用 DeferredLog 直接顶上（DeferredLog 无参构造 + getLog(Class) 即可用），
+     * 不为迁就测试去改生产代码的构造函数。
      */
     private static DataDirectoryInitializer initializer() {
         return new DataDirectoryInitializer(clazz -> new DeferredLog());
@@ -352,11 +373,14 @@ class DataDirectoryInitializerTest {
 
         initializer().postProcessEnvironment(env, null);
 
-        // 断言「配置 → 绝对路径」的转换结果本身，而不是它是否可用。
+        // 这里断言的是「配置 → 绝对路径」的转换结果本身，而不是它是否可用。
         // 删掉回写那两行，或者去掉 .normalize()，这条立刻变红。
         assertThat(env.getProperty("change.data-dir"))
+                .as("相对路径必须被回写成同一个绝对路径（下游的数据源 URL 用的是这个值）")
                 .isEqualTo(Path.of(configured).toAbsolutePath().normalize().toString());
-        assertThat(Files.isDirectory(Path.of(env.getProperty("change.data-dir")))).isTrue();
+        assertThat(Files.isDirectory(Path.of(env.getProperty("change.data-dir"))))
+                .as("回写的同时目录必须已经建好（SQLite 不会建父目录）")
+                .isTrue();
     }
 
     @Test
@@ -370,26 +394,40 @@ class DataDirectoryInitializerTest {
         String previousUserHome = System.getProperty("user.home");
         System.setProperty("user.home", tempHome.toString());
         try {
+            String configured = "/changE";
             MockEnvironment env = new MockEnvironment();
-            env.setProperty("change.data-dir", "/changE");
+            env.setProperty("change.data-dir", configured);
 
             initializer().postProcessEnvironment(env, null);
 
             Path result = Path.of(env.getProperty("change.data-dir"));
-            Path rootLevelCandidate = Path.of("/changE").toAbsolutePath().normalize();
+            Path rootLevelCandidate = Path.of(configured).toAbsolutePath().normalize();
 
-            // 复现前提：这个输入解析后确实只剩「盘根 + 一层」，否则这条测试没在测兜底
-            assertThat(rootLevelCandidate.getNameCount()).isEqualTo(1);
+            // 复现前提：这个输入解析后确实只剩「盘根 + 一层」，否则这条测试就没有在测兜底。
+            assertThat(rootLevelCandidate.getNameCount())
+                    .as("复现前提：%s 应当解析成盘根下的一层目录", configured)
+                    .isEqualTo(1);
+
             assertThat(result)
                     .as("盘根下的单个目录必须被兜底掉，而不是落在盘根")
                     .isNotEqualTo(rootLevelCandidate);
-            assertThat(result.getNameCount()).isGreaterThan(1);
-            assertThat(result.startsWith(tempHome)).isTrue();
-            assertThat(Files.isDirectory(result)).isTrue();
-            assertThat(Files.exists(rootLevelCandidate)).isFalse();
+            assertThat(result.getNameCount())
+                    .as("兜底结果必须至少是盘根下两层（盘根 + 一层正是被拦的形状）")
+                    .isGreaterThan(1);
+            assertThat(result.startsWith(tempHome.toAbsolutePath().normalize()))
+                    .as("兜底应落在 user.home 下（本测试已把 user.home 指向临时目录）")
+                    .isTrue();
+            assertThat(Files.isDirectory(result)).as("兜底目录必须被创建").isTrue();
+            assertThat(Files.exists(rootLevelCandidate))
+                    .as("兜底生效时不应把目录建到盘根: %s", rootLevelCandidate)
+                    .isFalse();
         } finally {
-            System.setProperty("user.home", previousUserHome);
-            deleteRecursively(tempHome);            // 跑完清理临时 home
+            if (previousUserHome == null) {
+                System.clearProperty("user.home");
+            } else {
+                System.setProperty("user.home", previousUserHome);
+            }
+            deleteRecursively(tempHome);
         }
     }
 
@@ -399,10 +437,25 @@ class DataDirectoryInitializerTest {
         // 走 Spring 环境拿到的值一定已经是绝对路径，看不出默认值本身写的是什么。
         List<PropertySource<?>> sources = new YamlPropertySourceLoader()
                 .load("application.yml", new ClassPathResource("application.yml"));
-        Object raw = sources.get(0).getProperty("change.data-dir");
 
-        assertThat(raw).isNotNull();
-        assertThat(raw.toString()).doesNotStartWith("./").doesNotStartWith(".\\");
+        assertThat(sources).as("application.yml 必须能被解析出一个属性源").isNotEmpty();
+
+        Object raw = null;
+        for (PropertySource<?> source : sources) {
+            raw = source.getProperty("change.data-dir");
+            if (raw != null) {
+                break;
+            }
+        }
+
+        assertThat(raw)
+                .as("application.yml 里必须有 change.data-dir 的默认值")
+                .isNotNull();
+        String rawValue = raw.toString();
+        assertThat(rawValue)
+                .as("默认值不能是工作目录相对路径（./ 开头），否则换个工作目录就换一个库；实际值: %s", rawValue)
+                .doesNotStartWith("./")
+                .doesNotStartWith(".\\");
     }
 
     private static void deleteRecursively(Path root) throws Exception {
@@ -465,6 +518,9 @@ VALUES ('baseline', '2026-10-14T00:00:00');
 ```
 
 - [x] **Step 2: 写迁移测试**
+
+> ℹ️ **本 fence 是片段：Task 1 当时要写的那两条断言**，不是整个文件的最终快照。
+> 它后来被 Task 3 的修订取代：完整实现在 Task 3 的 `MigrationTest` fence 里（已与磁盘逐字同步）。
 
 ```java
 package com.change;
@@ -643,10 +699,25 @@ git commit -m "feat: 接通 SQLite 与 Flyway，加基线迁移与验证测试"
 > 实际文件第一行是 `DROP TABLE schema_probe;`（下面代码块的头部注释解释了理由），
 > 剪掉了它后面的内容，这里照抄时**不要漏掉那一行**。
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+
 ```sql
 -- V2: 训练域 6 张表。
 --
 -- 索引命名：唯一索引 ux_<表名全称>_<列>；普通索引 ix_<表名全称>_<列>；表名不缩写。
+--
+-- 为什么 workout_set 上**没有**单列索引 ix_workout_set_session_exercise：复合唯一索引
+-- ux_workout_set_session_exercise_index(session_exercise_id, set_index) 的**左前缀**就是
+-- session_exercise_id，任何「按 session_exercise_id 过滤」的查询都能直接用它，单列索引
+-- 零查询收益，只剩下每次写入多维护一棵 B 树、多占一份磁盘的代价。不要看到单列查询就
+-- 又把它加回来。
+-- 已用 EXPLAIN QUERY PLAN 实测（SQLite 3.50 驱动 / 3.53 库）：等值、IN、范围、按
+-- set_index 排序与分组、MAX(set_index) 六种形态全部落到 ux_..._index；其中两种（GROUP BY、
+-- MAX）走 COVERING INDEX——复合索引键含 set_index，不必回表，单列索引反而做不到。
+-- 唯一有差别的是一处成本估算：表里有数据且 ANALYZE 之后，「只有左列范围条件」的那次
+-- 计划会在两索引并存时选 ix_（代价估算 53 对 54），删掉后仍落在 ux_ 上、仍是 SEARCH，
+-- 代价 54——差别在一个估算单位，不是一次扫描形态的变化。
+-- 这条判断只能在现在下：迁移一旦发布就字节冻结，事后想补加索引要再写一条迁移。
 --
 -- 为什么这条规则要写死在文件头：SQLite 给索引另起一个名字再建一次**不会报错**，
 -- 只会静默多出一个功能重复的索引（写变慢、占用翻倍，而没有任何提示）。表名缩写在
@@ -772,8 +843,9 @@ CREATE TABLE workout_set (
     CHECK (target_weight IS NULL OR target_weight >= 0),
     CHECK (target_reps IS NULL OR target_reps >= 0)
 );
-CREATE INDEX ix_workout_set_session_exercise ON workout_set(session_exercise_id);
 -- 同一个动作下 set_index 必须唯一——否则上面那段语义冻结只是一句注释。
+-- 这条唯一索引**同时**是 session_exercise_id 的访问路径（左前缀），所以刻意不再单建
+-- 单列索引；理由与实测见文件头「为什么 workout_set 上没有单列索引」那段。
 CREATE UNIQUE INDEX ux_workout_set_session_exercise_index
     ON workout_set(session_exercise_id, set_index);
 ```
@@ -962,460 +1034,508 @@ CREATE INDEX ix_change_log_time ON change_log(changed_at);
 > `name_zh         TEXT    NOT NULL`），拿对齐后的字面量去 `contains` 必然失败。
 > 所以 DDL 片段断言一律先过 `collapseWhitespace(...)`，断言里写单空格的自然形式。
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+> 原稿这段代码在此后几轮的修复/审查中与真实源码脱节了——
+> 这正是「任务书与代码对同一段逻辑给出两个版本」的失效现场。
+
 ```java
-    package com.change;
+package com.change;
 
-    import org.junit.jupiter.api.Test;
-    import org.springframework.beans.factory.annotation.Autowired;
-    import org.springframework.boot.test.context.SpringBootTest;
-    import org.springframework.jdbc.core.JdbcTemplate;
+import com.change.calc.VolumeCalculator;
+import com.change.domain.WorkoutSet;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 
-    import java.util.LinkedHashMap;
-    import java.util.List;
-    import java.util.Map;
-    import java.util.Set;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
-    import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * 十五张业务表的结构快照。
+ *
+ * 为什么用一张「期望清单」而不是逐个断言表存在：逐个断言只能发现「少建了」，
+ * 发现不了「多建了」——多出来的表（比如 V1 的探针表没被清掉）会让下一个人以为
+ * 它是模型的一部分。containsExactlyInAnyOrderElementsOf 两侧都收口。
+ *
+ * 为什么这一轮要补列级 / 索引级 / 约束级三层快照：Task 3 的代码质量审查做了 8 处
+ * 破坏——去掉 NOT NULL、多一列、删掉部分唯一索引、删掉 CHECK、删掉外键——套件**依然
+ * 12/12 全绿**。当时只有 4 条断言，且都只问「某张表某几列在不在」，对约束、
+ * 索引、可空性完全不设防。而迁移一旦发布就不可再改（改 V1/V2/V3/V4 的任何一个字节都会
+ * 让跑过它的库抛 FlywayValidateException），所以现在这一版 schema 的守卫只能建在测试里。
+ *
+ * 三层各拦一类破坏：
+ * - 列快照（列清单 + NOT NULL 清单）拦「多一列 / 少一列 / NOT NULL 被拿掉」；
+ * - 索引快照（名字 + 唯一性 + 是否部分索引）拦「索引被删 / 被改名 / 唯一性被去掉」——
+ *   SQLite 对「另起一个名字再建一次」不报错，只会静默留下两个功能重复的索引；
+ * - 约束快照（sqlite_master.sql 里的关键片段）拦「CHECK / REFERENCES ... ON DELETE
+ *   CASCADE / DEFAULT 被删」——这些在 pragma 里问不出来（pragma 只报外键的目标表与动作，
+ *   报不出 CHECK 的内容），只有 DDL 原文里有。
+ *
+ * 注意约束快照断言的是 DDL 片段，不是「写入真的被拒」。两者都值得有，但只有前者能
+ * 精确指出「哪一条约束没了」；后者已经在验收里逐条实测过。
+ */
+@SpringBootTest
+class SchemaTest {
+
+    @Autowired
+    JdbcTemplate jdbc;
+
+    private static final Set<String> EXPECTED = Set.of(
+            "exercise", "workout_session", "session_exercise", "workout_set",
+            "muscle_group", "exercise_muscle",
+            "food", "food_portion", "meal", "meal_item",
+            "photo", "body_metric", "chat_session", "chat_message", "change_log");
+
+    @Test
+    void all_fifteen_tables_exist() {
+        // sqlite_% 排除的是 SQLite 自己维护的表（AUTOINCREMENT 会建 sqlite_sequence、
+        // ANALYZE 会建 sqlite_stat1）；flyway_schema_history 是迁移框架的历史表，
+        // 不属于业务模型。
+        // 这里刻意不排除 schema_probe：它若还在，这条断言就该红。
+        //
+        // 将来新增**内部**表时要同步更新 EXPECTED，否则这条「多建了也要红」的收口会先把
+        // 真正的业务表变化挡住，让人误以为只是内部表噪音。要补的只有**不以 sqlite_ 开头**
+        // 的那些：FTS5 的影子表（影子表名由虚拟表名派生，如 content= 指向的表，以及
+        // <表>_data / _idx / _content / _docsize / _config）不在本次排除之列，必须逐个写进
+        // EXPECTED；而 sqlite_stat1 / sqlite_sequence 已被上面的 NOT LIKE 排除，不必也不该
+        // 写进去——写了反而让「这份清单等于业务模型」这句话失真。
+        List<String> names = jdbc.queryForList(
+                "SELECT name FROM sqlite_master WHERE type='table' " +
+                "AND name NOT LIKE 'sqlite_%' AND name <> 'flyway_schema_history'", String.class);
+        assertThat(names).containsExactlyInAnyOrderElementsOf(EXPECTED);
+    }
+
+    @Test
+    void probe_table_was_dropped_by_v2() {
+        Integer n = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_probe'",
+                Integer.class);
+        assertThat(n)
+                .as("V2 的第一行应当 DROP 掉 V1 的探针表，让它不再留在用户的库里")
+                .isZero();
+    }
+
+    @Test
+    void meal_item_has_no_stored_calorie_column() {
+        // 这条是防回归：一旦有人「顺手」加了 kcal 列，测试立刻失败。
+        // 走 pragma_table_info 而不是 PRAGMA table_info：后者是「一行多列」的表函数，
+        // queryForList(..., String.class) 会对它抛 IncorrectResultSetColumnCountException
+        // （org.springframework.jdbc 下的类，与 IncorrectResultSizeDataAccessException 是
+        // 兄弟关系，instanceof 判不出来），断言就永远走不到 doesNotContain 那一行。
+        assertThat(columns("meal_item")).doesNotContain("kcal", "calories", "energy");
+    }
+
+    @Test
+    void workout_set_supports_timed_and_per_side() {
+        // 用 containsExactlyInAnyOrder 而不是 contains：contains 对「多出一列」恒绿，
+        // 而「多出一列没人察觉」正是本轮审查实测发生的破坏之一。
+        assertThat(columns("workout_set")).containsExactlyInAnyOrder(
+                "id", "session_exercise_id", "set_index", "set_type", "weight", "repetitions",
+                "duration_seconds", "per_side", "rir", "rest_seconds", "completed",
+                "target_weight", "target_reps");
+    }
+
+    // ------------------------------------------------------------------
+    // 第一层：列级快照
+    // ------------------------------------------------------------------
 
     /**
-     * 十五张业务表的结构快照。
+     * 列清单**逐表、按声明顺序**精确断言，外加每表的 NOT NULL 列清单。
      *
-     * 为什么用一张「期望清单」而不是逐个断言表存在：逐个断言只能发现「少建了」，
-     * 发现不了「多建了」——多出来的表（比如 V1 的探针表没被清掉）会让下一个人以为
-     * 它是模型的一部分。containsExactlyInAnyOrderElementsOf 两侧都收口。
-     *
-     * 为什么这一轮要补列级 / 索引级 / 约束级三层快照：Task 3 的代码质量审查做了 8 处
-     * 破坏——去掉 NOT NULL、多一列、删掉部分唯一索引、删掉 CHECK、删掉外键——套件**依然
-     * 12/12 全绿**。当时只有 4 条断言，且都只问「某张表某几列在不在」，对约束、
-     * 索引、可空性完全不设防。而迁移一旦发布就不可再改（改 V1/V2/V3/V4 的任何一个字节都会
-     * 让跑过它的库抛 FlywayValidateException），所以现在这一版 schema 的守卫只能建在测试里。
-     *
-     * 三层各拦一类破坏：
-     * - 列快照（列清单 + NOT NULL 清单）拦「多一列 / 少一列 / NOT NULL 被拿掉」；
-     * - 索引快照（名字 + 唯一性 + 是否部分索引）拦「索引被删 / 被改名 / 唯一性被去掉」——
-     *   SQLite 对「另起一个名字再建一次」不报错，只会静默留下两个功能重复的索引；
-     * - 约束快照（sqlite_master.sql 里的关键片段）拦「CHECK / REFERENCES ... ON DELETE
-     *   CASCADE / DEFAULT 被删」——这些在 pragma 里问不出来（pragma 只报外键的目标表与动作，
-     *   报不出 CHECK 的内容），只有 DDL 原文里有。
-     *
-     * 注意约束快照断言的是 DDL 片段，不是「写入真的被拒」。两者都值得有，但只有前者能
-     * 精确指出「哪一条约束没了」；后者已经在验收里逐条实测过。
+     * 顺序也算在内是有意的：pragma_table_info 按声明顺序返回，而列顺序是「一份迁移
+     * 建出来什么」的一部分，插入到中间的新列值得被看见（它往往意味着有人在原地改
+     * 一份已发布的迁移）。
      */
-    @SpringBootTest
-    class SchemaTest {
+    @Test
+    void column_snapshot_is_exact_for_all_fifteen_tables() {
+        Map<String, List<String>> expectedColumns = new LinkedHashMap<>();
+        expectedColumns.put("muscle_group", List.of(
+                "id", "name_zh", "name_en", "body_part", "region_ids",
+                "weekly_sets_min", "weekly_sets_max"));
+        expectedColumns.put("exercise", List.of(
+                "id", "name_en", "name_zh", "equipment", "is_compound", "default_unit",
+                "source_id", "note", "archived"));
+        expectedColumns.put("exercise_muscle", List.of(
+                "exercise_id", "muscle_group_id", "role"));
+        expectedColumns.put("workout_session", List.of(
+                "id", "session_date", "started_at", "ended_at", "title", "perceived_state",
+                "note", "source_routine_day_id"));
+        expectedColumns.put("session_exercise", List.of(
+                "id", "session_id", "exercise_id", "order_index", "note", "superset_group"));
+        expectedColumns.put("workout_set", List.of(
+                "id", "session_exercise_id", "set_index", "set_type", "weight", "repetitions",
+                "duration_seconds", "per_side", "rir", "rest_seconds", "completed",
+                "target_weight", "target_reps"));
+        expectedColumns.put("food", List.of(
+                "id", "name_zh", "name_en", "source", "kcal_per100", "protein_per100",
+                "carb_per100", "fat_per100", "fiber_per100", "sodium_per100"));
+        expectedColumns.put("food_portion", List.of(
+                "id", "food_id", "unit_name", "grams"));
+        expectedColumns.put("photo", List.of(
+                "id", "taken_on", "rel_path", "sha256", "width", "height", "kind", "note"));
+        expectedColumns.put("meal", List.of(
+                "id", "meal_date", "slot", "eaten_at", "note", "photo_id"));
+        expectedColumns.put("meal_item", List.of(
+                "id", "meal_id", "food_id", "order_index", "amount", "unit_name", "grams",
+                "origin"));
+        expectedColumns.put("body_metric", List.of(
+                "id", "measured_on", "metric_type", "value", "unit", "note"));
+        expectedColumns.put("chat_session", List.of(
+                "id", "title", "created_at"));
+        expectedColumns.put("chat_message", List.of(
+                "id", "session_id", "role", "content", "tool_calls", "created_at"));
+        expectedColumns.put("change_log", List.of(
+                "id", "changed_at", "origin", "action", "target_table", "target_id",
+                "before_json", "after_json", "chat_session_id", "undone"));
 
-        @Autowired
-        JdbcTemplate jdbc;
+        // 双侧收口：EXPECTED 与这里的键集合必须一致，少写一张表也会红。
+        assertThat(expectedColumns.keySet())
+                .as("列快照必须覆盖全部十五张表")
+                .containsExactlyInAnyOrderElementsOf(EXPECTED);
 
-        private static final Set<String> EXPECTED = Set.of(
-                "exercise", "workout_session", "session_exercise", "workout_set",
-                "muscle_group", "exercise_muscle",
-                "food", "food_portion", "meal", "meal_item",
-                "photo", "body_metric", "chat_session", "chat_message", "change_log");
-
-        @Test
-        void all_fifteen_tables_exist() {
-            // sqlite_% 排除的是 SQLite 自己维护的表（AUTOINCREMENT 会建 sqlite_sequence）；
-            // flyway_schema_history 是迁移框架的历史表，不属于业务模型。
-            // 这里刻意不排除 schema_probe：它若还在，这条断言就该红。
-            //
-            // 将来新增**内部**表（FTS5 全文检索的影子表如 *_data / *_idx / *_content /
-            // *_docsize / *_config、sqlite_stat1 等）时，必须同步更新本断言——否则这条
-            // 「多建了也要红」的收口会先把真正的业务表变化挡住，让人误以为只是影子表噪音。
-            List<String> names = jdbc.queryForList(
-                    "SELECT name FROM sqlite_master WHERE type='table' " +
-                    "AND name NOT LIKE 'sqlite_%' AND name <> 'flyway_schema_history'", String.class);
-            assertThat(names).containsExactlyInAnyOrderElementsOf(EXPECTED);
-        }
-
-        @Test
-        void probe_table_was_dropped_by_v2() {
-            Integer n = jdbc.queryForObject(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_probe'",
-                    Integer.class);
-            assertThat(n)
-                    .as("V2 的第一行应当 DROP 掉 V1 的探针表，让它不再留在用户的库里")
-                    .isZero();
-        }
-
-        @Test
-        void meal_item_has_no_stored_calorie_column() {
-            // 这条是防回归：一旦有人「顺手」加了 kcal 列，测试立刻失败。
-            // 走 pragma_table_info 而不是 PRAGMA table_info：后者是「一行多列」的表函数，
-            // queryForList(..., String.class) 会对它抛 IncorrectResultSetColumnCountException
-            // （org.springframework.jdbc 下的类，与 IncorrectResultSizeDataAccessException 是
-            // 兄弟关系，instanceof 判不出来），断言就永远走不到 doesNotContain 那一行。
-            assertThat(columns("meal_item")).doesNotContain("kcal", "calories", "energy");
-        }
-
-        @Test
-        void workout_set_supports_timed_and_per_side() {
-            // 用 containsExactlyInAnyOrder 而不是 contains：contains 对「多出一列」恒绿，
-            // 而「多出一列没人察觉」正是本轮审查实测发生的破坏之一。
-            assertThat(columns("workout_set")).containsExactlyInAnyOrder(
-                    "id", "session_exercise_id", "set_index", "set_type", "weight", "repetitions",
-                    "duration_seconds", "per_side", "rir", "rest_seconds", "completed",
-                    "target_weight", "target_reps");
-        }
-
-        // ------------------------------------------------------------------
-        // 第一层：列级快照
-        // ------------------------------------------------------------------
-
-        /**
-         * 列清单**逐表、按声明顺序**精确断言，外加每表的 NOT NULL 列清单。
-         *
-         * 顺序也算在内是有意的：pragma_table_info 按声明顺序返回，而列顺序是「一份迁移
-         * 建出来什么」的一部分，插入到中间的新列值得被看见（它往往意味着有人在原地改
-         * 一份已发布的迁移）。
-         */
-        @Test
-        void column_snapshot_is_exact_for_all_fifteen_tables() {
-            Map<String, List<String>> expectedColumns = new LinkedHashMap<>();
-            expectedColumns.put("muscle_group", List.of(
-                    "id", "name_zh", "name_en", "body_part", "region_ids",
-                    "weekly_sets_min", "weekly_sets_max"));
-            expectedColumns.put("exercise", List.of(
-                    "id", "name_en", "name_zh", "equipment", "is_compound", "default_unit",
-                    "source_id", "note", "archived"));
-            expectedColumns.put("exercise_muscle", List.of(
-                    "exercise_id", "muscle_group_id", "role"));
-            expectedColumns.put("workout_session", List.of(
-                    "id", "session_date", "started_at", "ended_at", "title", "perceived_state",
-                    "note", "source_routine_day_id"));
-            expectedColumns.put("session_exercise", List.of(
-                    "id", "session_id", "exercise_id", "order_index", "note", "superset_group"));
-            expectedColumns.put("workout_set", List.of(
-                    "id", "session_exercise_id", "set_index", "set_type", "weight", "repetitions",
-                    "duration_seconds", "per_side", "rir", "rest_seconds", "completed",
-                    "target_weight", "target_reps"));
-            expectedColumns.put("food", List.of(
-                    "id", "name_zh", "name_en", "source", "kcal_per100", "protein_per100",
-                    "carb_per100", "fat_per100", "fiber_per100", "sodium_per100"));
-            expectedColumns.put("food_portion", List.of(
-                    "id", "food_id", "unit_name", "grams"));
-            expectedColumns.put("photo", List.of(
-                    "id", "taken_on", "rel_path", "sha256", "width", "height", "kind", "note"));
-            expectedColumns.put("meal", List.of(
-                    "id", "meal_date", "slot", "eaten_at", "note", "photo_id"));
-            expectedColumns.put("meal_item", List.of(
-                    "id", "meal_id", "food_id", "order_index", "amount", "unit_name", "grams",
-                    "origin"));
-            expectedColumns.put("body_metric", List.of(
-                    "id", "measured_on", "metric_type", "value", "unit", "note"));
-            expectedColumns.put("chat_session", List.of(
-                    "id", "title", "created_at"));
-            expectedColumns.put("chat_message", List.of(
-                    "id", "session_id", "role", "content", "tool_calls", "created_at"));
-            expectedColumns.put("change_log", List.of(
-                    "id", "changed_at", "origin", "action", "target_table", "target_id",
-                    "before_json", "after_json", "chat_session_id", "undone"));
-
-            // 双侧收口：EXPECTED 与这里的键集合必须一致，少写一张表也会红。
-            assertThat(expectedColumns.keySet())
-                    .as("列快照必须覆盖全部十五张表")
-                    .containsExactlyInAnyOrderElementsOf(EXPECTED);
-
-            expectedColumns.forEach((table, columns) ->
-                    assertThat(columns(table))
-                            .as("表 %s 的列清单（多一列、少一列、改名、换序都会红）", table)
-                            .containsExactlyElementsOf(columns));
-        }
-
-        /**
-         * NOT NULL 清单。这是本轮审查第 1、6 条破坏的唯一守卫：去掉
-         * `muscle_group.name_zh` 或 `food.kcal_per100` 的 NOT NULL 之后，列清单纹丝不动。
-         */
-        @Test
-        void not_null_snapshot_is_exact_for_all_fifteen_tables() {
-            Map<String, List<String>> expectedNotNull = new LinkedHashMap<>();
-            expectedNotNull.put("muscle_group", List.of("name_zh", "name_en", "body_part"));
-            expectedNotNull.put("exercise", List.of("name_en", "is_compound", "default_unit", "archived"));
-            expectedNotNull.put("exercise_muscle", List.of("exercise_id", "muscle_group_id", "role"));
-            expectedNotNull.put("workout_session", List.of("session_date"));
-            expectedNotNull.put("session_exercise", List.of("session_id", "exercise_id", "order_index"));
-            expectedNotNull.put("workout_set", List.of(
-                    "session_exercise_id", "set_index", "set_type", "per_side", "completed"));
-            expectedNotNull.put("food", List.of(
-                    "name_zh", "source", "kcal_per100", "protein_per100", "carb_per100",
-                    "fat_per100", "fiber_per100", "sodium_per100"));
-            expectedNotNull.put("food_portion", List.of("food_id", "unit_name", "grams"));
-            expectedNotNull.put("photo", List.of("taken_on", "rel_path", "sha256", "kind"));
-            expectedNotNull.put("meal", List.of("meal_date", "slot"));
-            expectedNotNull.put("meal_item", List.of(
-                    "meal_id", "food_id", "order_index", "amount", "grams", "origin"));
-            expectedNotNull.put("body_metric", List.of("measured_on", "metric_type", "value", "unit"));
-            expectedNotNull.put("chat_session", List.of("created_at"));
-            expectedNotNull.put("chat_message", List.of("session_id", "role", "created_at"));
-            expectedNotNull.put("change_log", List.of(
-                    "changed_at", "origin", "action", "target_table", "target_id", "after_json",
-                    "undone"));
-
-            assertThat(expectedNotNull.keySet())
-                    .as("NOT NULL 快照必须覆盖全部十五张表")
-                    .containsExactlyInAnyOrderElementsOf(EXPECTED);
-
-            expectedNotNull.forEach((table, columns) ->
-                    assertThat(notNullColumns(table))
-                            .as("表 %s 的 NOT NULL 列（漏写 NOT NULL 在 SQLite 里等于静默可空）", table)
-                            .containsExactlyElementsOf(columns));
-        }
-
-        // ------------------------------------------------------------------
-        // 第二层：索引级快照
-        // ------------------------------------------------------------------
-
-        /**
-         * 业务索引的完整清单（名字 + 唯一性 + 是否部分索引）。sqlite_ 开头的自动索引
-         * （UNIQUE 约束 / 复合主键产生的）不算业务索引，不进这张表。
-         *
-         * 命名规则（与 V2 文件头同一句）：唯一索引 `ux_<表名全称>_<列>`，普通索引
-         * `ix_<表名全称>_<列>`，表名不缩写。这里把名字也钉死，是因为 SQLite 允许
-         * 同名索引以外的新名字静默重建——两个功能重复的索引不会报错，只会悄悄变慢。
-         */
-        @Test
-        void index_snapshot_names_and_uniqueness() {
-            Map<String, String> expected = new LinkedHashMap<>();
-            expected.put("ux_muscle_group_en", "UNIQUE");
-            expected.put("ux_exercise_source", "UNIQUE PARTIAL");
-            expected.put("ux_exercise_name_en", "UNIQUE");
-            expected.put("ix_exercise_name_zh", "NOT UNIQUE");
-            expected.put("ix_exercise_muscle_muscle_group", "NOT UNIQUE");
-            expected.put("ix_session_date", "NOT UNIQUE");
-            expected.put("ix_session_exercise_session", "NOT UNIQUE");
-            expected.put("ux_session_exercise_session_order", "UNIQUE");
-            expected.put("ix_workout_set_session_exercise", "NOT UNIQUE");
-            expected.put("ux_workout_set_session_exercise_index", "UNIQUE");
-            expected.put("ix_food_name_zh", "NOT UNIQUE");
-            expected.put("ux_food_portion", "UNIQUE");
-            expected.put("ux_photo_sha", "UNIQUE");
-            expected.put("ix_photo_kind_date", "NOT UNIQUE");
-            expected.put("ix_meal_date", "NOT UNIQUE");
-            expected.put("ix_meal_item_meal", "NOT UNIQUE");
-            expected.put("ix_body_metric_type_date", "NOT UNIQUE");
-            expected.put("ix_chat_message_session", "NOT UNIQUE");
-            expected.put("ix_change_log_target", "NOT UNIQUE");
-            expected.put("ix_change_log_time", "NOT UNIQUE");
-
-            assertThat(businessIndexes())
-                    .as("业务索引清单（名字 + 唯一性 + 是否部分索引，多一个少一个都要红）")
-                    .containsExactlyInAnyOrderEntriesOf(expected);
-        }
-
-        // ------------------------------------------------------------------
-        // 第三层：约束级快照（DDL 原文片段）
-        // ------------------------------------------------------------------
-
-        /**
-         * 每张表的 DDL 里必须出现的关键片段：CHECK / REFERENCES ... ON DELETE ... /
-         * NOT NULL / DEFAULT。
-         *
-         * 为什么读 sqlite_master.sql 而不是 pragma：CHECK 的内容在 pragma 里根本问不出来
-         * （PRAGMA table_info 只给非空标记与默认值），`REFERENCES` 的目标动作虽然能用
-         * pragma_foreign_key_list 读到，但读不出「这一列上到底写没写约束」。DDL 原文是
-         * 唯一能同时覆盖这几类的地方；对应地，断言必须写成**带尾随逗号或整行**的形式，
-         * 否则 `REFERENCES photo(id)` 会把 `REFERENCES photo(id) ON DELETE SET NULL`
-         * 也算通过——那正好丢掉我们要守的那个动作。
-         */
-        @Test
-        void constraint_snapshot_key_ddl_clauses() {
-            assertThat(ddlOf("muscle_group")).contains(
-                    collapseWhitespace("name_zh         TEXT    NOT NULL"));
-
-            // 部分唯一索引的定义体：只约束有外部来源的动作，手工动作可以重复。
-            // 名字层面的检查在 index_snapshot 里，这里确认「部分」这个语义没被丢掉
-            // （去掉 WHERE 就变成「手工动作也只能有一个」，那是另一种错）。
-            assertThat(indexDdl("ux_exercise_source"))
-                    .contains(collapseWhitespace("WHERE source_id IS NOT NULL"));
-
-            // 四个纯日期列的 GLOB 形状约束。少一个，那一路的等值查询就会在某天静默失效。
-            assertThat(ddlOf("workout_session")).contains(collapseWhitespace(
-                    "CHECK (session_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
-            assertThat(ddlOf("meal")).contains(collapseWhitespace(
-                    "CHECK (meal_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
-            assertThat(ddlOf("body_metric")).contains(collapseWhitespace(
-                    "CHECK (measured_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
-            assertThat(ddlOf("photo")).contains(collapseWhitespace(
-                    "CHECK (taken_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
-
-            // 真时间戳列**不该**被套上日期形状约束——它们本来就含时间。
-            assertThat(ddlOf("workout_session")).doesNotContain("CHECK (started_at");
-            assertThat(ddlOf("workout_session")).doesNotContain("CHECK (ended_at");
-            assertThat(ddlOf("meal")).doesNotContain("CHECK (eaten_at");
-            assertThat(ddlOf("chat_message")).doesNotContain("CHECK (created_at");
-            assertThat(ddlOf("change_log")).doesNotContain("CHECK (changed_at");
-
-            // 枚举 CHECK
-            assertThat(ddlOf("exercise_muscle")).contains(
-                    collapseWhitespace("CHECK (role IN ('primary', 'secondary'))"));
-            assertThat(ddlOf("workout_set")).contains(collapseWhitespace(
-                    "CHECK (set_type IN ('normal','warmup','dropset','myo','partial', "
-                            + "'forced','tut','iso','jump'))"));
-            assertThat(ddlOf("food")).contains(
-                    collapseWhitespace("CHECK (source IN ('manual','cn-food-table','agent','takeout'))"));
-            assertThat(ddlOf("meal")).contains(
-                    collapseWhitespace("CHECK (slot IN ('breakfast','lunch','dinner','snack'))"));
-            assertThat(ddlOf("meal_item")).contains(
-                    collapseWhitespace("CHECK (origin IN ('manual','photo','agent','takeout'))"));
-            assertThat(ddlOf("photo")).contains(
-                    collapseWhitespace("CHECK (kind IN ('food','body','other'))"));
-            assertThat(ddlOf("chat_message")).contains(
-                    collapseWhitespace("CHECK (role IN ('user','assistant','tool'))"));
-            assertThat(ddlOf("change_log")).contains(
-                    collapseWhitespace("CHECK (origin IN ('user','agent'))"));
-            assertThat(ddlOf("change_log")).contains(
-                    collapseWhitespace("CHECK (action IN ('insert','update'))"));
-            // 「一键回退」的守卫：action='update' 必须有 before 快照，否则这行永远回不去，
-            // 而 UI 只看 action 就会画出一个按下去无事可撤的「撤销」按钮。
-            assertThat(ddlOf("change_log")).contains(
-                    collapseWhitespace("CHECK (action <> 'update' OR before_json IS NOT NULL)"));
-
-            // workout_set 的数值合法性（刻意不加 NOT NULL：三空行是有意的状态）
-            assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (weight IS NULL OR weight >= 0)"));
-            assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (repetitions IS NULL OR repetitions >= 0)"));
-            assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (duration_seconds IS NULL OR duration_seconds > 0)"));
-            assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (target_weight IS NULL OR target_weight >= 0)"));
-            assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (target_reps IS NULL OR target_reps >= 0)"));
-
-            // 级联删除：少一个 REFERENCES ... ON DELETE CASCADE，删训练/删会话就会留下孤儿行，
-            // 而且**不会有任何报错**。尾随逗号是必须的，防止基础外键形式蒙混通过。
-            assertThat(ddlOf("exercise_muscle")).contains(collapseWhitespace(
-                    "exercise_id     INTEGER NOT NULL REFERENCES exercise(id) ON DELETE CASCADE"));
-            assertThat(ddlOf("exercise_muscle")).contains(collapseWhitespace(
-                    "muscle_group_id INTEGER NOT NULL REFERENCES muscle_group(id) ON DELETE CASCADE"));
-            assertThat(ddlOf("session_exercise")).contains(collapseWhitespace(
-                    "session_id    INTEGER NOT NULL REFERENCES workout_session(id) ON DELETE CASCADE"));
-            assertThat(ddlOf("workout_set")).contains(collapseWhitespace(
-                    "session_exercise_id INTEGER NOT NULL REFERENCES session_exercise(id) ON DELETE CASCADE"));
-            assertThat(ddlOf("food_portion")).contains(collapseWhitespace(
-                    "food_id   INTEGER NOT NULL REFERENCES food(id) ON DELETE CASCADE"));
-            assertThat(ddlOf("meal_item")).contains(collapseWhitespace(
-                    "meal_id      INTEGER NOT NULL REFERENCES meal(id) ON DELETE CASCADE"));
-            assertThat(ddlOf("chat_message")).contains(collapseWhitespace(
-                    "session_id    INTEGER NOT NULL REFERENCES chat_session(id) ON DELETE CASCADE"));
-
-            // 不级联的外键：动作与食物被引用时不允许连带删除，所以这里是裸 REFERENCES（带逗号）。
-            assertThat(ddlOf("session_exercise")).contains(collapseWhitespace(
-                    "exercise_id   INTEGER NOT NULL REFERENCES exercise(id),"));
-            assertThat(ddlOf("meal_item")).contains(collapseWhitespace(
-                    "food_id      INTEGER NOT NULL REFERENCES food(id),"));
-
-            // meal.photo_id：照片是餐的可选元数据，删照片只能清空这一格，绝不能删掉用餐记录。
-            assertThat(ddlOf("meal")).contains(
-                    collapseWhitespace("REFERENCES photo(id) ON DELETE SET NULL"));
-
-            // 营养值必须有默认 0 且非空：既非空又有默认，去掉哪一个都会让「只填了名字的食物」
-            // 在读取时炸掉或者悄悄变成 NULL 热量。
-            assertThat(ddlOf("food")).contains(collapseWhitespace("kcal_per100 REAL NOT NULL DEFAULT 0"));
-            assertThat(ddlOf("food")).contains(collapseWhitespace("protein_per100 REAL NOT NULL DEFAULT 0"));
-            assertThat(ddlOf("food")).contains(collapseWhitespace("carb_per100 REAL NOT NULL DEFAULT 0"));
-            assertThat(ddlOf("food")).contains(collapseWhitespace("fat_per100 REAL NOT NULL DEFAULT 0"));
-            assertThat(ddlOf("food")).contains(collapseWhitespace("fiber_per100 REAL NOT NULL DEFAULT 0"));
-            assertThat(ddlOf("food")).contains(collapseWhitespace("sodium_per100 REAL NOT NULL DEFAULT 0"));
-
-            // autoincrement：丢掉它，SQLite 会把删掉的最大 rowid 重新发出去，
-            // 于是「删掉第 7 条训练之后再建一条」会拿到 7，而 change_log 里还留着旧的 7。
-            // 十四张表都有单列 id 主键；exercise_muscle 是复合主键的关联表
-            // （PRIMARY KEY (exercise_id, muscle_group_id)），本来就没有 AUTOINCREMENT，
-            // 它由上面那条 DDL 断言里的 PRIMARY KEY 片段守着。
-            EXPECTED.stream()
-                    .filter(table -> !"exercise_muscle".equals(table))
-                    .forEach(table -> assertThat(ddlOf(table))
-                            .as("表 %s 的主键必须显式 AUTOINCREMENT", table)
-                            .contains(collapseWhitespace("INTEGER PRIMARY KEY AUTOINCREMENT")));
-            assertThat(ddlOf("exercise_muscle")).contains(
-                    collapseWhitespace("PRIMARY KEY (exercise_id, muscle_group_id)"));
-        }
-
-        /**
-         * 「Java 侧白名单 == DDL 侧白名单」的防漂移测试（Task 7 质量审查轮新增）。
-         *
-         * 上面那条只钉住了 **DB 侧**（`sqlite_master.sql` 里逐字的
-         * `CHECK (role IN ('primary', 'secondary'))`）。缺的是另一半：
-         * `VolumeCalculator.Entry` 的合法角色集是**另一份手写拷贝**，某一侧改了另一侧不会红。
-         * 这条把两份值集拉在一起逐项比对（含**顺序**——DDL 里写的就是
-         * `'primary', 'secondary'`），任何一侧改动都会失败。
-         */
-        @Test
-        void role_whitelist_matches_the_ddl() {
-            String ddl = ddlOf("exercise_muscle");
-
-            // 只取 role 那一条 CHECK 的 IN (...) 值集
-            Matcher m = Pattern.compile("role\\s+IN\\s*\\(([^)]*)\\)").matcher(ddl);
-            assertThat(m.find())
-                    .as("exercise_muscle 的 DDL 里应当有 role IN (...) 形式的 CHECK：%s", ddl)
-                    .isTrue();
-            List<String> fromDdl = new ArrayList<>();
-            Matcher v = Pattern.compile("'([^']*)'").matcher(m.group(1));
-            while (v.find()) {
-                fromDdl.add(v.group(1));
-            }
-
-            assertThat(fromDdl)
-                    .as("DDL 里的合法角色集")
-                    .isNotEmpty();
-            assertThat(VolumeCalculator.VALID_ROLES)
-                    .as("Java 侧 VALID_ROLES 必须与 exercise_muscle.role 的 CHECK 逐项一致")
-                    .containsExactlyElementsOf(fromDdl);
-        }
-
-        // ------------------------------------------------------------------
-        // 结构查询工具
-        // ------------------------------------------------------------------
-
-        /** 按声明顺序返回列名。用 pragma_table_info 表函数，不能用 PRAGMA table_info。 */
-        private List<String> columns(String table) {
-            return jdbc.queryForList("SELECT name FROM pragma_table_info('" + table + "')", String.class);
-        }
-
-        /** 按声明顺序返回非空列名（不含主键：pragma 的 notnull 对 INTEGER PRIMARY KEY 恒为 0）。 */
-        private List<String> notNullColumns(String table) {
-            return jdbc.queryForList(
-                    "SELECT name FROM pragma_table_info('" + table + "') WHERE \"notnull\" = 1",
-                    String.class);
-        }
-
-        /**
-         * 业务索引 -> "UNIQUE" / "NOT UNIQUE"（可加 " PARTIAL"）。sqlite_ 开头的自动索引
-         * 由 UNIQUE 约束与复合主键产生，不属于本迁移显式建的索引，不计入。
-         *
-         * `PRAGMA index_list` 是「一行多列」的表函数，按 SQLite 的规则加表名参数写成
-         * `pragma_index_list('表')` 就能在 FROM 里用。注意**不要**写 pragma_index_list_all：
-         * 实测该名字不存在（SQLite 3.53.1 报 `no such table: pragma_index_list_all`）。
-         */
-        private Map<String, String> businessIndexes() {
-            Map<String, String> out = new LinkedHashMap<>();
-            for (String table : EXPECTED) {
-                jdbc.query(
-                        "SELECT name, \"unique\", partial FROM pragma_index_list('" + table + "') "
-                                + "WHERE name NOT LIKE 'sqlite_%'",
-                        rs -> {
-                            while (rs.next()) {
-                                out.put(rs.getString("name"),
-                                        (rs.getInt("unique") == 1 ? "UNIQUE" : "NOT UNIQUE")
-                                                + (rs.getInt("partial") == 1 ? " PARTIAL" : ""));
-                            }
-                            return null;
-                        });
-            }
-            return out;
-        }
-
-        /** 建表 DDL 原文，空白折叠成单空格，便于断言跨行的 CHECK。 */
-        private String ddlOf(String table) {
-            return collapseWhitespace(jdbc.queryForObject(
-                    "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?", String.class, table));
-        }
-
-        private String indexDdl(String index) {
-            return collapseWhitespace(jdbc.queryForObject(
-                    "SELECT sql FROM sqlite_master WHERE type='index' AND name = ?", String.class, index));
-        }
-
-        private static String collapseWhitespace(String sql) {
-            return sql.replaceAll("\\s+", " ").trim();
-        }
+        expectedColumns.forEach((table, columns) ->
+                assertThat(columns(table))
+                        .as("表 %s 的列清单（多一列、少一列、改名、换序都会红）", table)
+                        .containsExactlyElementsOf(columns));
     }
+
+    /**
+     * NOT NULL 清单。这是本轮审查第 1、6 条破坏的唯一守卫：去掉
+     * `muscle_group.name_zh` 或 `food.kcal_per100` 的 NOT NULL 之后，列清单纹丝不动。
+     */
+    @Test
+    void not_null_snapshot_is_exact_for_all_fifteen_tables() {
+        Map<String, List<String>> expectedNotNull = new LinkedHashMap<>();
+        expectedNotNull.put("muscle_group", List.of("name_zh", "name_en", "body_part"));
+        expectedNotNull.put("exercise", List.of("name_en", "is_compound", "default_unit", "archived"));
+        expectedNotNull.put("exercise_muscle", List.of("exercise_id", "muscle_group_id", "role"));
+        expectedNotNull.put("workout_session", List.of("session_date"));
+        expectedNotNull.put("session_exercise", List.of("session_id", "exercise_id", "order_index"));
+        expectedNotNull.put("workout_set", List.of(
+                "session_exercise_id", "set_index", "set_type", "per_side", "completed"));
+        expectedNotNull.put("food", List.of(
+                "name_zh", "source", "kcal_per100", "protein_per100", "carb_per100",
+                "fat_per100", "fiber_per100", "sodium_per100"));
+        expectedNotNull.put("food_portion", List.of("food_id", "unit_name", "grams"));
+        expectedNotNull.put("photo", List.of("taken_on", "rel_path", "sha256", "kind"));
+        expectedNotNull.put("meal", List.of("meal_date", "slot"));
+        expectedNotNull.put("meal_item", List.of(
+                "meal_id", "food_id", "order_index", "amount", "grams", "origin"));
+        expectedNotNull.put("body_metric", List.of("measured_on", "metric_type", "value", "unit"));
+        expectedNotNull.put("chat_session", List.of("created_at"));
+        expectedNotNull.put("chat_message", List.of("session_id", "role", "created_at"));
+        expectedNotNull.put("change_log", List.of(
+                "changed_at", "origin", "action", "target_table", "target_id", "after_json",
+                "undone"));
+
+        assertThat(expectedNotNull.keySet())
+                .as("NOT NULL 快照必须覆盖全部十五张表")
+                .containsExactlyInAnyOrderElementsOf(EXPECTED);
+
+        expectedNotNull.forEach((table, columns) ->
+                assertThat(notNullColumns(table))
+                        .as("表 %s 的 NOT NULL 列（漏写 NOT NULL 在 SQLite 里等于静默可空）", table)
+                        .containsExactlyElementsOf(columns));
+    }
+
+    // ------------------------------------------------------------------
+    // 第二层：索引级快照
+    // ------------------------------------------------------------------
+
+    /**
+     * 业务索引的完整清单（名字 + 唯一性 + 是否部分索引）。sqlite_ 开头的自动索引
+     * （UNIQUE 约束 / 复合主键产生的）不算业务索引，不进这张表。
+     *
+     * 命名规则（与 V2 文件头同一句）：唯一索引 `ux_<表名全称>_<列>`，普通索引
+     * `ix_<表名全称>_<列>`，表名不缩写。这里把名字也钉死，是因为 SQLite 允许
+     * 同名索引以外的新名字静默重建——两个功能重复的索引不会报错，只会悄悄变慢。
+     */
+    @Test
+    void index_snapshot_names_and_uniqueness() {
+        Map<String, String> expected = new LinkedHashMap<>();
+        expected.put("ux_muscle_group_en", "UNIQUE");
+        expected.put("ux_exercise_source", "UNIQUE PARTIAL");
+        expected.put("ux_exercise_name_en", "UNIQUE");
+        expected.put("ix_exercise_name_zh", "NOT UNIQUE");
+        expected.put("ix_exercise_muscle_muscle_group", "NOT UNIQUE");
+        expected.put("ix_session_date", "NOT UNIQUE");
+        expected.put("ix_session_exercise_session", "NOT UNIQUE");
+        expected.put("ux_session_exercise_session_order", "UNIQUE");
+        // 这里**没有** ix_workout_set_session_exercise：它的访问路径由下面这条复合唯一
+        // 索引的左前缀提供，单列索引已按冗余删除。这条清单是双侧收口的，所以「又把它
+        // 加回来」同样会让本测试变红——冗余索引不会报错，只会悄悄变慢，只能靠这里挡。
+        expected.put("ux_workout_set_session_exercise_index", "UNIQUE");
+        expected.put("ix_food_name_zh", "NOT UNIQUE");
+        expected.put("ux_food_portion", "UNIQUE");
+        expected.put("ux_photo_sha", "UNIQUE");
+        expected.put("ix_photo_kind_date", "NOT UNIQUE");
+        expected.put("ix_meal_date", "NOT UNIQUE");
+        expected.put("ix_meal_item_meal", "NOT UNIQUE");
+        expected.put("ix_body_metric_type_date", "NOT UNIQUE");
+        expected.put("ix_chat_message_session", "NOT UNIQUE");
+        expected.put("ix_change_log_target", "NOT UNIQUE");
+        expected.put("ix_change_log_time", "NOT UNIQUE");
+
+        assertThat(businessIndexes())
+                .as("业务索引清单（名字 + 唯一性 + 是否部分索引，多一个少一个都要红）")
+                .containsExactlyInAnyOrderEntriesOf(expected);
+    }
+
+    // ------------------------------------------------------------------
+    // 第三层：约束级快照（DDL 原文片段）
+    // ------------------------------------------------------------------
+
+    /**
+     * 每张表的 DDL 里必须出现的关键片段：CHECK / REFERENCES ... ON DELETE ... /
+     * NOT NULL / DEFAULT。
+     *
+     * 为什么读 sqlite_master.sql 而不是 pragma：CHECK 的内容在 pragma 里根本问不出来
+     * （PRAGMA table_info 只给非空标记与默认值），`REFERENCES` 的目标动作虽然能用
+     * pragma_foreign_key_list 读到，但读不出「这一列上到底写没写约束」。DDL 原文是
+     * 唯一能同时覆盖这几类的地方；对应地，断言必须写成**带尾随逗号或整行**的形式，
+     * 否则 `REFERENCES photo(id)` 会把 `REFERENCES photo(id) ON DELETE SET NULL`
+     * 也算通过——那正好丢掉我们要守的那个动作。
+     */
+    @Test
+    void constraint_snapshot_key_ddl_clauses() {
+        assertThat(ddlOf("muscle_group")).contains(
+                collapseWhitespace("name_zh         TEXT    NOT NULL"));
+
+        // 部分唯一索引的定义体：只约束有外部来源的动作，手工动作可以重复。
+        // 名字层面的检查在 index_snapshot 里，这里确认「部分」这个语义没被丢掉
+        // （去掉 WHERE 就变成「手工动作也只能有一个」，那是另一种错）。
+        assertThat(indexDdl("ux_exercise_source"))
+                .contains(collapseWhitespace("WHERE source_id IS NOT NULL"));
+
+        // 四个纯日期列的 GLOB 形状约束。少一个，那一路的等值查询就会在某天静默失效。
+        assertThat(ddlOf("workout_session")).contains(collapseWhitespace(
+                "CHECK (session_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
+        assertThat(ddlOf("meal")).contains(collapseWhitespace(
+                "CHECK (meal_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
+        assertThat(ddlOf("body_metric")).contains(collapseWhitespace(
+                "CHECK (measured_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
+        assertThat(ddlOf("photo")).contains(collapseWhitespace(
+                "CHECK (taken_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')"));
+
+        // 真时间戳列**不该**被套上日期形状约束——它们本来就含时间。
+        assertThat(ddlOf("workout_session")).doesNotContain("CHECK (started_at");
+        assertThat(ddlOf("workout_session")).doesNotContain("CHECK (ended_at");
+        assertThat(ddlOf("meal")).doesNotContain("CHECK (eaten_at");
+        assertThat(ddlOf("chat_message")).doesNotContain("CHECK (created_at");
+        assertThat(ddlOf("change_log")).doesNotContain("CHECK (changed_at");
+
+        // 枚举 CHECK
+        assertThat(ddlOf("exercise_muscle")).contains(
+                collapseWhitespace("CHECK (role IN ('primary', 'secondary'))"));
+        assertThat(ddlOf("workout_set")).contains(collapseWhitespace(
+                "CHECK (set_type IN ('normal','warmup','dropset','myo','partial', "
+                        + "'forced','tut','iso','jump'))"));
+        assertThat(ddlOf("food")).contains(
+                collapseWhitespace("CHECK (source IN ('manual','cn-food-table','agent','takeout'))"));
+        assertThat(ddlOf("meal")).contains(
+                collapseWhitespace("CHECK (slot IN ('breakfast','lunch','dinner','snack'))"));
+        assertThat(ddlOf("meal_item")).contains(
+                collapseWhitespace("CHECK (origin IN ('manual','photo','agent','takeout'))"));
+        assertThat(ddlOf("photo")).contains(
+                collapseWhitespace("CHECK (kind IN ('food','body','other'))"));
+        assertThat(ddlOf("chat_message")).contains(
+                collapseWhitespace("CHECK (role IN ('user','assistant','tool'))"));
+        assertThat(ddlOf("change_log")).contains(
+                collapseWhitespace("CHECK (origin IN ('user','agent'))"));
+        assertThat(ddlOf("change_log")).contains(
+                collapseWhitespace("CHECK (action IN ('insert','update'))"));
+        // 「一键回退」的守卫：action='update' 必须有 before 快照，否则这行永远回不去，
+        // 而 UI 只看 action 就会画出一个按下去无事可撤的「撤销」按钮。
+        assertThat(ddlOf("change_log")).contains(
+                collapseWhitespace("CHECK (action <> 'update' OR before_json IS NOT NULL)"));
+
+        // workout_set 的数值合法性（刻意不加 NOT NULL：三空行是有意的状态）
+        assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (weight IS NULL OR weight >= 0)"));
+        assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (repetitions IS NULL OR repetitions >= 0)"));
+        assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (duration_seconds IS NULL OR duration_seconds > 0)"));
+        assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (target_weight IS NULL OR target_weight >= 0)"));
+        assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (target_reps IS NULL OR target_reps >= 0)"));
+
+        // 级联删除：少一个 REFERENCES ... ON DELETE CASCADE，删训练/删会话就会留下孤儿行，
+        // 而且**不会有任何报错**。尾随逗号是必须的，防止基础外键形式蒙混通过。
+        assertThat(ddlOf("exercise_muscle")).contains(collapseWhitespace(
+                "exercise_id     INTEGER NOT NULL REFERENCES exercise(id) ON DELETE CASCADE"));
+        assertThat(ddlOf("exercise_muscle")).contains(collapseWhitespace(
+                "muscle_group_id INTEGER NOT NULL REFERENCES muscle_group(id) ON DELETE CASCADE"));
+        assertThat(ddlOf("session_exercise")).contains(collapseWhitespace(
+                "session_id    INTEGER NOT NULL REFERENCES workout_session(id) ON DELETE CASCADE"));
+        assertThat(ddlOf("workout_set")).contains(collapseWhitespace(
+                "session_exercise_id INTEGER NOT NULL REFERENCES session_exercise(id) ON DELETE CASCADE"));
+        assertThat(ddlOf("food_portion")).contains(collapseWhitespace(
+                "food_id   INTEGER NOT NULL REFERENCES food(id) ON DELETE CASCADE"));
+        assertThat(ddlOf("meal_item")).contains(collapseWhitespace(
+                "meal_id      INTEGER NOT NULL REFERENCES meal(id) ON DELETE CASCADE"));
+        assertThat(ddlOf("chat_message")).contains(collapseWhitespace(
+                "session_id    INTEGER NOT NULL REFERENCES chat_session(id) ON DELETE CASCADE"));
+
+        // 不级联的外键：动作与食物被引用时不允许连带删除，所以这里是裸 REFERENCES（带逗号）。
+        assertThat(ddlOf("session_exercise")).contains(collapseWhitespace(
+                "exercise_id   INTEGER NOT NULL REFERENCES exercise(id),"));
+        assertThat(ddlOf("meal_item")).contains(collapseWhitespace(
+                "food_id      INTEGER NOT NULL REFERENCES food(id),"));
+
+        // meal.photo_id：照片是餐的可选元数据，删照片只能清空这一格，绝不能删掉用餐记录。
+        assertThat(ddlOf("meal")).contains(
+                collapseWhitespace("REFERENCES photo(id) ON DELETE SET NULL"));
+
+        // 营养值必须有默认 0 且非空：既非空又有默认，去掉哪一个都会让「只填了名字的食物」
+        // 在读取时炸掉或者悄悄变成 NULL 热量。
+        assertThat(ddlOf("food")).contains(collapseWhitespace("kcal_per100 REAL NOT NULL DEFAULT 0"));
+        assertThat(ddlOf("food")).contains(collapseWhitespace("protein_per100 REAL NOT NULL DEFAULT 0"));
+        assertThat(ddlOf("food")).contains(collapseWhitespace("carb_per100 REAL NOT NULL DEFAULT 0"));
+        assertThat(ddlOf("food")).contains(collapseWhitespace("fat_per100 REAL NOT NULL DEFAULT 0"));
+        assertThat(ddlOf("food")).contains(collapseWhitespace("fiber_per100 REAL NOT NULL DEFAULT 0"));
+        assertThat(ddlOf("food")).contains(collapseWhitespace("sodium_per100 REAL NOT NULL DEFAULT 0"));
+
+        // autoincrement：丢掉它，SQLite 会把删掉的最大 rowid 重新发出去，
+        // 于是「删掉第 7 条训练之后再建一条」会拿到 7，而 change_log 里还留着旧的 7。
+        // 十四张表都有单列 id 主键；exercise_muscle 是复合主键的关联表
+        // （PRIMARY KEY (exercise_id, muscle_group_id)），本来就没有 AUTOINCREMENT，
+        // 它由上面那条 DDL 断言里的 PRIMARY KEY 片段守着。
+        EXPECTED.stream()
+                .filter(table -> !"exercise_muscle".equals(table))
+                .forEach(table -> assertThat(ddlOf(table))
+                        .as("表 %s 的主键必须显式 AUTOINCREMENT", table)
+                        .contains(collapseWhitespace("INTEGER PRIMARY KEY AUTOINCREMENT")));
+        assertThat(ddlOf("exercise_muscle")).contains(
+                collapseWhitespace("PRIMARY KEY (exercise_id, muscle_group_id)"));
+    }
+
+    /**
+     * 「Java 侧白名单 == DDL 侧白名单」的防漂移测试，**参数化覆盖两处**。
+     *
+     * 上面那条只钉住了 **DB 侧**（`sqlite_master.sql` 里逐字的
+     * `CHECK (role IN ('primary', 'secondary'))`）。缺的是另一半：
+     * Java 侧的合法值集是**另一份手写拷贝**，某一侧改了另一侧不会红。
+     * 这条把两份值集拉在一起逐项比对（含**顺序**——DDL 里写的就是
+     * `'primary', 'secondary'`），任何一侧改动都会失败。
+     *
+     * <p><b>为什么从一条测试改成参数化。</b>`workout_set.set_type` 有同一类问题的更坏版本：
+     * 它的九个合法值此前只以**注释**形式手抄在 `WorkoutSet` 里，连拷贝都不是——
+     * 注释里的清单和 DDL 之间没有任何机械收口，DDL 加了第十种组类型，注释照样写着九种，
+     * 谁也不报错。现在两处都走同一套机制。
+     *
+     * <p>九处 `TEXT + CHECK (x IN (...))` 里，只有这两处有 Java 侧白名单；
+     * 其余七处（food.source / photo.kind / meal.slot / meal_item.origin /
+     * chat_message.role / change_log.origin / change_log.action）对应的表**连实体都没有**，
+     * 白名单无处安放。它们已记入计划文档的待办（不是遗忘）。
+     *
+     * <p>将来若合法值扩容（比如肌群角色加 `'stabilizer'`、组类型加 `'cluster'`），
+     * **两处都要改**：迁移里的 CHECK 与 Java 侧的常量。迁移一旦发布
+     * 就不能再原地改（见本类顶部的说明），所以那种扩容只能新加一份迁移去重建该列的约束。
+     */
+    @ParameterizedTest(name = "{1} 的白名单必须与 DDL 一致")
+    @MethodSource("enumWhitelistCases")
+    void java_whitelist_matches_the_ddl(String table, String column, List<String> javaValues) {
+        String ddl = ddlOf(table);
+
+        // 只取该列那一条 CHECK 的 IN (...) 值集。
+        // 列名用 Pattern.quote 而不是直接拼：DDL 原文来自 sqlite_master，
+        // 里面带下划线与其他正则元字符的列名（set_type、photo_id…）不该被当模式解释。
+        Matcher m = Pattern.compile(Pattern.quote(column) + "\\s+IN\\s*\\(([^)]*)\\)").matcher(ddl);
+        assertThat(m.find())
+                .as("%s 的 DDL 里应当有 %s IN (...) 形式的 CHECK：%s", table, column, ddl)
+                .isTrue();
+        List<String> fromDdl = new ArrayList<>();
+        Matcher v = Pattern.compile("'([^']*)'").matcher(m.group(1));
+        while (v.find()) {
+            fromDdl.add(v.group(1));
+        }
+
+        assertThat(fromDdl)
+                .as("%s.%s 在 DDL 里的合法值集", table, column)
+                .isNotEmpty();
+        assertThat(javaValues)
+                .as("Java 侧白名单必须与 %s.%s 的 CHECK 逐项一致（含顺序）", table, column)
+                .containsExactlyElementsOf(fromDdl);
+    }
+
+    /**
+     * 参数：表名 / 列名 / Java 侧常量。
+     *
+     * 值直接从常量取（`WorkoutSet.VALID_SET_TYPES`），不在这里再抄一份——
+     * 在这条防漂移测试里手抄一份值集，等于把它自身的失效模式复制进来。
+     */
+    private static Stream<Arguments> enumWhitelistCases() {
+        return Stream.of(
+                Arguments.of("exercise_muscle", "role", VolumeCalculator.VALID_ROLES),
+                Arguments.of("workout_set", "set_type", WorkoutSet.VALID_SET_TYPES));
+    }
+
+    // ------------------------------------------------------------------
+    // 结构查询工具
+    // ------------------------------------------------------------------
+
+    /** 按声明顺序返回列名。用 pragma_table_info 表函数，不能用 PRAGMA table_info。 */
+    private List<String> columns(String table) {
+        return jdbc.queryForList("SELECT name FROM pragma_table_info('" + table + "')", String.class);
+    }
+
+    /** 按声明顺序返回非空列名（不含主键：pragma 的 notnull 对 INTEGER PRIMARY KEY 恒为 0）。 */
+    private List<String> notNullColumns(String table) {
+        return jdbc.queryForList(
+                "SELECT name FROM pragma_table_info('" + table + "') WHERE \"notnull\" = 1",
+                String.class);
+    }
+
+    /**
+     * 业务索引 -> "UNIQUE" / "NOT UNIQUE"（可加 " PARTIAL"）。sqlite_ 开头的自动索引
+     * 由 UNIQUE 约束与复合主键产生，不属于本迁移显式建的索引，不计入。
+     *
+     * `PRAGMA index_list` 是「一行多列」的表函数，按 SQLite 的规则加表名参数写成
+     * `pragma_index_list('表')` 就能在 FROM 里用。注意**不要**写 pragma_index_list_all：
+     * 实测该名字不存在（SQLite 3.53.1 报 `no such table: pragma_index_list_all`）。
+     */
+    private Map<String, String> businessIndexes() {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (String table : EXPECTED) {
+            jdbc.query(
+                    "SELECT name, \"unique\", partial FROM pragma_index_list('" + table + "') "
+                            + "WHERE name NOT LIKE 'sqlite_%'",
+                    rs -> {
+                        while (rs.next()) {
+                            out.put(rs.getString("name"),
+                                    (rs.getInt("unique") == 1 ? "UNIQUE" : "NOT UNIQUE")
+                                            + (rs.getInt("partial") == 1 ? " PARTIAL" : ""));
+                        }
+                        return null;
+                    });
+        }
+        return out;
+    }
+
+    /** 建表 DDL 原文，空白折叠成单空格，便于断言跨行的 CHECK。 */
+    private String ddlOf(String table) {
+        return collapseWhitespace(jdbc.queryForObject(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?", String.class, table));
+    }
+
+    private String indexDdl(String index) {
+        return collapseWhitespace(jdbc.queryForObject(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name = ?", String.class, index));
+    }
+
+    private static String collapseWhitespace(String sql) {
+        return sql.replaceAll("\\s+", " ").trim();
+    }
+}
 ```
 
 - [x] **Step 5: 跑测试**
@@ -1434,6 +1554,9 @@ Task 7 质量审查轮又加了一条 `role_whitelist_matches_the_ddl`，8 → *
 V2 一旦 DROP 掉探针表，`MigrationTest` 里那条断言就**结构性地无法成立**：
 迁移在上下文启动时就跑完了，任何 `@Test` 方法都看不到这张表。它原本要守的是
 「V1 里那句 CREATE 不能消失或被改坏」，这件事只有读脚本原文才问得出来，所以改成：
+
+> ℹ️ **本 fence 是片段**：只有新增的那几个方法（整体缩进 4 格，便于阅读），
+> 不是 `MigrationTest.java` 的全文。全文同样在 Task 3 的 fence 里（已与磁盘逐字同步）。
 
 ```java
     @Test
@@ -1473,172 +1596,180 @@ V2 一旦 DROP 掉探针表，`MigrationTest` 里那条断言就**结构性地�
 > 什么」，**不能替代** Flyway 那条断言（它绕过了 `flyway_schema_history`、绕过了真实
 > 的迁移执行路径），注释里已写清。
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+> 原稿这段代码在此后几轮的修复/审查中与真实源码脱节了——
+> 这正是「任务书与代码对同一段逻辑给出两个版本」的失效现场。
+
 ```java
+package com.change;
 
-    package com.change;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.SingleConnectionDataSource;
+import org.springframework.jdbc.datasource.init.ScriptUtils;
 
-    import org.junit.jupiter.api.Test;
-    import org.springframework.beans.factory.annotation.Autowired;
-    import org.springframework.boot.test.context.SpringBootTest;
-    import org.springframework.core.io.ClassPathResource;
-    import org.springframework.jdbc.core.JdbcTemplate;
-    import org.springframework.jdbc.datasource.SingleConnectionDataSource;
-    import org.springframework.jdbc.datasource.init.ScriptUtils;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.DriverManager;
 
-    import java.nio.charset.StandardCharsets;
-    import java.sql.Connection;
-    import java.sql.DriverManager;
+import static org.assertj.core.api.Assertions.assertThat;
 
-    import static org.assertj.core.api.Assertions.assertThat;
+/**
+ * 迁移机制的哨兵。
+ *
+ * 为什么第一条断言「结构」而不是「有一行数据」：把 V1 的内容清空、只留注释，
+ * Flyway 照样会记一行 success=1——于是「数一行数据」式的断言仍然全绿，而 V1 其实
+ * 什么也没做。对一个用来证明「迁移机制可靠」的测试来说，这恰好是反例。
+ *
+ * 为什么从 Task 3 起这条改成读迁移脚本本身：V2 的第一行就是 DROP TABLE schema_probe，
+ * 迁移在上下文启动时就跑完，**任何**测试方法都看不到这张表了——继续断言「表在」
+ * 无论怎么写都必然红，而断言「表不在」只是把 SchemaTest 那条抄一遍。
+ * 想守住的其实还是同一件事：V1 里那句 CREATE 不能消失或被改坏。这件事只有读
+ * 脚本原文才问得出来，顺带还补上了原断言查不到的盲区——改 V1 只让「已经跑过 V1 的库」
+ * 报 checksum 失配，**全新的库照样跑得通**，所以光靠运行时断言拦不住这类改动。
+ *
+ * 本轮（Task 3 审查后）补了三条：
+ * - v1_script_still_produces_the_probe_table_it_is_known_for：把 V1 的脚本文本对一条
+ *   **内存**库执行一遍，再断言它真的建出那张表、列名与 AUTOINCREMENT / NOT NULL 都在。
+ *   这是对上面那条子串断言的收窄：子串断言问不出「脚本还能不能跑」，也问不出列级细节。
+ * - published_migrations_are_byte_frozen：把已发布版本的 checksum 钉死。
+ * - （原有的 PRAGMA 哨兵不变。）
+ */
+@SpringBootTest
+class MigrationTest {
+
+    @Autowired
+    JdbcTemplate jdbc;
+
+    @Test
+    void baseline_migration_still_defines_the_probe_table_it_is_known_for() {
+        // 读资源原文而不是数据库：schema_probe 已被 V2 删掉（见 SchemaTest 的对应断言）。
+        String v1 = readMigration("V1__baseline.sql");
+
+        // 空迁移、CREATE 被删掉 / 改名 / 拆成别的表，都会在这里变红。
+        assertThat(v1).contains("CREATE TABLE");
+        assertThat(v1).contains("schema_probe");
+        assertThat(v1).contains("INTEGER PRIMARY KEY AUTOINCREMENT");
+        assertThat(v1).contains("NOT NULL");
+
+        // 反过来说：V1 真的建了这张表，才轮得到 V2 去 DROP 它——V2 里那句
+        // DROP TABLE schema_probe（无 IF EXISTS）在空 schema 上必然报
+        // "no such table: schema_probe"，整个上下文起不来。这条链子本身就是
+        // V1 执行过的证据。
+    }
 
     /**
-     * 迁移机制的哨兵。
+     * 把 V1 的脚本文本对一条**内存** SQLite 连接执行一遍，然后断言列级细节。
      *
-     * 为什么第一条断言「结构」而不是「有一行数据」：把 V1 的内容清空、只留注释，
-     * Flyway 照样会记一行 success=1——于是「数一行数据」式的断言仍然全绿，而 V1 其实
-     * 什么也没做。对一个用来证明「迁移机制可靠」的测试来说，这恰好是反例。
+     * 为什么需要它：上面那条子串断言只看「文里有没有这几段字」，看不出脚本还能不能执行，
+     * 也看不出列类型 / 顺序 / 非空标记。审查正是据此指出它「丢掉了列级精确性」。
      *
-     * 为什么从 Task 3 起这条改成读迁移脚本本身：V2 的第一行就是 DROP TABLE schema_probe，
-     * 迁移在上下文启动时就跑完，**任何**测试方法都看不到这张表了——继续断言「表在」
-     * 无论怎么写都必然红，而断言「表不在」只是把 SchemaTest 那条抄一遍。
-     * 想守住的其实还是同一件事：V1 里那句 CREATE 不能消失或被改坏。这件事只有读
-     * 脚本原文才问得出来，顺带还补上了原断言查不到的盲区——改 V1 只让「已经跑过 V1 的库」
-     * 报 checksum 失配，**全新的库照样跑得通**，所以光靠运行时断言拦不住这类改动。
-     *
-     * 本轮（Task 3 审查后）补了三条：
-     * - v1_script_still_produces_the_probe_table_it_is_known_for：把 V1 的脚本文本对一条
-     *   **内存**库执行一遍，再断言它真的建出那张表、列名与 AUTOINCREMENT / NOT NULL 都在。
-     *   这是对上面那条子串断言的收窄：子串断言问不出「脚本还能不能跑」，也问不出列级细节。
-     * - published_migrations_are_byte_frozen：把已发布版本的 checksum 钉死。
-     * - （原有的 PRAGMA 哨兵不变。）
+     * 三个必须注意的点（都是实测踩出来的）：
+     * 1. `jdbc:sqlite::memory:` 是**一连接一库**：交给连接池（或每条语句各取一次连接）
+     *    就会拿到一个空库，`no such table: schema_probe`。所以这里手动
+     *    DriverManager.getConnection 并且全程只有这一条 Connection。
+     * 2. `PRAGMA table_info` 是表函数（一行多列），queryForList(..., String.class) 会对它抛
+     *    IncorrectResultSetColumnCountException；写成 `SELECT name FROM pragma_table_info(...)`。
+     * 3. 它验证的是「脚本文本能跑出什么」，**不能替代** Flyway 那条断言——它绕过了
+     *    flyway_schema_history、绕过了真实的迁移执行路径，也不检查 V1 是否真的被 Flyway
+     *    应用过。两条断言守的是不同的东西，删哪一条都会露出一个洞。
      */
-    @SpringBootTest
-    class MigrationTest {
+    @Test
+    void v1_script_still_produces_the_probe_table_it_is_known_for() throws Exception {
+        // 手动开连接、手动关：内存库随连接存在，不能交给连接池。
+        try (Connection memory = DriverManager.getConnection("jdbc:sqlite::memory:")) {
+            ScriptUtils.executeSqlScript(memory, new ClassPathResource("db/migration/V1__baseline.sql"));
 
-        @Autowired
-        JdbcTemplate jdbc;
+            // 包一层 SingleConnectionDataSource，让下面几条查询都走这一条 Connection
+            // （内存库是一连接一库，换一条连接就换一个空库）。
+            JdbcTemplate mem = new JdbcTemplate(new SingleConnectionDataSource(memory, true));
 
-        @Test
-        void baseline_migration_still_defines_the_probe_table_it_is_known_for() {
-            // 读资源原文而不是数据库：schema_probe 已被 V2 删掉（见 SchemaTest 的对应断言）。
-            String v1 = readMigration("V1__baseline.sql");
+            // 1) 列清单：少一列、改名、顺序变了都会红。
+            assertThat(mem.queryForList(
+                    "SELECT name FROM pragma_table_info('schema_probe')", String.class))
+                    .containsExactly("id", "note", "created_at");
 
-            // 空迁移、CREATE 被删掉 / 改名 / 拆成别的表，都会在这里变红。
-            assertThat(v1).contains("CREATE TABLE");
-            assertThat(v1).contains("schema_probe");
-            assertThat(v1).contains("INTEGER PRIMARY KEY AUTOINCREMENT");
-            assertThat(v1).contains("NOT NULL");
+            // 2) DDL 原文里的 AUTOINCREMENT 与列级 NOT NULL。
+            //    DDL 是按列对齐存的（`note       TEXT NOT NULL`），所以断言前先把空白折叠成
+            //    单空格：这样断言既不怕迁移被重新排版，又能真正问出「这一列上有没有 NOT NULL」。
+            String ddl = collapseWhitespace(mem.queryForObject(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='schema_probe'",
+                    String.class));
+            assertThat(ddl).contains("INTEGER PRIMARY KEY AUTOINCREMENT");
+            assertThat(ddl).contains("note TEXT NOT NULL,");
+            assertThat(ddl).contains("created_at TEXT NOT NULL");
 
-            // 反过来说：V1 真的建了这张表，才轮得到 V2 去 DROP 它——V2 里那句
-            // DROP TABLE schema_probe（无 IF EXISTS）在空 schema 上必然报
-            // "no such table: schema_probe"，整个上下文起不来。这条链子本身就是
-            // V1 执行过的证据。
-        }
-
-        /**
-         * 把 V1 的脚本文本对一条**内存** SQLite 连接执行一遍，然后断言列级细节。
-         *
-         * 为什么需要它：上面那条子串断言只看「文里有没有这几段字」，看不出脚本还能不能执行，
-         * 也看不出列类型 / 顺序 / 非空标记。审查正是据此指出它「丢掉了列级精确性」。
-         *
-         * 三个必须注意的点（都是实测踩出来的）：
-         * 1. `jdbc:sqlite::memory:` 是**一连接一库**：交给连接池（或每条语句各取一次连接）
-         *    就会拿到一个空库，`no such table: schema_probe`。所以这里手动
-         *    DriverManager.getConnection 并且全程只有这一条 Connection。
-         * 2. `PRAGMA table_info` 是表函数（一行多列），queryForList(..., String.class) 会对它抛
-         *    IncorrectResultSetColumnCountException；写成 `SELECT name FROM pragma_table_info(...)`。
-         * 3. 它验证的是「脚本文本能跑出什么」，**不能替代** Flyway 那条断言——它绕过了
-         *    flyway_schema_history、绕过了真实的迁移执行路径，也不检查 V1 是否真的被 Flyway
-         *    应用过。两条断言守的是不同的东西，删哪一条都会露出一个洞。
-         */
-        @Test
-        void v1_script_still_produces_the_probe_table_it_is_known_for() throws Exception {
-            // 手动开连接、手动关：内存库随连接存在，不能交给连接池。
-            try (Connection memory = DriverManager.getConnection("jdbc:sqlite::memory:")) {
-                ScriptUtils.executeSqlScript(memory, new ClassPathResource("db/migration/V1__baseline.sql"));
-
-                // 包一层 SingleConnectionDataSource，让下面几条查询都走这一条 Connection
-                // （内存库是一连接一库，换一条连接就换一个空库）。
-                JdbcTemplate mem = new JdbcTemplate(new SingleConnectionDataSource(memory, true));
-
-                // 1) 列清单：少一列、改名、顺序变了都会红。
-                assertThat(mem.queryForList(
-                        "SELECT name FROM pragma_table_info('schema_probe')", String.class))
-                        .containsExactly("id", "note", "created_at");
-
-                // 2) DDL 原文里的 AUTOINCREMENT 与列级 NOT NULL。
-                //    DDL 是按列对齐存的（`note       TEXT NOT NULL`），所以断言前先把空白折叠成
-                //    单空格：这样断言既不怕迁移被重新排版，又能真正问出「这一列上有没有 NOT NULL」。
-                String ddl = collapseWhitespace(mem.queryForObject(
-                        "SELECT sql FROM sqlite_master WHERE type='table' AND name='schema_probe'",
-                        String.class));
-                assertThat(ddl).contains("INTEGER PRIMARY KEY AUTOINCREMENT");
-                assertThat(ddl).contains("note TEXT NOT NULL,");
-                assertThat(ddl).contains("created_at TEXT NOT NULL");
-
-                // 3) 脚本里的那行数据也真的进去了（空脚本 / INSERT 被删掉会红）。
-                assertThat(mem.queryForObject("SELECT note FROM schema_probe", String.class))
-                        .isEqualTo("baseline");
-            }
-        }
-
-        /**
-         * 「已发布迁移不可变」这条纪律，此前只剩文档在守。
-         *
-         * 与 Flyway 自己的校验**不重复**：Flyway 只在「已经跑过该版本的库」上比 checksum，
-         * 而本地删掉 target 之后每次跑测试都是全新的库，checksum 校验根本不会被触发——
-         * 于是给 V1 加一行注释、或者把 V2 的某个 CHECK 删掉，套件照样全绿。
-         * 这里把 checksum 钉死在测试里，任何对 V1–V4 的编辑（哪怕只加一行注释）都会让它变红。
-         *
-         * checksum 是 Flyway 对迁移文件内容算出的 CRC32，必须从**实跑后的库**里读出来填，
-         * 不能猜。当前值对应 V1–V4 发布时的字节内容：
-         *   1:baseline / 2:training / 3:nutrition / 4:auxiliary。
-         *
-         * 版本号写死成 containsExactly（不是「前四个必须是」）：将来新增 V5 时这条会红，
-         * 那是**有意的**——新迁移一旦发布就该被一起冻结，加进来的同时也要确认它已发布。
-         */
-        @Test
-        void published_migrations_are_byte_frozen() {
-            assertThat(jdbc.queryForList(
-                    "SELECT version || ':' || checksum FROM flyway_schema_history ORDER BY installed_rank",
-                    String.class))
-                    .containsExactly("1:1904735359", "2:-962992177", "3:1207314981", "4:1460974919");
-        }
-
-        private String readMigration(String fileName) {
-            try (var in = new ClassPathResource("db/migration/" + fileName).getInputStream()) {
-                // 统一换行符：断言只关心内容，不该因为 checkout 的行尾设置而变红。
-                return new String(in.readAllBytes(), StandardCharsets.UTF_8).replace("\r\n", "\n");
-            } catch (Exception e) {
-                throw new IllegalStateException("读不到迁移脚本: " + fileName, e);
-            }
-        }
-
-        /** 把空白折叠成单空格：DDL 是按列对齐存的，断言片段不该因为排版而失配。 */
-        private static String collapseWhitespace(String sql) {
-            return sql.replaceAll("\\s+", " ").trim();
-        }
-
-        @Test
-        void flyway_history_has_v1() {
-            String desc = jdbc.queryForObject(
-                    "SELECT description FROM flyway_schema_history WHERE version = '1'", String.class);
-            assertThat(desc).isEqualTo("baseline");
-        }
-
-        @Test
-        void connection_pragmas_are_effective() {
-            // 这两个 PRAGMA 靠 JDBC URL 参数开启（迁移脚本里开不了：SQLite 在事务内
-            // 拒绝切 WAL）。它们一旦写错大小写，驱动会当成 PRAGMA 名执行并直接
-            // SQLITE_CANTOPEN，应用根本起不来——所以这条断言是必要的哨兵。
-            assertThat(queryPragma("foreign_keys")).isEqualTo("1");
-            assertThat(queryPragma("journal_mode")).isEqualTo("wal");
-        }
-
-        private String queryPragma(String name) {
-            return jdbc.queryForObject("PRAGMA " + name, String.class);
+            // 3) 脚本里的那行数据也真的进去了（空脚本 / INSERT 被删掉会红）。
+            assertThat(mem.queryForObject("SELECT note FROM schema_probe", String.class))
+                    .isEqualTo("baseline");
         }
     }
+
+    /**
+     * 「已发布迁移不可变」这条纪律，此前只剩文档在守。
+     *
+     * 与 Flyway 自己的校验**不重复**：Flyway 只在「已经跑过该版本的库」上比 checksum，
+     * 而本地删掉 target 之后每次跑测试都是全新的库，checksum 校验根本不会被触发——
+     * 于是给 V1 加一行注释、或者把 V2 的某个 CHECK 删掉，套件照样全绿。
+     * 这里把 checksum 钉死在测试里，任何对 V1–V4 的编辑（哪怕只加一行注释）都会让它变红。
+     *
+     * checksum 是 Flyway 对迁移文件内容算出的 CRC32，必须从**实跑后的库**里读出来填，
+     * 不能猜。当前值对应 V1–V4 发布时的字节内容：
+     *   1:baseline / 2:training / 3:nutrition / 4:auxiliary。
+     *
+     * V2 的 checksum 在「删除冗余索引 ix_workout_set_session_exercise」时更新过一次
+     * （-962992177 → 1428719958）。这正是这条断言存在意义的现场：V2 尚未分发，删除是
+     * 允许的，而**改动必须在这里显式确认一次**，不能悄悄发生。V1 / V3 / V4 的 checksum
+     * 没有变，说明那次改动只落在 V2 一个文件上。
+     *
+     * 版本号写死成 containsExactly（不是「前四个必须是」）：将来新增 V5 时这条会红，
+     * 那是**有意的**——新迁移一旦发布就该被一起冻结，加进来的同时也要确认它已发布。
+     */
+    @Test
+    void published_migrations_are_byte_frozen() {
+        assertThat(jdbc.queryForList(
+                "SELECT version || ':' || checksum FROM flyway_schema_history ORDER BY installed_rank",
+                String.class))
+                .containsExactly("1:1904735359", "2:1428719958", "3:1207314981", "4:1460974919");
+    }
+
+    private String readMigration(String fileName) {
+        try (var in = new ClassPathResource("db/migration/" + fileName).getInputStream()) {
+            // 统一换行符：断言只关心内容，不该因为 checkout 的行尾设置而变红。
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8).replace("\r\n", "\n");
+        } catch (Exception e) {
+            throw new IllegalStateException("读不到迁移脚本: " + fileName, e);
+        }
+    }
+
+    /** 把空白折叠成单空格：DDL 是按列对齐存的，断言片段不该因为排版而失配。 */
+    private static String collapseWhitespace(String sql) {
+        return sql.replaceAll("\\s+", " ").trim();
+    }
+
+    @Test
+    void flyway_history_has_v1() {
+        String desc = jdbc.queryForObject(
+                "SELECT description FROM flyway_schema_history WHERE version = '1'", String.class);
+        assertThat(desc).isEqualTo("baseline");
+    }
+
+    @Test
+    void connection_pragmas_are_effective() {
+        // 这两个 PRAGMA 靠 JDBC URL 参数开启（迁移脚本里开不了：SQLite 在事务内
+        // 拒绝切 WAL）。它们一旦写错大小写，驱动会当成 PRAGMA 名执行并直接
+        // SQLITE_CANTOPEN，应用根本起不来——所以这条断言是必要的哨兵。
+        assertThat(queryPragma("foreign_keys")).isEqualTo("1");
+        assertThat(queryPragma("journal_mode")).isEqualTo("wal");
+    }
+
+    private String queryPragma(String name) {
+        return jdbc.queryForObject("PRAGMA " + name, String.class);
+    }
+}
 ```
 
 - [x] **Step 6: 跑全量测试**
@@ -1813,83 +1944,173 @@ CREATE INDEX ix_food_name_zh ON food(name_zh);
 
 - [x] **Step 1: 写实体（四个）**
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+> 原稿这段代码在此后几轮的修复/审查中与真实源码脱节了——
+> 这正是「任务书与代码对同一段逻辑给出两个版本」的失效现场。
+
 ```java
 package com.change.domain;
 
 import jakarta.persistence.*;
 
+/**
+ * 动作字典：一个可被记录的动作（杠铃卧推、平板支撑……）。
+ *
+ * <p>库里的 name_en 带唯一索引 ux_exercise_name_en：同名动作必须挡在库外。两行同名会把
+ * 进步曲线拆成两条线、让周容量翻倍、把 PR 分成两个，而且事后合并要重挂所有
+ * session_exercise.exercise_id 并重算衍生指标。因此**任何往这张表插数据的地方
+ * （测试、导入、种子数据）都要保证 name_en 互不相同**。
+ *
+ * <p>source_id 是外部数据集的主键，约定必须带命名空间前缀（如
+ * {@code free-exercise-db:barbell-bench-press}）；手工录入的动作写 NULL。库里的唯一索引是
+ * 部分索引（{@code WHERE source_id IS NOT NULL}），**空串不等于 NULL**：写 "" 的动作在
+ * 第二次导入时撞唯一约束、整批回滚。所以「没有来源」只能表达成 null。
+ *
+ * <p>字段用 public（本项目的既定风格：实体只做数据载体，不加 getter/setter），
+ * 外键一律用 Long 存 id 而不是 @ManyToOne 关联——避免懒加载与 N+1。
+ */
 @Entity
 @Table(name = "exercise")
 public class Exercise {
+
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     public Long id;
 
+    /** 英文名。唯一（ux_exercise_name_en），不可为空。 */
     @Column(name = "name_en", nullable = false)
     public String nameEn;
 
     @Column(name = "name_zh")
     public String nameZh;
 
+    /** 器械，自由文本（barbell / dumbbell / bodyweight……）。 */
     public String equipment;
 
+    /** 是否复合动作。用来区分「深蹲」和「腿屈伸」，影响容量统计的口径。 */
     @Column(name = "is_compound", nullable = false)
     public boolean compound = false;
 
+    /** 默认单位，建表默认 'kg'。 */
     @Column(name = "default_unit", nullable = false)
     public String defaultUnit = "kg";
 
+    /** 外部来源主键，带命名空间前缀；手工动作必须 null，不要写空串。 */
     @Column(name = "source_id")
     public String sourceId;
 
     public String note;
 
+    /** 归档而不是删除：旧训练记录仍要能解析出这个动作的名字。 */
     @Column(nullable = false)
     public boolean archived = false;
 }
 ```
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+> 原稿这段代码在此后几轮的修复/审查中与真实源码脱节了——
+> 这正是「任务书与代码对同一段逻辑给出两个版本」的失效现场。
+
 ```java
 package com.change.domain;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+/**
+ * 一次训练（三层结构的最外层：训练 → 动作 → 组）。
+ *
+ * <p><b>sessionDate 必须是纯日期。</b>库里的 session_date 有形状 CHECK
+ * （{@code GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'}），写成完整时间戳会被数据库直接
+ * 拒绝。这条约束拦的不是脏数据而是静默失效：一旦库里存着 '2026-10-14T03:22:11'，
+ * {@code WHERE session_date = '2026-10-14'} 返回 0 行——不报错，只是永远查不到，
+ * 索引 ix_session_date 也用不上。所以这个字段刻意是 LocalDate 而不是 LocalDateTime。
+ *
+ * <p>startedAt / endedAt 相反，它们是真时间戳，本来就该含时间，库里没有形状 CHECK。
+ *
+ * <p>sourceRoutineDayId 为将来「计划驱动训练」预留，第一阶段不写。
+ */
 @Entity
 @Table(name = "workout_session")
 public class WorkoutSession {
+
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     public Long id;
 
+    /**
+     * 训练日期，纯日期（见类注释：写成时间戳会被 CHECK 拒绝）。
+     *
+     * <p>{@code @JdbcTypeCode(LOCAL_DATE)} 不是装饰，是必需的：默认映射走 JDBC 的
+     * {@code setDate()}，而 xerial 驱动的 {@code setDate} 按 {@code date_class} 参数
+     * （默认 integer）把日期存成**纪元毫秒**——实测写进去的是 {@code '1791907200000'}，
+     * 直接被 session_date 的 GLOB CHECK 拒绝。LOCAL_DATE 让 Hibernate 改用
+     * {@code setObject(LocalDate)} 绑定，驱动对 java.time 类型是原生支持的，
+     * 落库即 {@code '2026-10-14'}。读回与查询参数同理（所以按日期区间查得到）。
+     */
+    @JdbcTypeCode(SqlTypes.LOCAL_DATE)
     @Column(name = "session_date", nullable = false)
     public LocalDate sessionDate;
 
+    /**
+     * 开始时间，真时间戳。
+     *
+     * <p>同样要 {@code @JdbcTypeCode(LOCAL_DATE_TIME)}：默认映射走 JDBC 的
+     * {@code setTimestamp()}，xerial 驱动在默认 {@code date_class=integer} 下把它存成
+     * **纪元毫秒**（实测 {@code '1791977415000'}）——列类型是 TEXT、又没有形状 CHECK，
+     * 所以不会报错，只会静默变成一串谁也读不出含义的数字。LOCAL_DATE_TIME 改用
+     * {@code setObject(LocalDateTime)}，落库即 ISO-8601 的 {@code '2026-10-14T19:30:15'}，
+     * 与设计约定「时间戳用 TEXT + ISO-8601」一致，也能被 SQLite 的 date()/strftime() 直接吃。
+     */
+    @JdbcTypeCode(SqlTypes.LOCAL_DATE_TIME)
     @Column(name = "started_at")
     public LocalDateTime startedAt;
 
+    /** 结束时间。理由同 startedAt。 */
+    @JdbcTypeCode(SqlTypes.LOCAL_DATE_TIME)
     @Column(name = "ended_at")
     public LocalDateTime endedAt;
 
     public String title;
 
+    /** 主观状态：训练当天的体感（睡眠/疲劳等），自由文本。 */
     @Column(name = "perceived_state")
     public String perceivedState;
 
     public String note;
 
+    /** 预留：这次训练由哪个计划日生成。用 id 而不是关联，理由同 Exercise。 */
     @Column(name = "source_routine_day_id")
     public Long sourceRoutineDayId;
 }
 ```
+
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+> 原稿这段代码在此后几轮的修复/审查中与真实源码脱节了——
+> 这正是「任务书与代码对同一段逻辑给出两个版本」的失效现场。
 
 ```java
 package com.change.domain;
 
 import jakarta.persistence.*;
 
+/**
+ * 三层结构的中间层：一次训练里的一个动作（「今天胸日第 1 个动作是杠铃卧推」）。
+ *
+ * <p>外键用 Long 存 id（sessionId / exerciseId），不做 @ManyToOne 关联：这套结构的所有读取
+ * 都是「拿一次训练的 id 取它的动作、再按 id 取组」，显式 id 查询不会有懒加载和 N+1 的意外。
+ *
+ * <p>orderIndex 是「这个动作在本次训练里排第几」。库里有唯一索引
+ * ux_session_exercise_session_order(session_id, order_index)——同一次训练里两行同序没有意义，
+ * 重排时必须先挪开再落位（或整体重编号），不能直接覆盖。
+ *
+ * <p>supersetGroup 同值即超级组，NULL 表示不参与超级组。
+ */
 @Entity
 @Table(name = "session_exercise")
 public class SessionExercise {
+
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     public Long id;
 
@@ -1899,6 +2120,7 @@ public class SessionExercise {
     @Column(name = "exercise_id", nullable = false)
     public Long exerciseId;
 
+    /** 在本次训练里的排序位次，同一 session 内唯一。 */
     @Column(name = "order_index", nullable = false)
     public int orderIndex;
 
@@ -1909,27 +2131,77 @@ public class SessionExercise {
 }
 ```
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+> 原稿这段代码在此后几轮的修复/审查中与真实源码脱节了——
+> 这正是「任务书与代码对同一段逻辑给出两个版本」的失效现场。
+
 ```java
 package com.change.domain;
 
 import jakarta.persistence.*;
 
+import java.util.List;
+
+/**
+ * 三层结构的最内层：一个动作下的一组。
+ *
+ * <p><b>目标值与实际值同表。</b>weight / repetitions 是「实际做了多少」，
+ * targetWeight / targetReps 是「打算做多少」，两者刻意放在同一行：分开建表会让
+ * 「今天练得比计划重还是轻」变成一次跨表对齐。目标值也可以为空（没设目标的自由训练）。
+ *
+ * <p><b>setIndex 的语义已冻结：每个子组各占一个 setIndex，用 setType 区分性质。</b>
+ * 递减组的三段是 setIndex 0/1/2 + setType 'dropset'，而不是三段共用同一个 setIndex。
+ * 理由：setIndex 是「带出上次重量」的对齐键，两行同号会让对齐随机取到其中一行，而且取错
+ * 不会有任何报错。库里 ux_workout_set_session_exercise_index(session_exercise_id, set_index)
+ * 把这个语义钉死了。
+ *
+ * <p>weight / repetitions / durationSeconds 刻意可为空：三空的行是一个真实状态
+ * （「这组还没做/没记」），训练中界面靠增量保存逐字段补上。库里对应的 CHECK 是
+ * {@code IS NULL OR >= 0}（durationSeconds 是 {@code > 0}），所以空值放行、有值必须合法。
+ */
 @Entity
 @Table(name = "workout_set")
 public class WorkoutSet {
+
+    /**
+     * 合法的组类型。必须与 {@code V2__training.sql} 里 {@code workout_set.set_type}
+     * 的 {@code CHECK} 一致（DDL 原文：{@code set_type IN ('normal','warmup','dropset',
+     * 'myo','partial','forced','tut','iso','jump')}）。
+     *
+     * <p>与 {@link com.change.calc.VolumeCalculator#VALID_ROLES} 同一套路：把「Java 侧白名单」
+     * 提成常量，好让 {@code SchemaTest} 把它与 {@code sqlite_master.sql} 里抽出来的值集
+     * **逐项比对**（含顺序），任何一侧改了另一侧就红。
+     *
+     * <p>在此之前这张清单只以**注释**形式手抄在本类里（下面 {@link #setType} 那行），
+     * 注释与 DDL 之间没有任何机械收口——DDL 加了第十种组类型，注释照样写着九种。
+     *
+     * <p>用 {@link List} 而不是 {@code Set}：报错与文档要按声明顺序读，
+     * 而 {@code Set.of} 的迭代顺序按 JVM 运行随机。
+     */
+    public static final List<String> VALID_SET_TYPES = List.of(
+            "normal", "warmup", "dropset", "myo", "partial", "forced", "tut", "iso", "jump");
+
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     public Long id;
 
     @Column(name = "session_exercise_id", nullable = false)
     public Long sessionExerciseId;
 
+    /** 在本动作内的组序号，同一 session_exercise 内唯一（每个子组各占一个）。 */
     @Column(name = "set_index", nullable = false)
     public int setIndex;
 
+    /**
+     * 组类型。合法值见 {@link #VALID_SET_TYPES}（九种，库里有 CHECK 白名单）；
+     * 这里**不再手抄**那份清单——抄一份就多一份会过期的东西。
+     */
     @Column(name = "set_type", nullable = false)
     public String setType = "normal";
 
+    /** 实际重量。null = 没记（不是 0）。 */
     public Double weight;
+
+    /** 实际次数。与 durationSeconds 二选一。 */
     public Integer repetitions;
 
     /** 计时动作（平板支撑等）用秒数，与 repetitions 二选一。 */
@@ -1940,6 +2212,7 @@ public class WorkoutSet {
     @Column(name = "per_side", nullable = false)
     public boolean perSide = false;
 
+    /** 剩余次数（Reps In Reserve），主观强度。 */
     public Double rir;
 
     @Column(name = "rest_seconds")
@@ -1948,6 +2221,7 @@ public class WorkoutSet {
     @Column(nullable = false)
     public boolean completed = false;
 
+    /** 目标重量，与 weight 同行以便直接对比计划与实际。 */
     @Column(name = "target_weight")
     public Double targetWeight;
 
@@ -1958,6 +2232,10 @@ public class WorkoutSet {
 
 - [x] **Step 2: 写两个仓储**
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+> 原稿这段代码在此后几轮的修复/审查中与真实源码脱节了——
+> 这正是「任务书与代码对同一段逻辑给出两个版本」的失效现场。
+
 ```java
 package com.change.repo;
 
@@ -1965,11 +2243,25 @@ import com.change.domain.Exercise;
 import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 
+/**
+ * 动作字典的读写入口。
+ *
+ * <p>没有为 nameEn 加 findByNameEn：它有唯一索引，按名字取单个动作迟早会遇到
+ * 「名字有空格/大小写不同」的输入，那时应该走下面的模糊搜索让人选，而不是抛异常。
+ */
 public interface ExerciseRepo extends JpaRepository<Exercise, Long> {
+
+    /** 选动作时默认只看未归档的：归档的动作仍要能被旧记录解析出来，但不该出现在候选里。 */
     List<Exercise> findByArchivedFalse();
+
+    /** 中英文混合搜索。nameZh 用 Containing（区分大小写对中文无意义），nameEn 用 IgnoreCase。 */
     List<Exercise> findByNameZhContainingOrNameEnContainingIgnoreCase(String zh, String en);
 }
 ```
+
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+> 原稿这段代码在此后几轮的修复/审查中与真实源码脱节了——
+> 这正是「任务书与代码对同一段逻辑给出两个版本」的失效现场。
 
 ```java
 package com.change.repo;
@@ -1979,18 +2271,33 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.time.LocalDate;
 import java.util.List;
 
+/**
+ * 训练的读写入口。
+ *
+ * <p>两个查询方法都按 sessionDate 排序而不是按 id：日期是用户看到的分组维度，
+ * 而 id 顺序只在「同一天先后录入」时才与日期一致。库里 ix_session_date 覆盖这两个查询的过滤。
+ */
 public interface WorkoutSessionRepo extends JpaRepository<WorkoutSession, Long> {
+
+    /** 日期区间查询（含两端），最近的排前面。 */
     List<WorkoutSession> findBySessionDateBetweenOrderBySessionDateDesc(LocalDate from, LocalDate to);
+
+    /** 首页用：最近 5 次训练。 */
     List<WorkoutSession> findTop5ByOrderBySessionDateDesc();
 }
 ```
 
 - [x] **Step 3: 写集成测试**
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+> 原稿这段代码在此后几轮的修复/审查中与真实源码脱节了——
+> 这正是「任务书与代码对同一段逻辑给出两个版本」的失效现场。
+
 ```java
 package com.change.repo;
 
 import com.change.domain.*;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -2000,13 +2307,27 @@ import java.time.LocalDate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * 三层嵌套（训练 → 动作 → 组）在真实库上的落盘/读回验证。
+ *
+ * <p>为什么是 @SpringBootTest 而不是 @DataJpaTest：这里要验证的正是「实体映射与 Flyway 建出来的
+ * schema 是否一致」——ddl-auto=validate 会在上下文启动时校验，映射错了这一整个类根本起不来。
+ * @DataJpaTest 会换成内存库或自建 schema，就绕开了这一层。
+ *
+ * <p>@Transactional 让每条测试跑完回滚，测试之间不互相污染。
+ *
+ * <p>注意两条测试的动作名必须不同：exercise.name_en 上有唯一索引 ux_exercise_name_en。
+ */
 @SpringBootTest
 @Transactional
 class TrainingRepoTest {
 
-    @Autowired ExerciseRepo exercises;
-    @Autowired WorkoutSessionRepo sessions;
-    @Autowired jakarta.persistence.EntityManager em;
+    @Autowired
+    ExerciseRepo exercises;
+    @Autowired
+    WorkoutSessionRepo sessions;
+    @Autowired
+    EntityManager em;
 
     @Test
     void can_persist_a_full_three_level_session() {
@@ -2044,6 +2365,18 @@ class TrainingRepoTest {
         assertThat(back.weight).isEqualTo(60.0);
         assertThat(back.targetWeight).isEqualTo(60.0);   // 目标值与实际值同表
         assertThat(back.perSide).isFalse();
+
+        // 「日期列存成了什么形状」与「按日期查不查得到」是两件事：形状合法的值如果和查询
+        // 条件绑成的是两种字面量，WHERE 会安静地返回 0 行、不报错。这两条断言同时覆盖两者，
+        // 也顺带跑通仓储的两个日期查询（否则它们在本任务里是死代码）。
+        // 用 contains 而不是 hasSize(1)：断言的是「这一行查得到」，不依赖库里只有这一行。
+        LocalDate day = LocalDate.of(2026, 10, 14);
+        assertThat(sessions.findBySessionDateBetweenOrderBySessionDateDesc(day, day))
+                .extracting(ws -> ws.sessionDate)
+                .contains(day);
+        assertThat(sessions.findTop5ByOrderBySessionDateDesc())
+                .extracting(ws -> ws.sessionDate)
+                .contains(day);
     }
 
     @Test
@@ -2105,6 +2438,8 @@ git commit -m "feat: 训练域实体与仓储，覆盖三层嵌套与计时/每�
 - Test: `backend/src/test/java/com/change/calc/NutritionCalculatorTest.java`
 
 - [x] **Step 1: 写失败的测试**
+
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
 
 ```java
 package com.change.calc;
@@ -2245,6 +2580,24 @@ class NutritionCalculatorTest {
         // （Cannot invoke "com.change.calc.Nutrition.kcal()" because "n" is null），
         // 用 "null" 断言就恒真了——实测过，它拦不住「删掉校验」的变异。
     }
+
+    @Test
+    void sum_reports_overflow_as_an_overflow_not_as_a_single_field() {
+        // 两项各 1e308 求和得 Infinity（double 的上限约 1.8e308）。没有这条守卫时，
+        // 唯一拦下它的是 Nutrition 的紧凑构造器，报错落在 "kcal 必须是有限值" 这个
+        // **单字段**名上——而 kcal 这一项本身完全合法，真相是「合计溢出」。
+        // 断言「合计溢出」而不是字段名：这条测试守的正是「别把溢出归咎于某个字段」。
+        Nutrition large = new Nutrition(1e308, 1e308, 0, 0, 0, 0);
+        assertThatThrownBy(() -> NutritionCalculator.sum(List.of(large, large)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("合计溢出");
+
+        // 反过来说：大但可表示的和不能被误报为溢出——守卫若写成 `x > someLimit`
+        // 就会把合法输入也拦下。1e308 + 0 仍在 double 范围内。
+        assertThat(NutritionCalculator.sum(List.of(large, new Nutrition(0, 0, 0, 0, 0, 0))))
+                .as("合法的大值必须放行（注意 Round.to2 会把 1e308 饱和成 9.2e16，那是另一条既有行为）")
+                .isEqualTo(NutritionCalculator.sum(List.of(large)));
+    }
 }
 ```
 
@@ -2357,6 +2710,8 @@ final class Round {
 }
 ```
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+
 ```java
 package com.change.calc;
 
@@ -2388,11 +2743,11 @@ public final class NutritionCalculator {
             throw new IllegalArgumentException("grams 必须是有限值，实际为 " + grams);
         }
         if (grams < 0) {
-            throw new IllegalArgumentException("grams 不能为负: " + grams);
+            throw new IllegalArgumentException("grams 不能为负，实际为 " + grams);
         }
         if (grams > MAX_GRAMS) {
             throw new IllegalArgumentException(
-                    "grams 超出上限 " + MAX_GRAMS + ": " + grams);
+                    "grams 超出上限 " + MAX_GRAMS + "，实际为 " + grams);
         }
         double k = grams / 100.0;
         return new Nutrition(
@@ -2417,6 +2772,21 @@ public final class NutritionCalculator {
             Objects.requireNonNull(n, "items 不能含 null 元素");
             kcal += n.kcal(); p += n.protein(); c += n.carb();
             f += n.fat();     fi += n.fiber();   na += n.sodium();
+        }
+        // 溢出守卫必须在构造器**之前**：两项各 1.7e308 相加得 Infinity，
+        // 不作声地交给 Nutrition 的话，报错会落在 "kcal 必须是有限值" 这个**单字段**名上，
+        // 而真相是「合计溢出」——字段名把人指向错误的方向（去看某一项的数据，
+        // 而每一项其实都合法）。写成 !(x <= Double.MAX_VALUE) 而不是 Double.isFinite(x)，
+        // 理由与包内其他比较类守卫一致：NaN 与任何比较都返回 false，
+        // 用 isFinite 会把 NaN 也归到「溢出」这条消息上，而 NaN 是另一回事
+        // （它由 Nutrition 的构造器按字段点名，信息更准）。
+        if (!(kcal <= Double.MAX_VALUE) || !(p <= Double.MAX_VALUE)
+                || !(c <= Double.MAX_VALUE) || !(f <= Double.MAX_VALUE)
+                || !(fi <= Double.MAX_VALUE) || !(na <= Double.MAX_VALUE)) {
+            throw new IllegalArgumentException(
+                    "合计溢出：营养值之和超出 double 可表示范围，请检查输入（kcal=" + kcal
+                            + ", protein=" + p + ", carb=" + c + ", fat=" + f
+                            + ", fiber=" + fi + ", sodium=" + na + "）");
         }
         return new Nutrition(Round.to2(kcal), Round.to2(p), Round.to2(c),
                              Round.to2(f), Round.to2(fi), Round.to2(na));
@@ -2964,6 +3334,8 @@ Expected: 编译失败，`cannot find symbol: class PortionConverter`
 
 - [x] **Step 3: 写实现**
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+
 ```java
 package com.change.calc;
 
@@ -3035,7 +3407,7 @@ public final class PortionConverter {
         }
         // 对齐 schema：meal_item.amount 是 CHECK (amount > 0)，与 Unit.grams 的 grams <= 0 同一口径。
         if (amount <= 0) {
-            throw new IllegalArgumentException("amount 必须为正: " + amount);
+            throw new IllegalArgumentException("amount 必须为正，实际为 " + amount);
         }
         if (unit == null || unit.isBlank()) {
             return amount;
@@ -3052,7 +3424,8 @@ public final class PortionConverter {
             // 写成 !(grams <= MAX) 而不是 grams > MAX，是因为 NaN 与 > 比较恒为 false。
             // 本类已有的 NaN 处理用的是同一个套路。
             throw new IllegalArgumentException(
-                    "换算后的克数超出单次录入上限 " + NutritionCalculator.MAX_GRAMS + ": " + grams);
+                    "换算后的克数超出单次录入上限 " + NutritionCalculator.MAX_GRAMS
+                            + "，实际为 " + grams);
         }
         return grams;
     }
@@ -3444,23 +3817,29 @@ equal?                   = false
 | `未知的份量单位「碗半」`（**可用单位列表被整个删掉**） | **绿** ← 旧断言拦不住 | **红** ← 新断言抓住 |
 | `未知的份量单位「碗半」；该食物可用的单位: 勺`（列表是错的） | **绿** ← 旧断言也拦不住 | **红** ← 新断言抓住 |
 
-**修法（一行，本轮已落地）**：不是换成 `hasMessageContaining("勺")`——那只挡得住「列表被整个删掉」，
-挡不住「列表只剩一种」（`…可用的单位: 勺` 里同样有 `"勺"`）。改成断言**整段列表片段**：
+**修法（本轮已落地）**：不是换成 `hasMessageContaining("勺")`——那只挡得住「列表被整个删掉」，
+挡不住「列表只剩一种」（`…可用的单位: 勺` 里同样有 `"勺"`）。改成断言**整段列表片段**。下面这个 fence 是该断言**意图**的缩写（实际代码里拆成了两行，见下一个 fence）：
+
+> ℹ️ **这两个 fence 是从测试里摘出的片段**，不是整个文件的快照。
+> 原稿在断言行尾写了一句说明性注释（「整个列表片段」等），而磁盘上的
+> `PortionConverterTest.java` **并没有这句注释**——照拄会多出一行不存在的代码。
+> 为了让 fence 与磁盘逐字一致，注释已移到这里：第一条断言的意图是
+> 「锁住**整个列表片段**：M1/M2 双杀，还锁住内容与顺序」，第二条是「列表内容与顺序」。
 
 ```java
-.hasMessageContaining("可用的单位: 碗、勺")   // 整个列表片段：M1/M2 双杀，还锁住内容与顺序
+.hasMessageContaining("可用的单位: 碗、勺")
 ```
 
 `index` 用 `LinkedHashMap`、`List.of` 顺序固定，所以消息是**确定的**，可以这样逐字锁。
 两个缺陷变体（M1 删掉整段列表、M2 只留 `勺`）实测**在新断言下都变红**，正确实现（M0）绿。
 
-**⚠️ 但这一版整段断言本身有个坏味道（Minor-4b，本轮已改）**：`"可用的单位: "` 里那段
+**⚠️ 但上面那个写法本身有个坏味道（Minor-4b，本轮已改）**：`"可用的单位: "` 里那段
 「全角冒号 + 空格」与实现里的拼接文本**逐字相同**——**改一个空格两边一起红**，测试与实现措辞串在一起。
 本轮拆成两条：
 
 ```java
 .hasMessageContaining("可用的单位")
-.hasMessageContaining("碗、勺");   // 列表内容与顺序
+.hasMessageContaining("碗、勺");
 ```
 
 **拆完必须重测检测力**（否则可能拆成一个恒真的组合），实测见 D 的变体表：
@@ -3764,6 +4143,8 @@ Expected: 编译失败，`cannot find symbol: class VolumeCalculator`
 > 下面这段与 `backend/src/main/java/com/change/calc/VolumeCalculator.java` **逐字一致**。
 > 本轮那处设计改动的理由、以及三种 unbox 兜底的失效，见文末「规格评审轮记录」第 1 节。
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+
 ```java
 package com.change.calc;
 
@@ -3791,8 +4172,9 @@ public final class VolumeCalculator {
      * 的 {@code CHECK} 一致（DDL 原文：{@code role IN ('primary', 'secondary')}）。
      *
      * <p>抽成常量是为了让「Java 侧白名单」与「DDL 侧白名单」两侧**互相收口**：
-     * {@code SchemaTest.role_whitelist_matches_the_ddl} 会把这里的值集与
-     * {@code sqlite_master.sql} 里抽出来的值集逐项比对，任何一侧改了另一侧就红。
+     * {@code SchemaTest.java_whitelist_matches_the_ddl}（参数化用例，同时覆盖
+     * {@code exercise_muscle.role} 与 {@code workout_set.set_type}）会把这里的值集与
+     * {@code sqlite_master.sql} 里抽出来的值集逐项比对（含顺序），任何一侧改了另一侧就红。
      * 构造器与 {@link #accumulate} 的 {@code switch} 都引用它，所以不存在
      * 「常量改了但校验没跟着改」这种中间态。
      */
@@ -3937,16 +4319,18 @@ public final class VolumeCalculator {
         if (!(sets >= 0)) {
             // 用 !(sets >= 0) 而不是 sets < 0：NaN 与任何比较都返回 false，
             // 所以 NaN 会绕过 sets < 0，一路落到最后的 return IN_RANGE——
-            // 给出「达标」这个最危险的错答案。包内另三个数值入口都用了同一个套路。
+            // 给出「达标」这个最危险的错答案。包内另四个数值入口
+            // （forGrams / sum / toGrams / epley）都用了同一个套路。
+            // 这里曾经真的漏过：classify(NaN, 10, 20) 返回 IN_RANGE（见 package-info 约定三）。
             throw new IllegalArgumentException(
                     "sets 必须是有限且非负的组数，实际为 " + sets);
         }
         if (min < 0) {
-            throw new IllegalArgumentException("区间下限不能为负: " + min);
+            throw new IllegalArgumentException("区间下限不能为负，实际为 " + min);
         }
         if (max < min) {
             throw new IllegalArgumentException(
-                    "区间上限不能小于下限: min=" + min + ", max=" + max);
+                    "区间上限不能小于下限，实际为 min=" + min + ", max=" + max);
         }
         if (sets <= 0) return Status.UNTRAINED;
         if (sets < min) return Status.BELOW;
@@ -4483,6 +4867,8 @@ Expected: 编译失败。**注意本机 JDK 是中文 locale，实际输出是�
 
 - [x] **Step 3: 写实现**
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+
 ```java
 package com.change.calc;
 
@@ -4565,11 +4951,11 @@ public final class OneRepMax {
      */
     public static double epley(double weight, int reps) {
         if (reps < 1) {
-            throw new IllegalArgumentException("reps 必须 >= 1: " + reps);
+            throw new IllegalArgumentException("reps 必须 >= 1，实际为 " + reps);
         }
         if (reps > MAX_REPS) {
             throw new IllegalArgumentException(
-                    "reps 超过 " + MAX_REPS + " 时 Epley 估算不可靠: " + reps);
+                    "reps 超过 " + MAX_REPS + " 时 Epley 估算不可靠，实际为 " + reps);
         }
         if (!Double.isFinite(weight)) {
             // 排在 weight < 0 之前：NaN 与任何比较都返回 false，会绕过 `weight < 0`，
@@ -4577,7 +4963,7 @@ public final class OneRepMax {
             throw new IllegalArgumentException("weight 必须是有限值，实际为 " + weight);
         }
         if (weight < 0) {
-            throw new IllegalArgumentException("weight 不能为负: " + weight);
+            throw new IllegalArgumentException("weight 不能为负，实际为 " + weight);
         }
         if (reps == 1) {
             // 1RM 的定义就是「一组只能做一次的最大重量」，reps=1 不需要外推。
@@ -4981,6 +5367,8 @@ M05 本身是刻意设计的反证对照，**保留不动**。
 
 - [x] **Step 1: 写失败的测试**
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+
 ```java
 package com.change.service;
 
@@ -5156,7 +5544,7 @@ class ChangeLogServiceTest {
         assertThatThrownBy(() -> logs.undo(logId))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("kcal_per100 = 1, name_zh")
-                .hasMessageContaining("可回退写入的列");
+                .hasMessageContaining("可记录的列");
     }
 
     @Test
@@ -5322,6 +5710,28 @@ class ChangeLogServiceTest {
     }
 
     @Test
+    void after_snapshot_keys_are_validated_like_before() {
+        // 收口不能只做一半：before 的键在 undo 里逐列校验，after 的键此前完全不校验。
+        // after_json 至今没有读路径，所以写错了永远不会被发现。
+        long id = insertFood("测试食物K", 1100);
+
+        assertThatThrownBy(() -> logs.recordInsert("food", id,
+                Map.of("name_zh_typo", "x"), "agent", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("name_zh_typo");
+
+        // 主键别名同样要拒（与 undo 对 before 的口径一致）
+        assertThatThrownBy(() -> logs.recordInsert("food", id,
+                Map.of("rowid", 7L), "agent", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("rowid");
+
+        // 正常键不受影响
+        assertThat(logs.recordInsert("food", id, Map.of("name_zh", "测试食物K"), "agent", null))
+                .isPositive();
+    }
+
+    @Test
     void undo_of_an_unknown_log_id_is_rejected() {
         assertThatThrownBy(() -> logs.undo(999_999L))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -5359,6 +5769,10 @@ Expected: 编译失败，`cannot find symbol: class ChangeLogService`
 > 「首次运行必然编译失败（`ChangeLogService` 还不存在）」这一事实不变。原始输出见 6.1。
 
 - [x] **Step 3: 写实现**
+
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
+> 本轮又补上了 `write()` 对 `after` 键的校验（与 `undo` 对 `before` 对称），
+> 并把两处报错措辞统一为「不是 <表> 上可记录的列」。
 
 ```java
 package com.change.service;
@@ -5471,6 +5885,17 @@ public class ChangeLogService {
             // 于是库里留下一行「看起来合法、语义为空」的记录。
             throw new IllegalArgumentException("after 快照不能为空");
         }
+        // 与 undo 对 before 的校验对称：after 的键也必须是该表上真实存在、
+        // 且不是主键的列。不校验的话，拼写错误/多余键/主键别名会被原样写进
+        // after_json 并记一条成功的日志——而 after_json 至今没有读路径，
+        // 写错了永远不会被发现（本项目一路在消灭的「静默失效」）。
+        for (String column : after.keySet()) {
+            if (!writableColumns(table).contains(column)) {
+                throw new IllegalArgumentException(
+                        "列名「" + column + "」不是 " + table + " 上可记录的列"
+                                + "（必须真实存在且不是主键——SQLite 的 rowid/_rowid_/oid 是主键别名）");
+            }
+        }
         jdbc.update("INSERT INTO change_log(changed_at, origin, action, target_table, " +
                     "target_id, before_json, after_json, chat_session_id, undone) " +
                     "VALUES (?,?,?,?,?,?,?,?,0)",
@@ -5529,8 +5954,11 @@ public class ChangeLogService {
                 for (Map.Entry<String, Object> e : before.entrySet()) {
                     String column = e.getKey();
                     if (!writable.contains(column)) {
+                        // 措辞与 write() 里对 after 的同一道校验**逐字一致**：
+                        // 两处守的是同一条规则（键必须是该表上真实存在且不是主键的列），
+                        // 用两种说法会让人以为其中一处是别的约束。
                         throw new IllegalArgumentException(
-                                "列名「" + column + "」不是 " + table + " 上可回退写入的列"
+                                "列名「" + column + "」不是 " + table + " 上可记录的列"
                                         + "（必须真实存在且不是主键——SQLite 的 rowid/_rowid_/oid 是主键别名）");
                     }
                     if (sets.length() > 0) {
@@ -5904,7 +6332,8 @@ CREATE INDEX ix_change_log_time ON change_log(changed_at);
    建议后续在 `undo` 里接住并翻译成「这条记录已被 X 引用，请先撤销 X」。
    本轮**不在 A–F 范围内**，未改。
 3. **`ALLOWED_ORIGINS` 与 DDL 没有防漂移测试**。`VolumeCalculator.VALID_ROLES` 有
-   `SchemaTest.role_whitelist_matches_the_ddl` 做双向收口，`ALLOWED_ORIGINS` 与
+   `SchemaTest.java_whitelist_matches_the_ddl`（本轮已参数化，同时覆盖
+`exercise_muscle.role` 与 `workout_set.set_type`）做双向收口，`ALLOWED_ORIGINS` 与
    `change_log.origin` / `action` 的 `CHECK` 目前只靠注释对齐。建议后续把
    「Java 侧白名单 ↔ `sqlite_master.sql` 里的值集」的比对扩到 `origin` / `action`。
 4. **`changed_at` 的形状没被钉住**（见 6.5）：schema 没有 CHECK，测试也没断言。
@@ -6126,6 +6555,11 @@ PROBE FK message = 回退失败：目标行被其他记录引用（food.id = 10�
 
 - [x] **Step 1: 写失败的测试**
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对）。
+> Task 11 把 `cache` 断言从占位值（`disabled(placeholder)`）改成了真实现的值；
+> 本轮又把注释里的内网地址换成「一台内网虚拟机」——仓库是要分发出去的，
+> 内网拓扑不该跟着走。
+
 ```java
 package com.change.web;
 
@@ -6166,7 +6600,26 @@ class HealthControllerTest {
         // 查值，不是查键名：只查键名时 cache 的值改成 "" 或 "totally-bogus" 都能存活。
         // 质量审查轮实测过这两个变异体都能全绿——而 Task 11 的验收标准正是要求
         // 这个字段「如实报告」缓存状态，所以必须是值断言。
-        assertThat(r.getBody()).contains("\"cache\":\"disabled(placeholder)\"");
+        //
+        // Task 11：CacheConfig 的占位实现（"disabled(placeholder)"）已换成真实现。
+        // 这里**只断言前缀**，原因是完整描述含主机与端口
+        // （「缓存：未启用（连不上 <一台内网虚拟机>:6379）」），把它逐字写进测试
+        // 等于把配置钉死在测试里：改 application.yml 或换一台 Redis 都会让测试无意义地红。
+        //
+        // 注意本测试默认跑在 change.redis.enabled=false 下（分发给他人时的默认值），
+        // 所以这里断言的是「配置为关闭」那条描述。**「连不上时降级」那条路径
+        // 由 CacheDegradationTest 显式设 enabled=true 保留覆盖**——否则它就是零覆盖，
+        // 而「Redis 挂了不影响业务」正是 Task 11 的核心验收标准。
+        // 本测试因此也顺带守住另一件事：**健康端点不得泄漏内网地址**——
+        // enabled=false 时描述里没有任何主机名，所以下面那条 doesNotContain 是恒真的。
+        //
+        // 覆盖缺口来源：Task 10 审查发现原断言只查键名不查值（cache 改成任意串都能过）。
+        // 现在改成查值，并且查的是**真实现**产出的值。
+        assertThat(r.getBody()).contains("\"cache\":\"缓存：未启用");
+        // 默认配置下不得把任何内网主机与端口打给使用者（会随仓库分发出去）。
+        assertThat(r.getBody())
+                .as("健康端点在默认配置下不得泄漏内网拓扑")
+                .doesNotContain("192.168.").doesNotContain("10.").doesNotContain("172.16.");
     }
 
     @Test
@@ -6284,6 +6737,10 @@ public class HealthController {
 - [x] **Step 4: 临时提供一个 CacheStatus 实现**
 
 Task 11 会替换成真正的实现。先放一个最小的，让本任务能独立跑绿。
+
+> ℹ️ **本 fence 是历史快照，刻意不与磁盘同步**：这是 Task 10 的**占位实现**，
+> 同一任务的 Step 4 明说「Task 11 会换掉它」，磁盘上现在是 Task 11 的真实现（见后面的 CacheConfig fence）。
+> 保留原样是因为它记录着「这一步当时长什么样」，而这正是 Step 式计划的意义。
 
 ```java
 package com.change.config;
@@ -6461,17 +6918,40 @@ git commit -m "feat: HTTP 骨架 + 端口协商（stdout 上报 CHANGE_PORT=）"
 
 - [x] **Step 1: 写失败的测试**
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对）。
+> 计划原稿这里只有 2 条 NoOp 测试；磁盘上是 10 条，覆盖熔断触发/恢复、
+> 反序列化失败的中性语义、成功清零，以及本轮的并发用例。
+> 其中并发用例的形状是**实测调整过**的（原稿的「32 线程 + 断言熔断跳没跳」
+> 在非原子实现下也全绿），详见该测试方法里的说明。
+
 ```java
 package com.change.cache;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class CacheServiceTest {
+
+    @Test
+    void the_breaker_constants_are_pinned_to_their_spec() {
+        // 熔断参数是「Redis 挂了之后等多久再试」的唯一旋钮，属于对外行为（影响请求延迟）。
+        // 没有这条的话，FAILURE_THRESHOLD 改成 1 或 100、BREAK_DURATION 改成 10 分钟，
+        // 别的测试**照样全绿**——因为它们都是「循环 FAILURE_THRESHOLD 次」这种
+        // 跟着常量走的写法（实测确认过）。这条把数值钉死，改动必须显式改测试。
+        assertThat(RedisCacheService.FAILURE_THRESHOLD).isEqualTo(3);
+        assertThat(RedisCacheService.BREAK_DURATION).isEqualTo(Duration.ofSeconds(30));
+    }
 
     @Test
     void noop_always_misses_and_never_throws() {
@@ -6481,7 +6961,13 @@ class CacheServiceTest {
         c.put("anything", "value", Duration.ofMinutes(5));   // 不应抛异常
         c.invalidatePrefix("change:");
         assertThat(c.isAvailable()).isFalse();
-        assertThat(c.describe()).contains("未启用");
+        // 查值而不是查前缀：describe() 若退化成固定字符串（把 reason 丢掉）也要变红。
+        // 这个 reason 最终会显示在 /api/health 的 cache 字段里，是验收标准的一部分。
+        assertThat(c.describe()).isEqualTo("缓存：未启用（未启用）");
+
+        // 带原因的构造器：原因必须出现在描述里，否则「为什么降级」就没人知道了
+        assertThat(new NoOpCacheService("连不上 1.2.3.4:6379").describe())
+                .isEqualTo("缓存：未启用（连不上 1.2.3.4:6379）");
     }
 
     @Test
@@ -6491,6 +6977,267 @@ class CacheServiceTest {
         for (int i = 0; i < 100; i++) {
             assertThat(c.get("k" + i, Integer.class)).isEqualTo(Optional.empty());
         }
+    }
+
+    // ---- 以下是本任务对计划测试的补充（额外要求 A）：熔断是 RedisCacheService 的全部价值，
+    // ---- 而计划只测了 NoOp 的两条，FAILURE_THRESHOLD / BREAK_DURATION / isBroken / onFailure 零覆盖。
+
+    @Test
+    void redis_failures_trip_the_circuit_breaker_and_stop_calling_redis() {
+        // 熔断的意义：Redis 挂了之后，不要让每个请求都白等 300ms 连接超时。
+        // 连续失败到阈值后，后续调用必须**直接返回未命中、不再碰 Redis**。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        Mockito.when(template.opsForValue())
+                .thenThrow(new QueryTimeoutException("redis down"));
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD; i++) {
+            assertThat(c.get("k", String.class)).isEmpty();   // 失败但降级，不抛
+        }
+        assertThat(c.isAvailable()).isFalse();
+        assertThat(c.describe()).contains("熔断");
+
+        // 熔断后不再调用 Redis
+        Mockito.clearInvocations(template);
+        assertThat(c.get("k", String.class)).isEmpty();
+        Mockito.verifyNoInteractions(template);
+    }
+
+    @Test
+    void the_circuit_closes_again_after_the_break_duration() {
+        // 用可控时钟：否则要真的睡 30 秒才能验证恢复。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var clock = Mockito.mock(Clock.class);
+        Instant t0 = Instant.parse("2026-01-01T00:00:00Z");
+        Mockito.when(clock.instant()).thenReturn(t0);
+
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        Mockito.when(valueOps.get(ArgumentMatchers.anyString()))
+                .thenThrow(new QueryTimeoutException("down"));
+
+        CacheService c = new RedisCacheService(template, "h", 6379, clock);
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD; i++) {
+            c.get("k", String.class);
+        }
+        assertThat(c.isAvailable()).isFalse();
+
+        // 时钟推进到熔断期之后
+        Mockito.when(clock.instant())
+                .thenReturn(t0.plus(RedisCacheService.BREAK_DURATION).plusSeconds(1));
+        assertThat(c.isAvailable()).isTrue();
+    }
+
+    @Test
+    void a_deserialization_failure_is_not_a_redis_failure() {
+        // 一条类型不匹配的脏数据不该把整个缓存关掉——那是「一条脏数据 → 缓存整体瘫痪」。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        // 缓存里存的是 JSON 字符串，但要按 Integer 读 -> 反序列化失败
+        Mockito.when(valueOps.get(ArgumentMatchers.anyString()))
+                .thenReturn("\"not-a-number\"");
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD + 5; i++) {
+            assertThat(c.get("k", Integer.class)).isEmpty();   // 按未命中处理
+        }
+        assertThat(c.isAvailable())
+                .as("反序列化失败不该触发熔断——否则一条脏数据会让整个缓存瘫痪")
+                .isTrue();
+        // 关键补充：确认这 8 次读**真的走到了 Redis 并失败在反序列化上**。
+        // 否则这条测试可能是「提前熔断短路、根本没碰 Redis」而假绿。
+        Mockito.verify(valueOps, Mockito.times(RedisCacheService.FAILURE_THRESHOLD + 5))
+                .get("k");
+    }
+
+    @Test
+    void redis_success_path_round_trips_a_value() {
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        Mockito.when(valueOps.get("k")).thenReturn("\"hello\"");
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+        assertThat(c.get("k", String.class)).contains("hello");
+        assertThat(c.isAvailable()).isTrue();
+    }
+
+    @Test
+    void failures_accumulate_across_calls_and_are_cleared_by_a_success() {
+        // 这条是实测中发现真 bug 后补的回归测试（计划原稿的实现里熔断器从不跳）。
+        // 根因：isBroken() 是每个操作的第一步，原稿在里面**无条件**清零失败计数，
+        // 于是「清零 → 累加本次的 1 次失败」无限循环，计数永远到不了阈值。
+        // 本测试把两件事钉住：①失败必须跨调用累积到阈值；②成功的调用才允许清零。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        // 连续 3 次失败 -> 阈值；阈值后第 4 次调用成功（get 返回 null 即未命中）把计数清零
+        Mockito.when(valueOps.get("k"))
+                .thenThrow(new QueryTimeoutException("down"))
+                .thenThrow(new QueryTimeoutException("down"))
+                .thenThrow(new QueryTimeoutException("down"))
+                .thenReturn(null);
+
+        // 2 次失败 < 阈值，还没到熔断
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.isAvailable()).as("2 次失败还不够触发熔断").isTrue();
+
+        // 第 3 次失败：恰好到阈值 -> 熔断
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.isAvailable()).as("连续 3 次失败必须熔断").isFalse();
+
+        // 第 4 次调用：熔断期内，不碰 Redis（序列里的 thenReturn(null) 因此不会被消费）
+        Mockito.clearInvocations(template);
+        assertThat(c.get("k", String.class)).isEmpty();
+        Mockito.verifyNoInteractions(template);
+
+        assertThat(c.describe()).contains("熔断");
+    }
+
+    @Test
+    void dirty_cache_data_never_trips_the_breaker_and_never_raises_the_count() {        // 语义：脏数据（类型不匹配）对熔断状态必须是**中性**的——既不计入失败，也不清零。
+        //
+        // ⚠️ 实测修正（报告 F）：计划把这个改动说成「不改就会让一条脏数据把整个缓存关掉」，
+        // 但把实现退回计划原稿实测后，行为**完全相同**——原稿把 onSuccess() 放在反序列化之前，
+        // 于是每次读都以「计数归 0」收尾，onFailure 永远落在干净的 0 上加 1，
+        // 读路径上的计数**根本不可能累积到阈值**。也就是说原稿那个 bug 在当前组合下不可达，
+        // 「脏数据会触发熔断」这个说法不成立。
+        // 真正能实测的差异是**计数语义**：原稿让每次脏读都以 1 收尾（清零+自增互相抵消），
+        // 本实现让它保持中性（不增不减）。下面用「2 次真实故障 + 1 次脏读 + 1 次真实故障」
+        // 把两种语义区分开——这在行为层面是可观测的，不依赖反射：
+        //   中性（本实现）：故障 1,2 -> 脏读(仍 2) -> 故障 3 达阈值 -> 恰好 3 次跳闸 ✅
+        //   计数脏数据    ：故障 1,2 -> 脏读(3)   -> 已跳闸，第 4 次不再触达 Redis ❌
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+
+        java.util.concurrent.atomic.AtomicBoolean dirty = new java.util.concurrent.atomic.AtomicBoolean(false);
+        Mockito.when(valueOps.get("k")).thenAnswer(inv -> {
+            if (dirty.get()) return "\"not-a-number\"";              // 脏数据
+            throw new QueryTimeoutException("down");                  // Redis 故障
+        });
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        // 2 次真实故障：还没到阈值
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.isAvailable()).as("2 次真实故障还不够触发熔断").isTrue();
+
+        // 一次脏读：中性，不得把计数推过阈值
+        dirty.set(true);
+        assertThat(c.get("k", Integer.class)).isEmpty();
+        assertThat(c.isAvailable())
+                .as("脏数据不得计入熔断——否则 2 次真实故障 + 1 次脏读就跳闸了")
+                .isTrue();
+
+        // 回到真实故障：这是第 3 次，恰好达阈值
+        dirty.set(false);
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.isAvailable())
+                .as("脏数据中性时，第 3 次真实故障必须跳闸；若脏读被计过数，这里早就跳了")
+                .isFalse();
+    }
+
+    @Test
+    void the_breaker_trips_under_concurrent_failures() {
+        // 计数器非原子时，并发下读-改-写会丢失更新，熔断可能永不触发——
+        // 而熔断失效的后果是「每个请求都白等 300ms 连接超时」。
+        //
+        // ⚠️ 关于这条测试到底守住了什么，必须如实写清（实测数据见报告的「第 4 条」）：
+        //
+        // (1) **它是负载下的回归守卫，不是「非原子 → 丢失更新」的判别器。**
+        //     实测：把 RedisCacheService 整体退回普通 int / Instant（逻辑不变，
+        //     只把 AtomicInteger/AtomicReference 换掉），这条测试**依然全绿**。
+        //     根因是 x86 上普通 int 的 `consecutiveFailures++` 编译出来就是一条
+        //     读-改-写指令（inc dword ptr [r]）：用下面的会合点把 20 个线程对齐到
+        //     同一次自增上、连跑 100 轮，计数**每一轮都精确等于 20**，一次都不丢。
+        //     「读-改-写窗口」在真实编译产物里根本没有打开过。
+        //     对照实验（证明断言本身对真实的丢失更新是敏感的）：把那句自增人为撑宽成
+        //     「读出 + 空转 20 万次 + 写回」，同一个会合点下计数立刻远低于 20，
+        //     这条断言当场变红。
+        //     所以选 AtomicInteger 的理由是**可移植的正确性**——JLS 不保证 int++ 原子，
+        //     其他架构或未来的 JIT 可能真的把它拆成 load/add/store；不是本机可复现的缺陷。
+        //     **不要因为它现在是绿的，就以为「并发安全有测试守着」。**
+        //
+        // (2) **仍然必须断言计数的精确值，不能只断言「熔断跳没跳」。**
+        //     阈值只有 3，任何并发实现哪怕丢了大半更新，计数也远超 3、
+        //     isAvailable() 恒为 false——那种断言对并发语义零判别力。
+        //     精确值断言至少守得住「计数被整体重置/崩塌」这类退化。
+        //
+        // (3) **会合点让 20 个线程真正同时动手**，而不是靠 sleep 碰运气。
+        //     没有它，线程是散开的，这条测试就退化成「多线程跑一遍不炸」。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        // 前两次「Redis 在工作但未命中」= 成功（不该动失败计数），之后全部失败。
+        Mockito.when(valueOps.get(ArgumentMatchers.anyString()))
+                .thenReturn(null)
+                .thenReturn(null)
+                .thenThrow(new QueryTimeoutException("down"));
+
+        RedisCacheService c = new RedisCacheService(template, "h", 6379);
+
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.get("k", String.class)).isEmpty();
+        assertThat(c.isAvailable()).as("2 次未命中是成功，不该熔断").isTrue();
+        assertThat(c.consecutiveFailureCount()).as("未命中是成功，不该记失败").isZero();
+
+        int threads = 20;
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        var gate = new java.util.concurrent.CyclicBarrier(threads);
+        var done = new java.util.concurrent.CountDownLatch(threads);
+        RedisCacheService.failureRendezvous = gate;
+        try {
+            for (int i = 0; i < threads; i++) {
+                pool.submit(() -> {
+                    try {
+                        c.get("k", String.class);
+                    } catch (Throwable ignored) {
+                        // 缓存抽象承诺「不向上抛异常」；但计数是否丢失与它无关，
+                        // 所以这里不让异常掩盖下面的计数断言。
+                    } finally {
+                        done.countDown();
+                    }
+                });
+            }
+            try {
+                assertThat(done.await(20, java.util.concurrent.TimeUnit.SECONDS))
+                        .as("%d 个线程都应在 20 秒内结束", threads)
+                        .isTrue();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+        } finally {
+            RedisCacheService.failureRendezvous = null;   // 绝不让会合点泄漏到别的测试
+            pool.shutdownNow();
+        }
+
+        // 20 个线程各失败一次：计数必须精确等于 20，一次更新都不能丢。
+        assertThat(c.consecutiveFailureCount())
+                .as("%d 个线程各失败一次，计数必须精确等于 %d（丢了就是读-改-写没做成原子）",
+                        threads, threads)
+                .isEqualTo(threads);
+
+        // 熔断本身也要跳（用户可观测的那一面）
+        assertThat(c.isAvailable())
+                .as("%d 个线程各失败一次，熔断必须已触发（阈值 %d）",
+                        threads, RedisCacheService.FAILURE_THRESHOLD)
+                .isFalse();
+    }
+
+    /** ValueOperations 是泛型类，不具名类型参数无法直接 mock，这里统一收口。 */
+    @SuppressWarnings("unchecked")
+    private static ValueOperations<String, String> valueOps() {
+        return Mockito.mock(ValueOperations.class);
     }
 }
 ```
@@ -6586,6 +7333,24 @@ public class NoOpCacheService implements CacheService {
 
 - [x] **Step 4: 写 Redis 实现（含熔断）**
 
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非手抄）。
+>
+> **⚠️ 原稿这一段是坏的——熔断永不触发。** 两处缺陷：
+> 1. `isBroken()` 里**无条件**执行 `consecutiveFailures = 0`。而 `isBroken()` 是
+>    get/put/invalidatePrefix 的第一步，于是每次调用都「先清零、再加本次的 1」，
+>    计数永远到不了 `FAILURE_THRESHOLD`（3）——熔断器永不跳。
+>    现在只在 `brokenUntil` 真的过期时清零一次，计数才能跨调用累积。
+> 2. `onFailure` 用 `== FAILURE_THRESHOLD`：计数一旦滑过阈值（3 → 4 → 5…）
+>    就再也不等于它，熔断器等于「一辈子只跳一次」。现在用 `>=`。
+>
+> 另外原稿的计数是普通 `int` / `Instant` 字段，而这个 Bean 在 `CacheConfig` 里
+> 装配为**单例**、服务多线程的 Spring MVC——并发下 `++` 的读-改-写不是原子的，
+> 更新会丢失。现在改成 `AtomicInteger` / `AtomicReference`。
+>
+> 为什么必须补这一步：`5b12e38` 的标题是「并修计划原稿的熔断器死代码」，
+> 但它只改了 `RedisCacheService.java`、**没有动计划正文**，而本 Step 的复选框
+> 当时已经是 `- [x]`。于是任务书里躺着一份坏实现，下一个执行者照拄就复现缺陷。
+
 ```java
 package com.change.cache;
 
@@ -6594,17 +7359,30 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Redis 实现。
  *
- * 两条自我保护：
- *   1. 所有调用都捕获异常并降级为「未命中」——Redis 挂了不该让接口 500
+ * 三条自我保护：
+ *   1. 所有 Redis 调用都捕获异常并降级为「未命中」——Redis 挂了不该让接口 500
  *   2. 连续失败达阈值后熔断一段时间，避免每次请求都白等 300 ms 连接超时
+ *   3. **反序列化失败不计入熔断**：缓存里一条类型不匹配的脏数据不该把整个缓存关掉
+ *      （那是「一条脏数据 → 缓存整体瘫痪」）。脏数据按未命中处理，只记日志。
+ *
+ * <p><b>熔断状态必须是原子的。</b>本 Bean 在 {@code CacheConfig} 里装配为单例，
+ * 服务多线程的 Spring MVC。计数器若只是普通 {@code int}，并发下
+ * {@code consecutiveFailures++} 的「读-改-写」不是原子操作，更新会丢失——
+ * {@code >= FAILURE_THRESHOLD} 可能永远不成立，熔断器静默失效，
+ * 退化回「每个请求都白等 300 ms 连接超时」。这里用 {@link AtomicInteger} /
+ * {@link AtomicReference} 而不是 volatile：volatile 只给可见性，
+ * 不给读-改-写的原子性，而丢计数正是这个缺陷的核心。
  */
 public class RedisCacheService implements CacheService {
 
@@ -6615,36 +7393,111 @@ public class RedisCacheService implements CacheService {
     /** 熔断持续多久。 */
     static final Duration BREAK_DURATION = Duration.ofSeconds(30);
 
+    /**
+     * 并发测试用的会合点，生产代码里恒为 {@code null}。
+     *
+     * <p><b>为什么需要它。</b>要让「读-改-写」的窗口真正被覆盖，并发用例必须把线程
+     * 对齐到**同一次** {@code consecutiveFailures} 更新上，而不是靠 sleep 碰运气。
+     * 会合点必须落在自增之前，所以只能由被改造的类提供。
+     *
+     * <p><b>诚实说明（实测）。</b>有了会合点，{@code CacheServiceTest} 那条并发用例
+     * 在**非原子实现下依然全绿**：x86 上普通 int 的 {@code ++} 就是一条读-改-写指令
+     * （inc dword ptr [r]），20 个线程对齐后连跑 100 轮，计数每轮都精确等于 20、
+     * 一次更新都不丢。所以原子类型买的是**可移植的正确性**（JLS 不保证 int++ 原子，
+     * 其他架构或未来的 JIT 可能真的把它拆成 load/add/store），不是本机可复现的缺陷。
+     * 那条测试因此是「负载下的回归守卫」，不是「丢失更新的判别器」——
+     * 详见 {@code CacheServiceTest#the_breaker_trips_under_concurrent_failures}。
+     *
+     * <p>它不改动任何生产行为（null 时是一次几乎免费的 null 检查），
+     * 也不会被 Spring 装配进任何东西。测试类在 try/finally 里设置与清理。
+     */
+    static volatile java.util.concurrent.CyclicBarrier failureRendezvous = null;
+
     private final StringRedisTemplate redis;
     private final ObjectMapper json = new ObjectMapper();
     private final String endpoint;
+    private final Clock clock;
 
-    private int consecutiveFailures = 0;
-    private Instant brokenUntil = Instant.EPOCH;
+    private final AtomicInteger consecutiveFailures = new AtomicInteger();
+    private final AtomicReference<Instant> brokenUntil = new AtomicReference<>(Instant.EPOCH);
 
     public RedisCacheService(StringRedisTemplate redis, String host, int port) {
+        this(redis, host, port, Clock.systemUTC());
+    }
+
+    /** 测试用：注入可控时钟，否则熔断恢复（30 秒）无法在不睡 30 秒的前提下验证。 */
+    RedisCacheService(StringRedisTemplate redis, String host, int port, Clock clock) {
         this.redis = redis;
         this.endpoint = host + ":" + port;
+        this.clock = clock;
+    }
+
+    /**
+     * 当前连续失败次数。<b>包级可见，仅供测试</b>（生产代码只用 {@link #isAvailable()}）。
+     *
+     * <p>为什么要暴露它：并发用例必须断言这个计数的**精确值**。
+     * 只断言「熔断跳没跳」在结构上没有判别力——阈值只有 3，而 N 个线程并发失败时
+     * 哪怕丢了大半更新，计数也远超 3，熔断照跳（实测 64 线程并发失败计数 8~12，
+     * 期望 64，仍然跳闸）。精确值断言才守得住「计数被整体重置/崩塌」这类退化。
+     *
+     * <p>注意它**测不出**「非原子 → 丢失更新」：见 {@link #failureRendezvous} 的实测说明。
+     */
+    int consecutiveFailureCount() {
+        return consecutiveFailures.get();
     }
 
     @Override
     public <T> Optional<T> get(String key, Class<T> type) {
         if (isBroken()) return Optional.empty();
+        String raw;
         try {
-            String raw = redis.opsForValue().get(key);
-            onSuccess();
-            if (raw == null) return Optional.empty();
-            return Optional.of(json.readValue(raw, type));
+            raw = redis.opsForValue().get(key);
         } catch (Exception e) {
             onFailure("get", e);
             return Optional.empty();
         }
+        if (raw == null) {
+            // 未命中：Redis 本身是健康的，算一次成功
+            onSuccess();
+            return Optional.empty();
+        }
+
+        T value;
+        try {
+            value = json.readValue(raw, type);
+        } catch (Exception e) {
+            // 这是「缓存里有一条读不懂的数据」，不是 Redis 故障。
+            //
+            // ⚠️ 这里既不能 onFailure **也不能 onSuccess**：脏数据对熔断状态必须是中性的。
+            // 计入熔断是错的（一条类型不匹配的脏数据不该把整个缓存关掉）；
+            // 调 onSuccess 也是错的（它会把真实故障累积的计数清零，等于用脏数据给故障洗白）。
+            //
+            // 实测修正（见报告 F）：计划认为「不改就会让一条脏数据把整个缓存关掉」，
+            // 但把 get() 退回计划原稿实测后两种实现**行为完全相同**——原稿把 onSuccess()
+            // 放在反序列化之前，每次读都以计数归 0 收尾，onFailure 永远落在干净的 0 上加 1，
+            // 读路径的计数根本累积不到阈值。那个 bug 在当前组合下不可达。
+            // 本次把「反序列化」单独 try 出来，价值在于让“脏数据”与“Redis 故障”的
+            // 处置从「靠调用顺序碰巧成立」变成「显式且可测」。
+            log.warn("缓存条目反序列化失败，按未命中处理。key={} 目标类型={} 原因={}",
+                    key, type.getName(), e.toString());
+            return Optional.empty();
+        }
+        // 到这里才算「Redis 调用成功且数据可用」——只有这种成功才允许清空失败计数
+        onSuccess();
+        return Optional.of(value);
     }
 
     @Override
     public void put(String key, Object value, Duration ttl) {
         if (isBroken()) return;
         try {
+            // ⚠️ 已知缺口（本任务未修，范围外）：这里把「序列化失败」与「Redis 故障」放在同一个
+            // catch 里。如果某个 value 的类型 Jackson 序列化不了，每次 put 都会走 onFailure，
+            // 于是**一条写不进去的数据就能把整个缓存熔断**——正是本任务在 get() 上修掉的
+            // 同一类缺陷（「一条坏数据 → 缓存整体瘫痪」）在读路径上的镜像。
+            // 未顺手改的原因：额外要求 A/B 明确只覆盖反序列化路径，put 的序列化失败需要
+            // 独立的设计判断（序列化失败该不该计入熔断、要不要在 put 里也拆两个 try）。
+            // 已记入报告的「自查发现」，留给后续任务。
             redis.opsForValue().set(key, json.writeValueAsString(value), ttl);
             onSuccess();
         } catch (Exception e) {
@@ -6652,6 +7505,19 @@ public class RedisCacheService implements CacheService {
         }
     }
 
+    /**
+     * 按前缀批量失效。
+     *
+     * <p><b>取舍：这里用 {@code KEYS}，不是 {@code SCAN}。</b>{@code KEYS} 是 O(N) 且
+     * <b>会阻塞 Redis 单线程</b>——键很多时它会让所有其他客户端一起等。在「单用户本地缓存、
+     * 键空间只有几十个键」这个场景下，一次 O(N) 遍历的绝对代价可以忽略（微秒级），
+     * 换来的是一行代码的简单实现。
+     *
+     * <p><b>适用边界</b>：键数量小（本地单用户缓存）。<b>一旦缓存键变多</b>——例如设计文档里
+     * 的「社交版」让缓存承载多用户数据，或者引入按条目粒度的键——就必须改成 {@code SCAN}
+     * 游标遍历（{@code ScanOptions.match(prefix + "*")} + 分批 {@code delete}），
+     * 用「不阻塞但可能重复/漏掉并发写入的键」换取 Redis 的可用性。届时这个方法的签名可以不变。
+     */
     @Override
     public void invalidatePrefix(String prefix) {
         if (isBroken()) return;
@@ -6673,38 +7539,89 @@ public class RedisCacheService implements CacheService {
 
     @Override
     public String describe() {
-        if (isBroken()) {
-            return "缓存：已熔断（" + endpoint + " 连续失败 " + consecutiveFailures + " 次）";
+        // 先读一次 brokenUntil，再读一次计数——不要先读计数再问状态：
+        // 那样两个值来自不同时刻，可能出现「已熔断」配「连续失败 0 次」的自相矛盾文案。
+        // 这里读到的计数一定 >= 触发熔断时的那个值，所以不会是 0。
+        Instant until = brokenUntil.get();
+        if (Instant.now(clock).isBefore(until)) {
+            return "缓存：已熔断（" + endpoint + " 连续失败 " + consecutiveFailures.get() + " 次）";
         }
         return "缓存：已连接 " + endpoint;
     }
 
+    /**
+     * 熔断期是否生效；顺带做「熔断期结束后把计数归零」这件事。
+     *
+     * <p>为什么清零必须**恰好一次**：本方法在 get/put/invalidatePrefix 里是每个操作的
+     * 第一步，而「清零」与「本次失败 +1」是两步。若清零无条件发生（计划原稿的写法），
+     * 每次调用都会先把计数抹回 0、再加 1，{@code consecutiveFailures} 永远到不了
+     * {@link #FAILURE_THRESHOLD}——熔断器永不触发。这是本项目修过的第一个 Critical。
+     *
+     * <p>清零用 {@code compareAndSet(expired, EPOCH)} 而不是先 get 再 set：
+     * 只有真正把 {@code brokenUntil} 从「已过期」推进到 {@code EPOCH} 的那个线程才清零，
+     * 进来的其他线程 CAS 失败、不动计数。顺带保证「一个熔断周期只清零一次」。
+     */
     private boolean isBroken() {
-        if (Instant.now().isBefore(brokenUntil)) {
+        Instant until = brokenUntil.get();
+        if (Instant.now(clock).isBefore(until)) {
             return true;
         }
-        if (consecutiveFailures > 0) {
-            consecutiveFailures = 0;   // 熔断期结束，给一次机会
+        // 熔断期已过（或从未熔断）。把 brokenUntil 归位这件事只让一个线程做成：
+        // 谁成功了谁负责清计数——否则「CAS 归位」与「计数清零」两个动作之间
+        // 会插进别的线程的失败累加，那一次失败会被随后的清零无声抹掉。
+        if (brokenUntil.compareAndSet(until, Instant.EPOCH) && until != Instant.EPOCH) {
+            consecutiveFailures.set(0);
         }
         return false;
     }
 
     private void onSuccess() {
-        consecutiveFailures = 0;
+        consecutiveFailures.set(0);
     }
 
     private void onFailure(String op, Exception e) {
-        consecutiveFailures++;
-        if (consecutiveFailures == FAILURE_THRESHOLD) {
-            brokenUntil = Instant.now().plus(BREAK_DURATION);
-            log.warn("Redis {} 连续失败 {} 次，熔断 {} 秒。原因: {}",
-                    op, FAILURE_THRESHOLD, BREAK_DURATION.toSeconds(), e.toString());
+        // 测试会合点：让并发用例能把所有线程对齐到这一次「读-改-写」上。
+        // 生产路径下恒为 null，代价是一次 null 检查。
+        java.util.concurrent.CyclicBarrier gate = failureRendezvous;
+        if (gate != null) {
+            try {
+                gate.await(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+                // 超时/中断都不该改变熔断语义：继续按正常失败处理。
+            }
+        }
+        int failures = consecutiveFailures.incrementAndGet();
+        // 用 >= 而不是 ==：== 只在计数**恰好**等于阈值那一次跳闸，
+        // 一旦计数滑过阈值（3 -> 4 -> 5…）就再也不等于它，熔断器等于「一辈子只跳一次」。
+        // 外加 `!isBefore(brokenUntil)`，保证只有当前不在熔断期时才重置 brokenUntil，
+        // 否则连续失败会把熔断期一直往后推，Redis 一直坏就永远不恢复。
+        //
+        // 诚实说明：>= 相对 == 目前**本仓库的测试无法区分**——把这里退回 ==，
+        // CacheServiceTest 全绿（已实测）。现有用例里计数最多走到阈值 3，
+        // 没有任何路径让计数跳过阈值。保留 >= 是因为 == 的脆弱性真实存在（见上），
+        // 但不要误以为有测试在守护它。
+        //
+        // 并发下的重复跳闸：多个线程可能同时跨过阈值，各自尝试把 brokenUntil 从
+        // 「过去」推进到「未来」。check-then-act 不是原子的，所以用 compareAndSet——
+        // 只有赢的那个线程写日志并推进熔断期。输的线程什么都不做（不是重试：
+        // 熔断期已由赢家设好，重试只会把熔断期往后推）。
+        if (failures >= FAILURE_THRESHOLD) {
+            Instant until = brokenUntil.get();
+            if (!Instant.now(clock).isBefore(until)) {
+                Instant next = Instant.now(clock).plus(BREAK_DURATION);
+                if (brokenUntil.compareAndSet(until, next)) {
+                    log.warn("Redis {} 连续失败 {} 次，熔断 {} 秒。原因: {}",
+                            op, failures, BREAK_DURATION.toSeconds(), e.toString());
+                }
+            }
         }
     }
 }
 ```
 
 - [x] **Step 5: 改 CacheConfig 做启动探测与条件装配**
+
+> ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对，非目测）。
 
 ```java
 package com.change.config;
@@ -6735,7 +7652,11 @@ public class CacheConfig {
 
     @Bean
     public CacheService cacheService(
-            @Value("${change.redis.enabled:true}") boolean enabled,
+            // 默认值与 application.yml 里的 ${CHANGE_REDIS_ENABLED:false} 保持一致：
+            // 这是分发给他人的客户端，大多数使用者的机器上没有 Redis。
+            // 两处默认值不一致的话，单独跑本类的测试或改配置来源时会走另一条分支，
+            // 而且是**静默**地走——正是本项目一路在消灭的那类失效。
+            @Value("${change.redis.enabled:false}") boolean enabled,
             @Value("${spring.data.redis.host:127.0.0.1}") String host,
             @Value("${spring.data.redis.port:6379}") int port,
             ObjectProvider<StringRedisTemplate> templateProvider) {
@@ -6889,6 +7810,9 @@ cd backend && mvn -B test
 
 既然两条在组合变异体下检测力相同、又各自绑定一个 `Entry` 不变量，删掉一条只会让
 「非法角色不可表示」少一个入口断言，覆盖面**一点不减**。真正有害的是那段误导性注释。
+> ✅ **本轮已修**：下面那段注释已换成完整的版本（说明它与 `SchemaTest` 双向收口），
+> fence 已与 `VolumeCalculator.java` 逐字同步。
+
 另外，审查另一处建议的替代写法 `accumulate_defends_in_depth_with_its_own_message`
 构造的是 `new Entry(1, 3, "tertiary")` 并断言消息含 `未知的肌群角色` 与 `tertiary`，
 与 `invalid_role_is_rejected` **逐字等价**——那是换名字的重复测试，比现状更差。
@@ -6901,13 +7825,60 @@ cd backend && mvn -B test
 （**不改枚举、不动任何签名**）：
 
 ```java
-    /** 合法的肌群角色。必须与 V2__training.sql 里 exercise_muscle.role 的 CHECK 一致。 */
+    /**
+     * 合法的肌群角色。必须与 {@code V2__training.sql} 里 {@code exercise_muscle.role}
+     * 的 {@code CHECK} 一致（DDL 原文：{@code role IN ('primary', 'secondary')}）。
+     *
+     * <p>抽成常量是为了让「Java 侧白名单」与「DDL 侧白名单」两侧**互相收口**：
+     * {@code SchemaTest.java_whitelist_matches_the_ddl}（参数化用例，同时覆盖
+     * {@code exercise_muscle.role} 与 {@code workout_set.set_type}）会把这里的值集与
+     * {@code sqlite_master.sql} 里抽出来的值集逐项比对（含顺序），任何一侧改了另一侧就红。
+     * 构造器与 {@link #accumulate} 的 {@code switch} 都引用它，所以不存在
+     * 「常量改了但校验没跟着改」这种中间态。
+     */
     public static final List<String> VALID_ROLES = List.of("primary", "secondary");
 ```
 
-构造器与 `accumulate` 的 `switch` 都引用它；`SchemaTest.role_whitelist_matches_the_ddl`
+构造器与 `accumulate` 的 `switch` 都引用它；`SchemaTest.java_whitelist_matches_the_ddl`
 从 `ddlOf("exercise_muscle")` 抽出 `role IN (...)` 的值集，与 `VALID_ROLES` **逐项 + 按序**比对。
 两侧双向收口：任何一侧改了、或顺序换了，另一侧就红。
+
+### 待办：剩下七处枚举白名单还没有 Java 侧收口（本轮刻意不做）
+
+本轮把可机械收口的部分做了：
+`WorkoutSet.VALID_SET_TYPES`（新增）与 `VolumeCalculator.VALID_ROLES`（既有）
+都由 `SchemaTest.java_whitelist_matches_the_ddl` 与 `sqlite_master.sql` 逐项对账。
+
+但全库一共有 **9 处** `TEXT + CHECK (x IN (...))`，剩下的 7 处
+**没有** Java 侧白名单，也就没有任何机械收口：
+
+| # | 表.列 | 合法值（DDL 原文） | 为什么本轮不做 |
+|---|---|---|---|
+| 1 | `food.source` | `'manual','cn-food-table','agent','takeout'` | `food` 连实体都没有（`Food.java` 不存在），白名单无处安放 |
+| 2 | `photo.kind` | `'food','body','other'` | 同上，`Photo.java` 不存在 |
+| 3 | `meal.slot` | `'breakfast','lunch','dinner','snack'` | 同上，`Meal.java` 不存在 |
+| 4 | `meal_item.origin` | `'manual','photo','agent','takeout'` | 同上，`MealItem.java` 不存在 |
+| 5 | `chat_message.role` | `'user','assistant','tool'` | 同上，聊天域在第一阶段连服务都没有 |
+| 6 | `change_log.origin` | `'user','agent'` | **已有** `ChangeLogService.ALLOWED_ORIGINS`，但它与 DDL 之间还没有机械对账（见下） |
+| 7 | `change_log.action` | `'insert','update'` | `ChangeLogService` 里只有字面量 `"insert"` / `"update"`，没有常量集 |
+
+后续任务建议的做法（按成本从低到高）：
+
+1. 先把 #6 补上：`ALLOWED_ORIGINS` 已经存在，只是缺一条
+   与 `change_log.origin` 的 `CHECK` 对账的参数化用例（现有的
+   `java_whitelist_matches_the_ddl` 加一行参数即可）。
+2. #7 同理：把 `"insert"` / `"update"` 提成 `List<String> ALLOWED_ACTIONS`
+   再对账（同时也让 `write()` 能拒绝非法 action，
+   目前只有 DB 侧的 `CHECK` 兜底）。
+3. #1–#5 要等对应实体落地：建实体的那一步同时把
+   白名单常量与读写路径一起建出来，
+   **不要先把值写成注释**（那正是 `WorkoutSet.set_type`
+   本轮刚修掉的问题：九个值手抄在注释里，
+   与 DDL 之间没有任何机械收口）。
+
+> **为什么不在本轮一步到位**：#1–#5 对应的表连实体都还没有，
+> 白名单只能挂在一个**不存在的类**上，写出来只是又一份
+> 与真实调用点无关的手抄清单。本轮只做「能确定正确」的那部分。
 
 ## `package-info.java`：补两条约定 + 修一处措辞
 
