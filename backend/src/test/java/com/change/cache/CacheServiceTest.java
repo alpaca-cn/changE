@@ -307,6 +307,56 @@ class CacheServiceTest {
                 .isFalse();
     }
 
+    @Test
+    void a_serialization_failure_does_not_trip_the_breaker() {
+        // 序列化失败是「调用方给了一个缓存不了的值」，不是 Redis 故障。
+        // 计入熔断的话，一个调用点缓存了序列化不了的值就会把**整个缓存**关掉——
+        // 包括所有毫不相干的正常键，而且是静默的（不抛异常，只是从此不缓存）。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        var bad = new SelfReferencing();
+        bad.self = bad;
+
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD + 5; i++) {
+            c.put("k", bad, Duration.ofMinutes(1));
+        }
+
+        assertThat(c.isAvailable())
+                .as("序列化失败不该触发熔断——否则一条写不进去的数据会让整个缓存瘫痪")
+                .isTrue();
+
+        // 而且没往 Redis 发过请求（序列化都没过，不该有网络调用）
+        Mockito.verify(template, Mockito.never()).opsForValue();
+    }
+
+    @Test
+    void a_real_redis_failure_on_put_still_trips_the_breaker() {
+        // 对照组：**真正的** Redis 故障必须照旧计入熔断。
+        // 拆 try 不能把这条也一起放过。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        Mockito.doThrow(new QueryTimeoutException("down"))
+                .when(valueOps).set(ArgumentMatchers.anyString(),
+                        ArgumentMatchers.anyString(),
+                        ArgumentMatchers.any(Duration.class));
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD; i++) {
+            c.put("k", "v", Duration.ofMinutes(1));
+        }
+        assertThat(c.isAvailable()).isFalse();
+    }
+
+    /** Jackson 序列化不了：自引用导致无限递归。 */
+    static class SelfReferencing {
+        SelfReferencing self;
+    }
+
     /** ValueOperations 是泛型类，不具名类型参数无法直接 mock，这里统一收口。 */
     @SuppressWarnings("unchecked")
     private static ValueOperations<String, String> valueOps() {

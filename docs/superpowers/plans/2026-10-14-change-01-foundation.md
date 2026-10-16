@@ -6919,10 +6919,14 @@ git commit -m "feat: HTTP 骨架 + 端口协商（stdout 上报 CHANGE_PORT=）"
 - [x] **Step 1: 写失败的测试**
 
 > ✅ **本 fence 已同步为磁盘上的实际实现**（脚本逐字比对）。
-> 计划原稿这里只有 2 条 NoOp 测试；磁盘上是 10 条，覆盖熔断触发/恢复、
-> 反序列化失败的中性语义、成功清零，以及本轮的并发用例。
+> 计划原稿这里只有 2 条 NoOp 测试；磁盘上是 12 条，覆盖熔断触发/恢复、
+> 反序列化失败的**中性语义**、成功清零、本轮的并发用例，以及
+> **写路径对称性**的两条（序列化失败不熔断、Redis 故障照旧熔断）。
 > 其中并发用例的形状是**实测调整过**的（原稿的「32 线程 + 断言熔断跳没跳」
 > 在非原子实现下也全绿），详见该测试方法里的说明。
+>
+> 后两条是 **2026-10-16 的写路径缺口修复**补的，见文末
+> 「**Task 11 写路径缺口修复记录（2026-10-16）**」。
 
 ```java
 package com.change.cache;
@@ -7234,6 +7238,56 @@ class CacheServiceTest {
                 .isFalse();
     }
 
+    @Test
+    void a_serialization_failure_does_not_trip_the_breaker() {
+        // 序列化失败是「调用方给了一个缓存不了的值」，不是 Redis 故障。
+        // 计入熔断的话，一个调用点缓存了序列化不了的值就会把**整个缓存**关掉——
+        // 包括所有毫不相干的正常键，而且是静默的（不抛异常，只是从此不缓存）。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        var bad = new SelfReferencing();
+        bad.self = bad;
+
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD + 5; i++) {
+            c.put("k", bad, Duration.ofMinutes(1));
+        }
+
+        assertThat(c.isAvailable())
+                .as("序列化失败不该触发熔断——否则一条写不进去的数据会让整个缓存瘫痪")
+                .isTrue();
+
+        // 而且没往 Redis 发过请求（序列化都没过，不该有网络调用）
+        Mockito.verify(template, Mockito.never()).opsForValue();
+    }
+
+    @Test
+    void a_real_redis_failure_on_put_still_trips_the_breaker() {
+        // 对照组：**真正的** Redis 故障必须照旧计入熔断。
+        // 拆 try 不能把这条也一起放过。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+        Mockito.doThrow(new QueryTimeoutException("down"))
+                .when(valueOps).set(ArgumentMatchers.anyString(),
+                        ArgumentMatchers.anyString(),
+                        ArgumentMatchers.any(Duration.class));
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+        for (int i = 0; i < RedisCacheService.FAILURE_THRESHOLD; i++) {
+            c.put("k", "v", Duration.ofMinutes(1));
+        }
+        assertThat(c.isAvailable()).isFalse();
+    }
+
+    /** Jackson 序列化不了：自引用导致无限递归。 */
+    static class SelfReferencing {
+        SelfReferencing self;
+    }
+
     /** ValueOperations 是泛型类，不具名类型参数无法直接 mock，这里统一收口。 */
     @SuppressWarnings("unchecked")
     private static ValueOperations<String, String> valueOps() {
@@ -7350,6 +7404,15 @@ public class NoOpCacheService implements CacheService {
 > 为什么必须补这一步：`5b12e38` 的标题是「并修计划原稿的熔断器死代码」，
 > 但它只改了 `RedisCacheService.java`、**没有动计划正文**，而本 Step 的复选框
 > 当时已经是 `- [x]`。于是任务书里躺着一份坏实现，下一个执行者照拄就复现缺陷。
+>
+> **2026-10-16 再补记（写路径缺口已修）**：原稿的 `put()` 把「序列化失败」与
+> 「Redis 故障」放在**同一个 catch** 里，于是调用方只要有一个地方缓存了序列化不了的
+> 值，三次之后**整个缓存**就被熔断——包括所有毫不相干的正常键，而且是**静默**的
+> （不抛异常，只是从此不缓存）。那是 `get()` 那边已经修掉的反序列化缺陷在写路径上的
+> **镜像**。本次把 `put()` 拆成两个 try：序列化失败**不计入熔断、只记 WARN**并跳过本次
+> put；Redis 故障照旧 `onFailure`。用户明确裁定**不加可观测计数、不改 `CacheService`
+> 接口**（那应当等真有需求时再做）。实测证据见文末
+> 「**Task 11 写路径缺口修复记录（2026-10-16）**」。
 
 ```java
 package com.change.cache;
@@ -7373,8 +7436,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * 三条自我保护：
  *   1. 所有 Redis 调用都捕获异常并降级为「未命中」——Redis 挂了不该让接口 500
  *   2. 连续失败达阈值后熔断一段时间，避免每次请求都白等 300 ms 连接超时
- *   3. **反序列化失败不计入熔断**：缓存里一条类型不匹配的脏数据不该把整个缓存关掉
- *      （那是「一条脏数据 → 缓存整体瘫痪」）。脏数据按未命中处理，只记日志。
+ *   3. **序列化/反序列化失败不计入熔断**：一条读不懂或写不进去的数据不该把整个缓存关掉
+ *      （那是「一条坏数据 → 缓存整体瘫痪」）。读路径按未命中处理、写路径跳过本次 put，
+ *      两者都只记日志；只有**真的 Redis 故障**才累加失败计数。
  *
  * <p><b>熔断状态必须是原子的。</b>本 Bean 在 {@code CacheConfig} 里装配为单例，
  * 服务多线程的 Spring MVC。计数器若只是普通 {@code int}，并发下
@@ -7490,15 +7554,27 @@ public class RedisCacheService implements CacheService {
     @Override
     public void put(String key, Object value, Duration ttl) {
         if (isBroken()) return;
+
+        // 两件事必须分开处置：**序列化失败**是「调用方给了一个缓存不了的值」，
+        // **Redis 故障**才是熔断该管的事。原来的单 try 把两者混在一起，于是调用方
+        // 只要有一个地方缓存了序列化不了的值，三次之后整个缓存就被关掉——包括所有
+        // 完全正常的、毫不相干的键，而且是**静默**的（不抛异常，只是从此不缓存）。
+        // 这正是 get() 那边在反序列化上修掉的同一类缺陷
+        // （「一条坏数据 → 缓存整体瘫痪」）在写路径上的镜像。
+        //
+        // 这里只记 WARN 并跳过本次 put：调用方下次给一个可序列化的值，缓存照常工作。
+        // 刻意**不加可观测计数**——那需要扩 CacheService 接口，应当等真有需求时再做。
+        String payload;
         try {
-            // ⚠️ 已知缺口（本任务未修，范围外）：这里把「序列化失败」与「Redis 故障」放在同一个
-            // catch 里。如果某个 value 的类型 Jackson 序列化不了，每次 put 都会走 onFailure，
-            // 于是**一条写不进去的数据就能把整个缓存熔断**——正是本任务在 get() 上修掉的
-            // 同一类缺陷（「一条坏数据 → 缓存整体瘫痪」）在读路径上的镜像。
-            // 未顺手改的原因：额外要求 A/B 明确只覆盖反序列化路径，put 的序列化失败需要
-            // 独立的设计判断（序列化失败该不该计入熔断、要不要在 put 里也拆两个 try）。
-            // 已记入报告的「自查发现」，留给后续任务。
-            redis.opsForValue().set(key, json.writeValueAsString(value), ttl);
+            payload = json.writeValueAsString(value);
+        } catch (Exception e) {
+            log.warn("缓存值序列化失败，本次 put 跳过。key={} 类型={} 原因={}",
+                    key, value == null ? "null" : value.getClass().getName(), e.toString());
+            return;
+        }
+
+        try {
+            redis.opsForValue().set(key, payload, ttl);
             onSuccess();
         } catch (Exception e) {
             onFailure("put", e);
@@ -7753,6 +7829,96 @@ cd backend && mvn -B test
 计划 1 完成后进入 **计划 2：动作库导入与肌群映射**。它需要本计划产出的 `exercise` / `muscle_group` / `exercise_muscle` 三张表与 `ExerciseRepo`。
 
 ---
+
+---
+
+# Task 11 写路径缺口修复记录（2026-10-16）
+
+> 本节记 **Task 11 的 `put()` 写路径缺口修复**。缺口是原实施者自己标注在源码注释里的
+> 「⚠️ 已知缺口（本任务未修，范围外）」，用户批准本次修掉。改动只落在
+> `RedisCacheService.java` 与 `CacheServiceTest.java`，**没有**动 `get()` 的逻辑、
+> 迁移文件、`application.yml`、`pom.xml`、`calc/`、`service/`，也**没有**加可观测计数、
+> **没有**改 `CacheService` 接口。测试从 123 → **125**（新增 2 条）。
+
+## 缺口：一条写不进去的数据会让整个缓存瘫痪
+
+原实现（单 try）：
+
+```java
+try {
+    redis.opsForValue().set(key, json.writeValueAsString(value), ttl);
+    onSuccess();
+} catch (Exception e) {
+    onFailure("put", e);
+}
+```
+
+`json.writeValueAsString` 与 Redis 命令在同一个 try 里，所以**序列化失败**也走
+`onFailure`，与真实的 Redis 故障一样累加连续失败计数。后果（用 `127.0.0.1:6399`
+实况实测，不是推断）：一个调用点缓存了序列化不了的值，**三次之后整个缓存被关掉**，
+且失效是**静默的**——不抛异常，只是从此不缓存。这是 `get()` 那边已经修好的
+「反序列化失败对熔断状态中性」的**镜像**。
+
+## 处置：拆成两个 try
+
+```java
+String payload;
+try {
+    payload = json.writeValueAsString(value);
+} catch (Exception e) {
+    log.warn("缓存值序列化失败，本次 put 跳过。key={} 类型={} 原因={}",
+            key, value == null ? "null" : value.getClass().getName(), e.toString());
+    return;
+}
+
+try {
+    redis.opsForValue().set(key, payload, ttl);
+    onSuccess();
+} catch (Exception e) {
+    onFailure("put", e);
+}
+```
+
+**裁定记录（用户明确）**：序列化失败**只记 WARN，不加可观测计数**。理由——加计数
+意味着 `CacheService` 接口要扩，而那应该等真有需求时再做。所以本次**不**顺手加计数器、
+**不**改接口。
+
+顺带删掉源码里那段「⚠️ 已知缺口（本任务未修，范围外）」注释——它修好之后就是假话了；
+类 javadoc 第 3 条也从「反序列化失败不计入熔断」扩成「序列化/反序列化失败不计入熔断」。
+
+## 新增的两条 mock 测试（不依赖任何外部服务）
+
+| 用例 | 钉住什么 |
+|---|---|
+| `a_serialization_failure_does_not_trip_the_breaker` | 连续 `FAILURE_THRESHOLD + 5` 次序列化失败的 put 之后 `isAvailable()` 仍为 `true`；并 `verify(template, never()).opsForValue()` 确认**序列化都没过就不该有网络调用** |
+| `a_real_redis_failure_on_put_still_trips_the_breaker` | **对照组**：`valueOps.set` 抛 `QueryTimeoutException` 时，阈值次 put 之后必须熔断——拆 try 不能把真正的 Redis 故障也一起放过 |
+
+两条都用 Mockito 造 `StringRedisTemplate`（沿用该测试类既有的 `valueOps()` 收口写法），
+所以**测试不依赖任何外部服务**这条硬约定没有被破坏。
+
+## 变异实测（验收核心，每个变异体都先 `clean`）
+
+| # | 变异（对磁盘原文做一处逐字替换） | 结果 | 变红的用例 | `Tests run` |
+|---|---|---|---|---|
+| V1 | `put` 退回原来的单 try（序列化失败与 Redis 故障同一个 catch） | **杀** | `a_serialization_failure_does_not_trip_the_breaker` | 125 / Failures 1 |
+| V2 | 第二个 catch 也不 `onFailure`（两类失败都不计入熔断） | **杀** | `a_real_redis_failure_on_put_still_trips_the_breaker` | 125 / Failures 1 |
+
+两次都是「**恰好 1 条变红**、另外 124 条照旧绿」，说明新断言既有判别力、也没有误伤
+别的测试。每个变异体跑完都用 sha256 校验源码逐字节恢复。
+
+## 实况实测（一次性探针，跑完已删）
+
+用调用方起的独立实例 `127.0.0.1:6399`（Redis 5.0.14.1，只绑回环）跑了一次真实
+`RedisCacheService`（真 Lettuce 连接，300 ms 连接超时 / 500 ms 命令超时，与
+`application.yml` 一致）：
+
+- 连续 6 次「序列化不了的值」的 put → `isAvailable` **始终 true**（阈值是 3）；
+- 之后一个正常 put **能被读回来**（`Optional["hello-from-probe"]`）；
+- 探针前后 `KEYS probe:*` 都是**空**、`EXISTS probe:bad:1` = **0**——
+  序列化都没过就不该有网络调用，Redis 侧确实一个键都没写。
+
+探针只在回环实例上跑，**从未**引用 `192.168.100.128:6379`；跑完探针源码与 class
+已删除，仓库里**只**留下 mock 测试。
 
 # Task 7 质量审查轮记录（2026-10-15）
 

@@ -19,8 +19,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * 三条自我保护：
  *   1. 所有 Redis 调用都捕获异常并降级为「未命中」——Redis 挂了不该让接口 500
  *   2. 连续失败达阈值后熔断一段时间，避免每次请求都白等 300 ms 连接超时
- *   3. **反序列化失败不计入熔断**：缓存里一条类型不匹配的脏数据不该把整个缓存关掉
- *      （那是「一条脏数据 → 缓存整体瘫痪」）。脏数据按未命中处理，只记日志。
+ *   3. **序列化/反序列化失败不计入熔断**：一条读不懂或写不进去的数据不该把整个缓存关掉
+ *      （那是「一条坏数据 → 缓存整体瘫痪」）。读路径按未命中处理、写路径跳过本次 put，
+ *      两者都只记日志；只有**真的 Redis 故障**才累加失败计数。
  *
  * <p><b>熔断状态必须是原子的。</b>本 Bean 在 {@code CacheConfig} 里装配为单例，
  * 服务多线程的 Spring MVC。计数器若只是普通 {@code int}，并发下
@@ -136,15 +137,27 @@ public class RedisCacheService implements CacheService {
     @Override
     public void put(String key, Object value, Duration ttl) {
         if (isBroken()) return;
+
+        // 两件事必须分开处置：**序列化失败**是「调用方给了一个缓存不了的值」，
+        // **Redis 故障**才是熔断该管的事。原来的单 try 把两者混在一起，于是调用方
+        // 只要有一个地方缓存了序列化不了的值，三次之后整个缓存就被关掉——包括所有
+        // 完全正常的、毫不相干的键，而且是**静默**的（不抛异常，只是从此不缓存）。
+        // 这正是 get() 那边在反序列化上修掉的同一类缺陷
+        // （「一条坏数据 → 缓存整体瘫痪」）在写路径上的镜像。
+        //
+        // 这里只记 WARN 并跳过本次 put：调用方下次给一个可序列化的值，缓存照常工作。
+        // 刻意**不加可观测计数**——那需要扩 CacheService 接口，应当等真有需求时再做。
+        String payload;
         try {
-            // ⚠️ 已知缺口（本任务未修，范围外）：这里把「序列化失败」与「Redis 故障」放在同一个
-            // catch 里。如果某个 value 的类型 Jackson 序列化不了，每次 put 都会走 onFailure，
-            // 于是**一条写不进去的数据就能把整个缓存熔断**——正是本任务在 get() 上修掉的
-            // 同一类缺陷（「一条坏数据 → 缓存整体瘫痪」）在读路径上的镜像。
-            // 未顺手改的原因：额外要求 A/B 明确只覆盖反序列化路径，put 的序列化失败需要
-            // 独立的设计判断（序列化失败该不该计入熔断、要不要在 put 里也拆两个 try）。
-            // 已记入报告的「自查发现」，留给后续任务。
-            redis.opsForValue().set(key, json.writeValueAsString(value), ttl);
+            payload = json.writeValueAsString(value);
+        } catch (Exception e) {
+            log.warn("缓存值序列化失败，本次 put 跳过。key={} 类型={} 原因={}",
+                    key, value == null ? "null" : value.getClass().getName(), e.toString());
+            return;
+        }
+
+        try {
+            redis.opsForValue().set(key, payload, ttl);
             onSuccess();
         } catch (Exception e) {
             onFailure("put", e);
