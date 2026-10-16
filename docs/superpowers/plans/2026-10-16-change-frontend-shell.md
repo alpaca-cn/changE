@@ -1385,7 +1385,12 @@ describe('顶部工具条', () => {
 
 Run: `cd frontend && pnpm test src/components/AppSidebar.spec.ts src/components/AppToolbar.spec.ts`
 
-Expected: `Tests  7 passed`（侧边栏 4 + 工具条 3）
+Expected: `Tests  9 passed`（侧边栏 6 + 工具条 3）
+
+> **计数校正（2026-10-16，Task 7 复核实测）**：这里原先写的是 `Tests  7 passed`
+> （侧边栏 4 + 工具条 3）。侧边栏实际产出 **6 条**——实现时多了「分隔线在「我的」
+> 分组内部」与「「我的」在 DOM 里排在所有功能区之后」两条；`pnpm test` 的 per-file
+> 行实测 `AppSidebar.spec.ts` = 6 条、`AppToolbar.spec.ts` = 3 条，合计 9。
 
 - [x] **Step 12: 改 `main.ts` 与 `App.vue` 用上路由、侧边栏与工具条**
 
@@ -1439,7 +1444,12 @@ pnpm test
 pnpm tauri dev
 ```
 
-Expected: 测试 `Tests  20 passed`（8 主题 + 5 导航 + 4 侧边栏 + 3 工具条）；窗口里出现左侧深色侧边栏（四个分组、「人体图」带「预留」角标、「我的」贴底带分隔线）+ 顶部工具条显示当前页名；点各分组能切页，工具条跟着变。
+Expected: 测试 `Tests  25 passed`（8 主题 + 5 导航 + 6 侧边栏 + 3 工具条 + 3 router）；窗口里出现左侧深色侧边栏（四个分组、「人体图」带「预留」角标、「我的」贴底带分隔线）+ 顶部工具条显示当前页名；点各分组能切页，工具条跟着变。
+
+> **计数校正（2026-10-16，Task 7 复核实测）**：这里原先写的是 `Tests  20 passed`
+> （8 主题 + 5 导航 + 4 侧边栏 + 3 工具条），两个数都过时了：Task 3 实际产出
+> **侧边栏 6 条**，外加计划里没预料到的 **`router.spec.ts` 3 条**。所以 Task 3
+> 结束时是 **25 条**（与 Task 6 Step 7 那张 per-file 表一致）。
 
 - [x] **Step 14: 提交**
 
@@ -1877,9 +1887,18 @@ endswith \r\n = True
 （`$env:JAVA_HOME = ''` 很常见）不该被当成有效的 JDK 根目录，否则会拼出
 `\bin\java.exe` 这种相对路径。
 
-至此 Task 4 的测试计数是 **16 + 2 = 18**；Task 5 完成后的总数是 18 + 6 = **24**
-（Task 5 的 Step 4 / Step 6 已按这两个数改过——原先写的 `22 passed` 与 `17 passed`
-都是没把这两条算进去的旧数）。
+至此 Task 4 的测试计数是 **16 + 2 = 18**；Task 5 完成后的总数是 18 + 14 = **32**
+（外加 1 条 `#[ignore]` 的真实后端 e2e，`cargo test` 默认不跑它；磁盘上 `#[test]` 合计 33）。
+
+> **计数校正（2026-10-16，Task 7 复核实测）**：这一段原先写的是「18 + 6 = **24**」。
+> 那个 6 是**计划栅栏里**的条数，而实现实际补到 **14** 条。实测输出：
+>
+> ```
+> test result: ok. 32 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.33s
+> ```
+>
+> 同一段里原先那两个数（`22 passed`、`17 passed`）与 Task 5 的 Step 4 / Step 6
+> 都只按栅栏里的 6 条算，一并在本次复核里改成 32。
 
 ---
 
@@ -1892,7 +1911,7 @@ endswith \r\n = True
 - Modify: `frontend/src-tauri/src/lib.rs`
 - Test: `frontend/src-tauri/src/backend.rs`（同文件追加测试）
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 在 `backend.rs` 的 `mod tests` 里追加：
 
@@ -1947,13 +1966,13 @@ endswith \r\n = True
     }
 ```
 
-- [ ] **Step 2: 跑测试，确认失败**
+- [x] **Step 2: 跑测试，确认失败**
 
 Run: `cd frontend/src-tauri && cargo test`
 
 Expected: 编译失败 —— `cannot find type BackendState` / `cannot find value STARTUP_TIMEOUT`
 
-- [ ] **Step 3: 写实现**
+- [x] **Step 3: 写实现**
 
 在 `backend.rs` 顶部（`use` 之后）加：
 
@@ -2130,13 +2149,16 @@ impl Backend {
 }
 ```
 
-- [ ] **Step 4: 跑测试，确认通过**
+- [x] **Step 4: 跑测试，确认通过**
 
 Run: `cd frontend/src-tauri && cargo test`
 
-Expected: `test result: ok. 24 passed`（Task 4 的 18 条 + 本任务的 6 条）
+Expected: `test result: ok. 32 passed`（Task 4 的 18 条 + 本任务的 14 条；另有 1 条 `#[ignore]` 的真实后端 e2e 不计入）
 
-- [ ] **Step 5: 在 `lib.rs` 里接线：加 `get_backend_status` 命令、启动时拉起后端、退出时关掉**
+> **计数校正（2026-10-16，Task 7 复核实测）**：这里原先写的是 `24 passed`（18 + 6）。
+> 本任务的栅栏只给了 6 条，实现实际补到 14 条；实测 `32 passed; 0 failed; 1 ignored`。
+
+- [x] **Step 5: 在 `lib.rs` 里接线：加 `get_backend_status` 命令、启动时拉起后端、退出时关掉**
 
 ```rust
 mod backend;
@@ -2235,7 +2257,7 @@ pub fn run() {
     }
 ```
 
-- [ ] **Step 6: 编译 + 单元测试都过**
+- [x] **Step 6: 编译 + 单元测试都过**
 
 Run:
 ```powershell
@@ -2244,9 +2266,9 @@ cargo test
 cargo build
 ```
 
-Expected: `cargo test` → 24 passed；`cargo build` → 编译通过。
+Expected: `cargo test` → 32 passed（另有 1 条 `#[ignore]` 不计入）；`cargo build` → 编译通过。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add frontend/src-tauri/src
@@ -2281,7 +2303,7 @@ git commit -m "feat(shell): 拉起后端子进程并读 stdout 的 CHANGE_PORT
 > 补 `App.spec.ts` 就是把整壳结构（侧边栏 / 工具条 / 工作区 / 状态栏四者都在、
 > 且层级与顺序正确）钉住，让这类「模板里漏了一行」的改动变成红的。
 
-- [ ] **Step 1: 写失败的测试（API 客户端）**
+- [x] **Step 1: 写失败的测试（API 客户端）**
 
 ```ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -2351,13 +2373,13 @@ describe('checkHealth', () => {
 })
 ```
 
-- [ ] **Step 2: 跑测试，确认失败**
+- [x] **Step 2: 跑测试，确认失败**
 
 Run: `cd frontend && pnpm test src/api/backend.spec.ts`
 
 Expected: FAIL —— `Failed to resolve import "./backend"`
 
-- [ ] **Step 3: 写 `frontend/src/api/backend.ts`**
+- [x] **Step 3: 写 `frontend/src/api/backend.ts`**
 
 ```ts
 import { invoke } from '@tauri-apps/api/core'
@@ -2417,7 +2439,7 @@ export async function checkHealth(port: number): Promise<Health> {
 }
 ```
 
-- [ ] **Step 4: 跑测试，确认通过**
+- [x] **Step 4: 跑测试，确认通过**
 
 Run: `cd frontend && pnpm test src/api/backend.spec.ts`
 
@@ -2427,7 +2449,7 @@ Expected: `Tests  9 passed`（describeState 4 条 + Rust 序列化契约 2 条 +
 > `backend.spec.ts` 最后一条 describeState 用例（`遇到没见过的状态时显示出来`）
 > 守的是 Step 3 里 `default` 这个真实分支，所以它与实现同批进文件。
 
-- [ ] **Step 5: 写 `frontend/src/components/BackendStatusBar.vue`**
+- [x] **Step 5: 写 `frontend/src/components/BackendStatusBar.vue`**
 
 ```vue
 <script setup lang="ts">
@@ -2603,7 +2625,7 @@ const desc = computed(() => describeState(state.value))
 > 状态」与「稳态下 health 按 5 秒节奏刷新，而不是 500ms」（后者断言 60 秒内
 > 不超过 14 次——若跟着 500ms 走会是 120 次）。
 
-- [ ] **Step 6: 改 `App.vue`，把状态栏挂上**
+- [x] **Step 6: 改 `App.vue`，把状态栏挂上**
 
 ```vue
 <script setup lang="ts">
@@ -2641,7 +2663,7 @@ import BackendStatusBar from './components/BackendStatusBar.vue'
 > 它照样绿。所以 Task 6 补了 `App.spec.ts`（Step 6b），把整壳结构钉住。
 > **改动 `App.vue` 时以这份 fence 为准，它有三个子组件，一个都不能少。**
 
-- [ ] **Step 6b: 写 `frontend/src/App.spec.ts`（整壳测试——补上被漏掉的那道守卫）**
+- [x] **Step 6b: 写 `frontend/src/App.spec.ts`（整壳测试——补上被漏掉的那道守卫）**
 
 如果只有组件各自的测试，`App.vue` 的模板内容就是**完全没人守**的地方：少一个
 `import`、少一个 `<AppToolbar />`、把状态栏挪到 `workspace` 上面，全都不会有测试变红。
@@ -2727,7 +2749,7 @@ describe('整壳结构', () => {
 })
 ```
 
-- [ ] **Step 7: 跑全部前端测试**
+- [x] **Step 7: 跑全部前端测试**
 
 Run: `cd frontend && pnpm test`
 
@@ -2760,7 +2782,7 @@ Expected: `Tests  46 passed`（Test Files 8 passed）
 > `26 → 46` 不是「数错了」，是**前面几步的旧数没跟着实现走**。以后改测试计数请直接
 > 贴 `pnpm test` 的 per-file 输出，不要手算。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add frontend/src/api frontend/src/components/BackendStatusBar.vue frontend/src/App.vue
@@ -2801,7 +2823,7 @@ git commit -m "feat(frontend): 加载提示与后端状态接线，第一次能�
 **Files:**
 - Modify: `docs/superpowers/plans/2026-10-14-change-phase1-overview.md`
 
-- [ ] **Step 1: 准备一个能跑的后端 jar**
+- [x] **Step 1: 准备一个能跑的后端 jar**
 
 Run:
 ```powershell
@@ -2813,7 +2835,7 @@ mvn -B -q -DskipTests package
 
 Expected: `backend/target/change-backend-0.1.0-SNAPSHOT.jar` 存在（约 79 MB）。
 
-- [ ] **Step 2: 端到端跑一次，逐条核对下面这个清单**
+- [x] **Step 2: 端到端跑一次，逐条核对下面这个清单**
 
 Run:
 ```powershell
@@ -2838,7 +2860,14 @@ pnpm tauri dev
 
 **如果第 2 条闪白或第 10 条留了孤儿进程——那是真缺陷，停下来报告，不要绕过。**
 
-- [ ] **Step 3: 记一次「后端起不来」的失败形态**
+> **10 条的实测值记在总览里**：`docs/superpowers/plans/2026-10-14-change-phase1-overview.md`
+> 的「计划 1 与计划 2 之间：Tauri 外壳与 Vue 前端脚手架」一节（含「怎么测的」：起点、终点、
+> 抓帧方式与数值）。其中**第 5 条不满足**——右侧缓存位实测显示的是
+> `缓存状态取不到：TypeError: Failed to fetch`，不是「缓存：未启用（配置为关闭）」；
+> 因此下面「完成标准」的第 4 条没有勾。根因（后端缺 `Access-Control-Allow-Origin`）
+> 与对照实验记在那一节末尾的「验收记录」里。
+
+- [x] **Step 3: 记一次「后端起不来」的失败形态**
 
 故意破坏一下，确认失败路径给出的是**能读懂的话**而不是无限等待：
 
@@ -2853,7 +2882,7 @@ Expected: 状态栏显示「找不到后端 jar。请先在 backend/ 下执行�
 
 记下实际文案。然后 `Remove-Item Env:\CHANGE_BACKEND_JAR` 清掉。
 
-- [ ] **Step 4: 把验收结果记进总览**
+- [x] **Step 4: 把验收结果记进总览**
 
 在 `docs/superpowers/plans/2026-10-14-change-phase1-overview.md` 的「计划清单与依赖」表**之后**插入一节：
 
@@ -2887,7 +2916,7 @@ Expected: 状态栏显示「找不到后端 jar。请先在 backend/ 下执行�
 
 **把上面每一个 `<填写…>` 都换成你实际观察到的东西**——不要照抄期望值。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add docs/superpowers/plans/2026-10-14-change-phase1-overview.md
@@ -2903,15 +2932,31 @@ git commit -m "docs(plan): 记录外壳脚手架完成与端到端实测结果
 
 本计划结束时必须全部满足：
 
-- [ ] `cd frontend && pnpm test` 全绿，**报告实际条数**
-- [ ] `cd frontend/src-tauri && cargo test` 全绿，**报告实际条数**（Task 4 落地时实测 **18 passed**，2026-10-16）
-- [ ] `pnpm tauri dev` 能起出一个深色窗口，**不闪白**
+- [x] `cd frontend && pnpm test` 全绿，**报告实际条数**
+- [x] `cd frontend/src-tauri && cargo test` 全绿，**报告实际条数**（2026-10-16 Task 7 验收实测 **32 passed; 0 failed; 1 ignored**；Task 4 落地时的 18 passed 是其中的一部分，另外 14 条由 Task 5 补上，那 1 条 `#[ignore]` 的真实后端 e2e 用 `cargo test -- --ignored` 单独跑）
+- [x] `pnpm tauri dev` 能起出一个深色窗口，**不闪白**
 - [ ] 窗口里能看到「后端已连接 · 端口 <数字>」与缓存状态
-- [ ] 关窗后**没有残留的 java 进程**
-- [ ] 把 jar 指到不存在的路径时，状态栏给出**能读懂的原因**，而不是无限等
-- [ ] `theme.css` 里的 token 与设计文档「九、界面与视觉方向」逐值一致（由 `theme.spec.ts` 守住）
-- [ ] 侧边栏四个分组、9 个入口、人体图的「预留」角标、「我的」贴底带分隔线——与设计文档一致
-- [ ] `git status --short` 无输出
+- [x] 关窗后**没有残留的 java 进程**
+- [x] 把 jar 指到不存在的路径时，状态栏给出**能读懂的原因**，而不是无限等
+- [x] `theme.css` 里的 token 与设计文档「九、界面与视觉方向」逐值一致（由 `theme.spec.ts` 守住）
+- [x] 侧边栏四个分组、9 个入口、人体图的「预留」角标、「我的」贴底带分隔线——与设计文档一致
+- [x] `git status --short` 无输出
+
+> **验收记录（2026-10-16，Task 7 端到端实测）**：9 条里 **8 条勾上，第 4 条没勾**。
+>
+> 第 4 条的前半段成立——状态栏确实显示 `后端已连接 · 端口 61998`；后半段不成立：
+> 右侧缓存位显示的是 **`缓存状态取不到：TypeError: Failed to fetch`**，
+> 不是设计里的「缓存：未启用（配置为关闭）」。
+>
+> 根因已用对照实验钉死：后端 `/api/health` 本身是好的（直接请求返回 `200` +
+> `{"cache":"缓存：未启用（配置为关闭）","status":"up"}`），但它**没有
+> `Access-Control-Allow-Origin` 头**；而页面源（dev 是 `http://127.0.0.1:1420`，
+> 打包后是 `http://tauri.localhost`）与后端随机端口**不同源**，浏览器于是把响应拦掉。
+> 用同一个假后端跑两次、只切换有没有 ACAO 头：加了就显示「缓存：未启用（配置为关闭）」，
+> 不加就复现 `TypeError: Failed to fetch`。所以是 CORS，不是 CSP。
+>
+> 46 条前端测试**全部 mock 掉了 `fetch`**，这条路径第一次真机执行就是它的第一次执行。
+> 修法（后端补 CORS，或外壳代发健康检查）不在本计划范围内，留给下一个任务。
 
 ## 风险与未知
 
