@@ -22,6 +22,19 @@ class OneRepMaxTest {
         assertThat(OneRepMax.epley(62.5, 1)).isEqualTo(62.5);
         // reps=2 起才走 Epley
         assertThat(OneRepMax.epley(100, 2)).isEqualTo(Round.to2(100 * (1 + 2 / 30.0)));
+        // reps=1 走特判，原值直返、不经舍入；reps>=2 走 Round.to2。
+        // 这不是疏漏：单次的实测重量本身就是精确值，没有需要抹掉的浮点噪声。
+        assertThat(OneRepMax.epley(60.125, 1)).isEqualTo(60.125);
+        assertThat(OneRepMax.epley(60.125, 2)).isEqualTo(64.13);
+    }
+
+    @Test
+    void the_upper_bound_itself_is_still_estimable() {
+        // 12 是合法上界（拒绝侧 13 已有测试，合法侧此前没有）。
+        // 把 > MAX_REPS 写成 >= MAX_REPS 会静默拒绝最后一档——这是边界漏测的典型。
+        assertThat(OneRepMax.epley(60, 12)).isEqualTo(84.0);
+        assertThat(OneRepMax.bestOf(java.util.List.of(new OneRepMax.Set(60, 12))))
+                .hasValue(84.0);
     }
 
     @Test
@@ -72,15 +85,31 @@ class OneRepMaxTest {
     }
 
     @Test
+    void epley_of_zero_weight_is_zero_but_best_of_will_not_report_it() {
+        // epley 是公式本身：0 重量算出的 1RM 就是 0。
+        // 但「0 会被画成曲线上的一个点」这件事由 bestOf 负责挡住——
+        // 领域入口是 bestOf，不要拿 epley 的结果直接画图或直接取 max。
+        assertThat(OneRepMax.epley(0, 8)).isZero();
+        assertThat(OneRepMax.bestOf(java.util.List.of(new OneRepMax.Set(0, 8)))).isEmpty();
+    }
+
+    @Test
     void epley_validates_its_own_inputs() {
         // 直接测公开入口：Set 的构造器会先挡住负数与非法重复次数，
-        // 所以这三条守卫只有绕过 Set 才走得到（变异测试实测它们此前无覆盖）。
+        // 所以这几条守卫只有绕过 Set 才走得到（变异测试实测它们先前无覆盖）。
         assertThatThrownBy(() -> OneRepMax.epley(60, 0))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("reps");
         assertThatThrownBy(() -> OneRepMax.epley(-60, 5))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
         assertThatThrownBy(() -> OneRepMax.epley(60, 13))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("12");
+        // 特判必须排在验证之后：否则 reps=1 时这些非法值会被原样返回（静默）。
+        assertThatThrownBy(() -> OneRepMax.epley(Double.NaN, 1))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
+        assertThatThrownBy(() -> OneRepMax.epley(-60, 1))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
+        assertThatThrownBy(() -> OneRepMax.epley(Double.POSITIVE_INFINITY, 1))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
     }
 
     @Test
@@ -108,6 +137,12 @@ class OneRepMaxTest {
     @Test
     void set_validates_its_own_fields() {
         assertThatThrownBy(() -> new OneRepMax.Set(Double.NaN, 5))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
+        // 约定三承诺的是「拒绝 NaN 与 ±∞」：只测 NaN 的话，
+        // 把 !Double.isFinite(weight) 写成 Double.isNaN(weight) 的变异会存活。
+        assertThatThrownBy(() -> new OneRepMax.Set(Double.POSITIVE_INFINITY, 5))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
+        assertThatThrownBy(() -> new OneRepMax.Set(Double.NEGATIVE_INFINITY, 5))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
         assertThatThrownBy(() -> new OneRepMax.Set(-60, 5))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");

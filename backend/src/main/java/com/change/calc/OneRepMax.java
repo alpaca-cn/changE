@@ -12,9 +12,10 @@ import java.util.OptionalDouble;
  *
  * 用 Epley 公式：1RM = w × (1 + reps / 30)。
  *
- * Epley 的适用域是 reps >= 2。reps = 1 时本方法直接返回实测重量——
- * 1RM 的定义就是「一组只能做一次的最大重量」，不需要外推，
- * 而 Epley 在这一点上会给出 3.3% 的系统性高估（w × 31/30）。
+ * Epley 在 reps=1 处的拟合值比实测高 3.33%（w × 31/30），本项目在这一点取实测值——
+ * 这与业界计算器的通行呈现一致（它们在 1 rep 一行也显示实测重量）。
+ * 理由是定义的：1RM 就是「一组只能做一次的最大重量」，reps = 1 那一次举起的重量
+ * 本身就是它，不需要任何外推。
  */
 public final class OneRepMax {
 
@@ -35,7 +36,7 @@ public final class OneRepMax {
      * （比较恒为 false），一路走到 {@link Round#to2} 变成 {@code 0.0}——
      * 静默给出「1RM 是 0」这个看起来像数字的错答案。
      *
-     * <p>注意 {@code weight == 0} **能构造出来**（0 是合法重量：上面那条校验只管负数与 NaN），
+     * <p>注意 {@code weight == 0} **能构造出来**（0 是合法重量：上面那条校验只管负数与非有限值），
      * 但它**不可估算**：{@link #bestOf} 把 {@code weight <= 0} 当成「不是一次真实的负重」跳过。
      * 「能构造」与「可估算」是两件事——构造器若拒绝 0，会连带拒掉计时动作
      * {@code new Set(0, null)} 这种正常输入。所以 0 的处置落在 {@code bestOf}，不在这里。
@@ -62,7 +63,15 @@ public final class OneRepMax {
      * Epley 公式估算单组 1RM。
      *
      * <p>{@code reps == 1} 时**不外推**，直接返回实测 {@code weight}——
-     * Epley 的适用域是 {@code reps >= 2}，理由见类注释。
+     * 本项目在这一点取实测值而不是 Epley 的拟合值（后者高 3.33%），理由见类注释。
+     *
+     * <p>注意：本方法是公式本身，不做领域过滤——{@code epley(0, r)} 返回 0。
+     * 「0 重量不该产生 1RM 曲线上的点」由 {@link #bestOf} 负责（它会跳过非正重量）。
+     * 领域入口是 {@code bestOf}，不要拿本方法的结果直接画图。
+     *
+     * <p>舍入是不对称的，这是有意的：{@code reps == 1} 走特判、**原值直接返回**、不经舍入
+     * （单次的实测重量本身就是精确值，没有需要抹掉的浮点噪声）；
+     * {@code reps >= 2} 才走 {@link Round#to2}。
      *
      * @param weight 重量；必须是有限且非负的
      * @param reps   次数；{@code 1..}{@link #MAX_REPS}。超过 {@link #MAX_REPS} 直接拒绝——
@@ -88,7 +97,7 @@ public final class OneRepMax {
             // 1RM 的定义就是「一组只能做一次的最大重量」，reps=1 不需要外推。
             // Epley 是给 reps>=2 做的拟合，它在 reps=1 处给 w*31/30，即 3.3% 的系统性高估——
             // 而这是最可靠的一个数据点，高估它会让人不信任整条曲线。
-            // 所以 Epley 的适用域写成 reps>=2，reps=1 直接返回实测重量。
+            // 所以本项目在 reps=1 处取实测值，而不是 Epley 的外推值。
             return weight;
         }
         return Round.to2(weight * (1 + reps / 30.0));
