@@ -1,0 +1,86 @@
+/*
+ * changE 的视觉 token —— 唯一来源。
+ *
+ * 值来自设计文档「九、界面与视觉方向」。任何组件都不许写死颜色，
+ * 一律 var(--xxx)。theme.spec.ts 会把下面这几个值钉住，防止悄悄漂移。
+ *
+ * 只做深色主题：厚重感一半来自深色底与高对比，再维护一套浅色主题
+ * 会稀释这个方向，且测试成本翻倍（设计文档已封板）。
+ */
+:root {
+  /* 背景三层 */
+  --bg: #0d0f12;
+  --panel: #14171b;
+  --line: #262b31;
+
+  /* 唯一强调色：肌肉高亮、主按钮、进度条都用它 */
+  --accent: #e0453a;
+
+  /* 文字 */
+  --text: #d8dee6;
+  --text-dim: #6b7480;
+  --eyebrow: #6b7480;
+
+  /* 排版 */
+  --title-weight: 800;
+  --title-tracking: -0.015em;
+  --eyebrow-tracking: 0.16em;
+
+  /* 形状：靠描边与间距分层，不用阴影 */
+  --radius: 5px;
+  --line-width: 1px;
+
+  /* 间距：留白放宽，用空白而不是卡片边框分组 */
+  --gap-xs: 4px;
+  --gap-sm: 8px;
+  --gap-md: 16px;
+  --gap-lg: 28px;
+  --gap-xl: 44px;
+
+  --font: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-weight: var(--title-weight);
+  letter-spacing: var(--title-tracking);
+  margin: 0;
+}
+
+/* 小标签：全大写 + 宽字距 + 灰 */
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: var(--eyebrow-tracking);
+  color: var(--eyebrow);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: var(--line-width) solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button:hover { border-color: var(--accent); }
+
+a { color: var(--accent); }
