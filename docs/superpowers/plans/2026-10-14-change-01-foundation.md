@@ -6459,7 +6459,7 @@ git commit -m "feat: HTTP 骨架 + 端口协商（stdout 上报 CHANGE_PORT=）"
 > 用「占位实现」的理由一路带过去——而本计划的完成标准里写明 `/api/health`
 > **「如实报告缓存状态」**，查值的断言正是那句话的唯一守卫。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```java
 package com.change.cache;
@@ -6495,13 +6495,13 @@ class CacheServiceTest {
 }
 ```
 
-- [ ] **Step 2: 跑测试，确认失败**
+- [x] **Step 2: 跑测试，确认失败**
 
 Run: `cd backend && mvn -B test -Dtest=CacheServiceTest`
 
 Expected: 编译失败，`cannot find symbol: class CacheService`
 
-- [ ] **Step 3: 写接口与降级实现**
+- [x] **Step 3: 写接口与降级实现**
 
 ```java
 package com.change.cache;
@@ -6584,7 +6584,7 @@ public class NoOpCacheService implements CacheService {
 }
 ```
 
-- [ ] **Step 4: 写 Redis 实现（含熔断）**
+- [x] **Step 4: 写 Redis 实现（含熔断）**
 
 ```java
 package com.change.cache;
@@ -6704,7 +6704,7 @@ public class RedisCacheService implements CacheService {
 }
 ```
 
-- [ ] **Step 5: 改 CacheConfig 做启动探测与条件装配**
+- [x] **Step 5: 改 CacheConfig 做启动探测与条件装配**
 
 ```java
 package com.change.config;
@@ -6771,19 +6771,19 @@ public class CacheConfig {
 }
 ```
 
-- [ ] **Step 6: 跑缓存测试**
+- [x] **Step 6: 跑缓存测试**
 
 Run: `cd backend && mvn -B test -Dtest=CacheServiceTest`
 
 Expected: `Tests run: 2, Failures: 0, Errors: 0`
 
-- [ ] **Step 7: 跑全量测试，确认 Task 1 的失败已消失**
+- [x] **Step 7: 跑全量测试，确认 Task 1 的失败已消失**
 
 Run: `cd backend && mvn -B test`
 
 Expected: 全部通过。**特别确认 `ChangeApplicationTests.contextLoads` 通过**——这条在 Task 1 时可能因 Redis 不可达而失败，现在应该绿。如果它仍然失败，说明降级没生效，回到 Step 5 检查。
 
-- [ ] **Step 8: 验证两个场景（不需要开虚拟机）**
+- [x] **Step 8: 验证两个场景（不需要开虚拟机）**
 
 场景一，Redis 关闭时：
 ```bash
@@ -6800,7 +6800,7 @@ Expected: **启动不失败**；健康端点返回 `"cache":"缓存：未启用�
 
 > 这一步需要 Redis 真在线时才能验「已连接」。**到时候跟我说一声，我把虚拟机开起来**，再跑一次确认 `"cache":"已连接 192.168.100.128:6379"`。
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 ```bash
 git add backend/src/main/java/com/change/cache backend/src/main/java/com/change/config/CacheConfig.java \
