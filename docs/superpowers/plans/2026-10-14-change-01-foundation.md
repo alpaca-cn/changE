@@ -4198,7 +4198,7 @@ UI 与服务层（Task 9）还没写，所以给 `Status` 加第五个值不会�
 - Create: `backend/src/main/java/com/change/calc/OneRepMax.java`
 - Test: `backend/src/test/java/com/change/calc/OneRepMaxTest.java`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 ```java
 package com.change.calc;
@@ -4218,8 +4218,16 @@ class OneRepMaxTest {
     }
 
     @Test
-    void single_rep_returns_the_weight_itself() {
-        assertThat(OneRepMax.epley(100, 1)).isEqualTo(100.0);
+    void single_rep_is_still_scaled_by_epley() {
+        // ⚠️ 这是第二处修正（原测试名 single_rep_returns_the_weight_itself，期望 100.0）。
+        // 标准 Epley 在 reps=1 时**不**返回重量本身：100 × (1 + 1/30) = 100 × 31/30
+        //   = 3100/30 = 103.333… → 103.33（实测 "expected: 100.0 but was: 103.33"）。
+        // 「reps=1 时 1RM 就是举起的那个重量」是**物理事实**，也确实是 Brzycki 公式
+        // （w × 36/(37−reps)，reps=1 时恰好退化成 w）的性质——原测试名沿用的是 Brzycki 的直觉，
+        // 与计划里写死的 Epley 公式（1RM = w × (1 + reps/30)）不是同一个公式。
+        // 这里按 Epley 的算术结果断言，并把测试名改成与断言相符的说法：
+        // 一个叫「返回重量本身」却断言 103.33 的测试，本身就是一处会误导人的不实自述。
+        assertThat(OneRepMax.epley(100, 1)).isEqualTo(103.33);
     }
 
     @Test
@@ -4232,12 +4240,18 @@ class OneRepMaxTest {
 
     @Test
     void best_of_a_session_picks_the_max() {
+        // ⚠️ 这是修正：计划里这条原写 75.0，与同文件 timed_sets_are_ignored 对
+        // 同一组 Set(60, 8) 断言的 76.0 自相矛盾。独立核算（标准 Epley，1RM = w × (1 + reps/30)）：
+        //   60   × (1 + 8/30) = 60   × 38/30 = 2280/30 = 76.00   ← 最大
+        //   62.5 × (1 + 6/30) = 62.5 × 1.2   = 75.00
+        //   65   × (1 + 4/30) = 65   × 34/30 = 2210/30 = 73.666… → 73.67
+        // 所以正确值是 76.0；实现（标准 Epley）是对的，改的是这条期望值。
         double best = OneRepMax.bestOf(java.util.List.of(
                 new OneRepMax.Set(60, 8),
                 new OneRepMax.Set(62.5, 6),
                 new OneRepMax.Set(65, 4)));
 
-        assertThat(best).isEqualTo(75.0);
+        assertThat(best).isEqualTo(76.0);
     }
 
     @Test
@@ -4249,21 +4263,89 @@ class OneRepMaxTest {
 
         assertThat(best).isEqualTo(76.0);
     }
+
+    @Test
+    void rejects_non_finite_weight() {
+        // NaN 会绕过 weight < 0（比较恒为 false），一路走到 Round.to2 变成 0.0——
+        // 静默给出「1RM 是 0」这个看起来像数字的错答案。
+        assertThatThrownBy(() -> OneRepMax.epley(Double.NaN, 5))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
+        assertThatThrownBy(() -> OneRepMax.epley(Double.POSITIVE_INFINITY, 5))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
+    }
+
+    @Test
+    void set_validates_its_own_fields() {
+        assertThatThrownBy(() -> new OneRepMax.Set(Double.NaN, 5))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
+        assertThatThrownBy(() -> new OneRepMax.Set(-60, 5))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("weight");
+        assertThatThrownBy(() -> new OneRepMax.Set(60, -1))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("repetitions");
+        // 0 次是合法的（记了但没次数），与 null（计时动作）不同
+        assertThat(new OneRepMax.Set(60, 0).repetitions()).isZero();
+    }
+
+    @Test
+    void best_of_rejects_null_input() {
+        // ⚠️ 断言用「不能」而不是「null」：JDK 裸 NPE 的消息里本来就含 "null"
+        //（Cannot invoke "..." because "s" is null），用 "null" 做断言会恒真——
+        // 删掉 requireNonNull 之后测试照样绿。这个坑在 Task 6/7 各踩过一次。
+        assertThatThrownBy(() -> OneRepMax.bestOf(null))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("不能");
+        assertThatThrownBy(() -> OneRepMax.bestOf(java.util.Arrays.asList(new OneRepMax.Set(60, 5), null)))
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("不能");
+    }
 }
 ```
 
-- [ ] **Step 2: 跑测试，确认失败**
+> **（2026-10-16，Task 8 落地轮）本 fence 已同步为磁盘原文，并修正了计划里两处算错的期望值。**
+>
+> **修正一：`best_of_a_session_picks_the_max` 原写 `75.0`，是错的。**
+> 它与同文件 `timed_sets_are_ignored` 对**同一组 `Set(60, 8)`** 断言的 `76.0` 自相矛盾。
+> 按 Epley 独立核算（1RM = w × (1 + reps/30)）：
+> - `60 × (1 + 8/30) = 60 × 38/30 = 2280/30 = 76.00` ← **最大**
+> - `62.5 × (1 + 6/30) = 62.5 × 1.2 = 75.00`
+> - `65 × (1 + 4/30) = 65 × 34/30 = 2210/30 = 73.666… → 73.67`
+>
+> **正确值是 76.0**；实现（标准 Epley）是对的，改的是这条期望值。
+>
+> **修正二：`single_rep_returns_the_weight_itself` 原写 `epley(100, 1) == 100.0`，也是错的。**
+> 标准 Epley 在 reps=1 时**不**返回重量本身：`100 × (1 + 1/30) = 100 × 31/30 = 103.333… → 103.33`
+> （实测 `expected: 100.0 but was: 103.33`）。
+> 「reps=1 时 1RM 就是举起的那个重量」是**物理事实**，也确实是 **Brzycki** 公式
+> （`w × 36/(37 − reps)`，reps=1 时恰好退化成 `w`）的性质——原测试名沿用的是 Brzycki 的直觉，
+> 与计划里写死的 Epley 公式**不是同一个公式**。
+> 处置：按 Epley 的算术结果断言，并把测试名改成与断言相符的
+> `single_rep_is_still_scaled_by_epley`——一个叫「返回重量本身」却断言 103.33 的测试，
+> 本身就是一处会误导人的不实自述。
+>
+> **修正三（按包内约定三与既有标准补齐，非纠错）**：`epley` 的有限性校验、
+> `Set` 的紧凑构造器、`bestOf` 的 null 防护，以及配套的 3 条测试 → 共 **8 条**测试。
+
+- [x] **Step 2: 跑测试，确认失败**
 
 Run: `cd backend && mvn -B test -Dtest=OneRepMaxTest`
 
-Expected: 编译失败，`cannot find symbol: class OneRepMax`
+Expected: 编译失败。**注意本机 JDK 是中文 locale，实际输出是中文**，
+计划原先写的 `cannot find symbol: class OneRepMax` 与实际措辞不符。实际输出（节选）：
 
-- [ ] **Step 3: 写实现**
+```text
+[ERROR] /E:/idea/program/change/backend/src/test/java/com/change/calc/OneRepMaxTest.java:[14,20] 找不到符号
+[ERROR]   符号:   变量 OneRepMax
+[ERROR]   位置: 类 com.change.calc.OneRepMaxTest
+[ERROR] /E:/idea/program/change/backend/src/test/java/com/change/calc/OneRepMaxTest.java:[33,30] 程序包OneRepMax不存在
+[INFO] 10 errors
+[INFO] BUILD FAILURE
+```
+
+- [x] **Step 3: 写实现**
 
 ```java
 package com.change.calc;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 估算 1RM。
@@ -4278,13 +4360,45 @@ public final class OneRepMax {
     /** 超过这个次数后 Epley 误差迅速变大，不再估算。 */
     public static final int MAX_REPS = 12;
 
-    /** 一组的数据。repetitions 为 null 表示计时动作，跳过。 */
+    /**
+     * 一组的数据。
+     *
+     * {@code repetitions} 为 null 表示计时动作（平板支撑等），{@link #bestOf} 会跳过它；
+     * 而 {@code repetitions == 0} 是**另一回事**——「这一组记了但没次数」，
+     * 它是合法输入（构造器放行），由 {@link #bestOf} 按 {@code < 1} 跳过。
+     * 两者的区别是「没有次数这个概念」与「有这个概念但值是 0」，别把它们合并成一个状态。
+     *
+     * <p>校验放在紧凑构造器里，沿用包内约定：值对象内部字段非法抛
+     * {@link IllegalArgumentException}（见 {@link Nutrition} 与 {@link VolumeCalculator.Entry}）。
+     * 这里挡掉的是 {@code NaN} 与 {@code ±∞}：{@code NaN} 会绕过 {@code weight < 0}
+     * （比较恒为 false），一路走到 {@link Round#to2} 变成 {@code 0.0}——
+     * 静默给出「1RM 是 0」这个看起来像数字的错答案。
+     */
     public record Set(double weight, Integer repetitions) {
+
+        public Set {
+            if (!Double.isFinite(weight)) {
+                throw new IllegalArgumentException("weight 必须是有限值，实际为 " + weight);
+            }
+            if (weight < 0) {
+                throw new IllegalArgumentException("weight 不能为负，实际为 " + weight);
+            }
+            if (repetitions != null && repetitions < 0) {
+                throw new IllegalArgumentException("repetitions 不能为负，实际为 " + repetitions);
+            }
+        }
     }
 
     private OneRepMax() {
     }
 
+    /**
+     * Epley 公式估算单组 1RM。
+     *
+     * @param weight 重量；必须是有限且非负的
+     * @param reps   次数；{@code 1..}{@link #MAX_REPS}。超过 {@link #MAX_REPS} 直接拒绝——
+     *               Epley 在 15 次以上误差迅速变大，宁可不算也不要给个假精确的数
+     */
     public static double epley(double weight, int reps) {
         if (reps < 1) {
             throw new IllegalArgumentException("reps 必须 >= 1: " + reps);
@@ -4293,15 +4407,32 @@ public final class OneRepMax {
             throw new IllegalArgumentException(
                     "reps 超过 " + MAX_REPS + " 时 Epley 估算不可靠: " + reps);
         }
+        if (!Double.isFinite(weight)) {
+            // 排在 weight < 0 之前：NaN 与任何比较都返回 false，会绕过 `weight < 0`，
+            // 一路走到 Round.to2(NaN) = 0.0（静默返回 0），∞ 则被饱和成 9.2e16。
+            throw new IllegalArgumentException("weight 必须是有限值，实际为 " + weight);
+        }
         if (weight < 0) {
             throw new IllegalArgumentException("weight 不能为负: " + weight);
         }
         return Round.to2(weight * (1 + reps / 30.0));
     }
 
+    /**
+     * 一次训练里某个动作的所有组，取估算出的最大 1RM。
+     *
+     * 计时动作（{@code repetitions} 为 null）与超范围的次数**跳过而不是抛错**：
+     * 一次训练里混着平板支撑和卧推是正常的，因为一组平板支撑让整条曲线算不出来才是不正常的。
+     *
+     * @param sets 组列表；不能为 null，也不能含 null 元素
+     * @return 最大的估算 1RM；列表为空（或全部被跳过）时返回 {@code 0}，
+     *         这个 0 表示「本次没有可估算的组」，不是「1RM 是 0」
+     */
     public static double bestOf(List<Set> sets) {
+        Objects.requireNonNull(sets, "sets 不能为 null");
         double best = 0;
         for (Set s : sets) {
+            Objects.requireNonNull(s, "sets 不能含 null 元素");
             if (s.repetitions() == null || s.repetitions() < 1 || s.repetitions() > MAX_REPS) {
                 continue;   // 计时动作或超范围，跳过
             }
@@ -4323,20 +4454,105 @@ public final class OneRepMax {
 > **没有校验 `weight` 是否为有限值**——`epley(Double.POSITIVE_INFINITY, 5)` 会返回 `∞`
 > 而不抛错。`Round.to2(∞)` 会饱和到 `9.223372036854776E16`（与 Task 5 改动前同一现象）。
 > Task 8 若要跟上 `Nutrition` 的校验口径，应在这里补一条有限性校验。
+>
+> **（2026-10-16，Task 8 落地轮）上述遗留观察已处理**，并补齐包内约定：
+> - **`epley` 补有限性校验**（约定三）。为什么必须补：`NaN < 0` 为 `false`，
+>   所以 `NaN` **绕过**原先唯一的 `weight < 0` 校验，一路走到 `Round.to2(NaN)` 得到 **`0.0`**——
+>   静默返回「1RM 是 0」这个看起来像数字的错答案；`∞` 则被饱和成 `9.223372036854776E16`。
+>   校验刻意排在 `weight < 0` **之前**，惯用法 `!Double.isFinite(v)`。
+> - **`Set` 加紧凑构造器**：`weight` 有限且非负、`repetitions` 非 null 时不得为负。
+>   **`repetitions == 0` 刻意放行**——它表示「这一组记了但没次数」，
+>   与 `repetitions == null`（计时动作，「没有次数这个概念」）是**两个不同的事实**，
+>   由 `bestOf` 按 `< 1` 跳过。合并这两个状态就是约定四说的那种兜底说谎。
+> - **`bestOf` 加 null 防护**：`sets` 与元素分别 `Objects.requireNonNull`（NPE，约定风格）。
+> - 对应新增 3 条测试：`rejects_non_finite_weight`、`set_validates_its_own_fields`、
+>   `best_of_rejects_null_input`。最后一条的断言刻意用「不能」而**不是**「null」——
+>   JDK 裸 NPE 的消息里本来就含 `"null"`（`Cannot invoke "..." because "s" is null`），
+>   用 `"null"` 做断言会**恒真**：删掉 `requireNonNull` 之后测试照样绿。
+>   这个坑 Task 6/7 各踩过一次，注释原样保留在测试里。
 
-- [ ] **Step 4: 跑测试，确认通过**
+- [x] **Step 4: 跑测试，确认通过**
 
 Run: `cd backend && mvn -B test -Dtest=OneRepMaxTest`
 
-Expected: `Tests run: 5, Failures: 0, Errors: 0`
+Expected: `Tests run: 8, Failures: 0, Errors: 0`
+（原计划写 5；修正一/二不改条数，B/C/D 各 +1 → **8**。以 `mvn` 输出为准，实测 8。）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 跑全量回归**
+
+Run: `cd backend && mvn -B test`
+
+Expected: **`Tests run: 74, Failures: 0, Errors: 0`**（66 + 本任务 8 = 74，实测一致）。
+逐项：`NutritionCalculatorTest` 13、`PortionConverterTest` 15、`VolumeCalculatorTest` 17、
+`SchemaTest` 9、`MigrationTest` 5、`DataDirectoryInitializerTest` 3、
+`ChangeApplicationTests` 2、`TrainingRepoTest` 2、`OneRepMaxTest` 8。
+
+- [x] **Step 6: 提交**
 
 ```bash
 git add backend/src/main/java/com/change/calc/OneRepMax.java \
-        backend/src/test/java/com/change/calc/OneRepMaxTest.java
-git commit -m "feat: Epley 1RM 估算，超过 12 次拒绝估算而不是给假精确值"
+        backend/src/test/java/com/change/calc/OneRepMaxTest.java \
+        docs/superpowers/plans/2026-10-14-change-01-foundation.md
+git commit -F <提交信息文件>
 ```
+
+提交信息说清：Epley 1RM（超过 12 次拒绝估算而不是给假精确值）、按约定三补有限性校验、
+`Set` 紧凑构造器（0 次放行、null 表示计时动作）、`bestOf` 的 null 防护，
+以及**计划里两处期望值算错**（76.0 / 103.33）与下面那条待人工决定的问题。
+
+- [x] **Step 7（本轮新增）：变异测试实测与遗留待办**
+
+逻辑用**变异测试实测**过一轮（不是纸面推断）：对实现逐个注入变异、跑 `OneRepMaxTest`、
+记录哪条断言变红。**17 个变异：14 杀、3 存活**（另有一个「半杀」，见下）。
+
+| 变异 | 结果 |
+| --- | --- |
+| `reps / 30.0` → `reps / 30`（整数除法） | 杀（4 条同时红） |
+| 去掉 `Round.to2` 包装 | 杀，但**只有** `single_rep_is_still_scaled_by_epley` 一条红 |
+| `MAX_REPS` 12 → 20 | 杀 |
+| `bestOf`：`Math.max` → `Math.min` | 杀（2 条） |
+| 去掉 `bestOf` 的 `repetitions() == null` 短路 | 杀（NPE） |
+| 去掉 `sets` 的 `requireNonNull` | 杀 |
+| 去掉元素的 `requireNonNull` | 杀 |
+| 去掉 `epley` 的有限性校验 | 杀 |
+| 去掉 `Set` 的有限性校验 | 杀 |
+| `Set`：`repetitions < 0` → `<= 0` | 杀 |
+| 去掉 `Set` 的 `weight < 0` 校验 | 杀 |
+| 去掉 `Set` 的 `repetitions < 0` 校验 | 杀 |
+| 异常消息里去掉 `12` | 杀（消息断言是具体的，非恒真） |
+| `epley`：`reps < 1` → `reps < 0`（放行 0 次） | **存活** |
+| 去掉 `epley` 的 `weight < 0` 校验 | **存活** |
+| 去掉 `bestOf` 的 `> MAX_REPS` 跳过 | **存活** |
+| `bestOf` 改成返回第一组可估算的值 | 半杀：`best_of_a_session_picks_the_max` **照样绿** |
+
+**3 个存活变异 = 3 处没被测到的分支**（本轮**不追加**测试，超出 A–F 授权，登记为待办）：
+1. `epley(_, 0)`——`reps < 1` 这条**下界**没有任何测试走过（`bestOf` 自己先按 `< 1` 跳过，
+   所以 0 次永远到不了 `epley`）。
+2. `epley(-60, 5)`——`epley` 自己的 `weight < 0` 校验没被走过（`Set` 的构造器先挡住了负数）。
+3. `bestOf` 里「次数 > 12 的组**跳过而不是抛错**」这条契约没被走过
+   （没有任何测试把 `Set(w, 13..)` 喂给 `bestOf`）。
+
+**最弱的一条断言：`best_of_a_session_picks_the_max`。**
+它的名字声称在测「取最大」，但三条数据 `Set(60,8)` / `Set(62.5,6)` / `Set(65,4)` 的估算值
+恰好是**降序**（76.0 / 75.0 / 73.67），**最大项就在第一个**。实测：把 `bestOf` 改成
+「返回第一组可估算的值」（完全不取最大），这条测试**照样绿**——
+它唯独没能证明的就是它名字里那件事。建议（**未擅自改**）：打乱列表顺序，或让最大项落在中间/最后。
+
+**两条判断（要求 E 追问的，均未改签名）：**
+- **`bestOf(List.of())` 返回 `0`：不理想。** 这个兜底值把「本次没有可估算的组」伪装成
+  「1RM 是 0 kg」。按约定四（可空的领域配置**不得兜底**，必须进入类型或状态），
+  这里应返回 `OptionalDouble.empty()`——`VolumeCalculator.Status.NOT_CONFIGURED` 是同一个道理的先例。
+  实际危害：一次只做了平板支撑的训练会被画成曲线上的一个 **0 点**，把进步曲线拽到地板上。
+  **但签名不改**：不在本轮授权内。
+- **`weight == 0` 与「空列表」不可区分：重要，但与上一条同源。** `epley(0, 5) = 0.0`、
+  `Math.max(0, 0) = 0`，所以两者在 `bestOf` 里得到同一个 `0`。`weight == 0` 在真实数据里
+  几乎必然是「自重动作记了 0 kg」或漏填，不是真的 1RM。它**不需要单独修**：
+  两种情况的正确处理是同一个（**别把这个 0 画进曲线**），跟着 `OptionalDouble` 一起解决即可。
+  另外 `weight == 0` **不能**被构造器拒绝——`timed_sets_are_ignored` 里就有 `new OneRepMax.Set(0, null)`。
+
+ℹ️ **待人工决定（已上报，未自作主张）：`reps == 1` 要不要特判直接返回 `weight`？**
+特判能让单次实测不被高估 3.3%（也更符合用户直觉），但它是**算法改动**：
+会让 `epley` 不再是纯 Epley，并要同时改掉本文件里写死的公式说明。超出本轮 A–F 授权。
 
 ---
 
