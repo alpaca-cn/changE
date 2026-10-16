@@ -1,3 +1,25 @@
+# 第三方依赖的构建脚本（postinstall 等）白名单。
+#
+# pnpm 11 默认不执行依赖的构建脚本，并要求在这里对每一个「有构建脚本的包」
+# 显式表态。**未表态会让整个 npm script 面死掉**：pnpm 会以
+# ERR_PNPM_IGNORED_BUILDS 退出 1，`pnpm run` / `pnpm exec` 全都进不去
+# （连 `pnpm exec tauri --version` 都不行），而不是只跳过那个包的脚本。
+#
+# 值只有两种含义，没有「随便填一个」这一档：
+#   false = 我知道这个包有构建脚本，且**决定不执行它**
+#   true  = 我知道，且**允许它执行**
+#
+# 这里全部填 false —— 本项目决定不执行任何第三方 postinstall 代码
+# （安装依赖不该顺带运行别人写的任意代码）。逐个的判断依据：
 allowBuilds:
+  # esbuild 的 postinstall 只是「确认平台二进制在不在」。
+  # 真正的 @esbuild/win32-x64 是通过 optionalDependencies 装的，不经过
+  # postinstall，所以 false 不影响它 —— 实测 pnpm build 正常。
   esbuild: false
+  # vue-demi 的 postinstall 只在 Vue 2 / Vue 3 之间切换模式。本项目是 Vue 3，
+  # 而出厂默认就是 lib/index.vue3.mjs 那条，脚本本身是 no-op。
   vue-demi: false
+#
+# 将来如果某个包**确实**需要跑构建脚本（症状：包能装上但功能报错，
+# 且报错指向它自己的 postinstall 产物缺失），做法是把那一行改成 true 并重跑
+# `pnpm install`；**不要**为了消掉警告把整个文件删掉 —— 那等于放弃这一层表态。

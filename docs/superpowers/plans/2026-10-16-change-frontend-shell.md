@@ -47,10 +47,14 @@
 frontend/                                  ← 新增，与 backend/ 平级
 ├── package.json
 ├── vite.config.ts
-├── tsconfig.json
-├── tsconfig.node.json
+├── tsconfig.json                           ← 只有一份；不再用 project references
 ├── index.html
 ├── vitest.config.ts
+├── README.md                               ← 怎么装/怎么测/怎么起/图标从哪来
+├── pnpm-workspace.yaml                     ← 唯一的「不执行第三方构建脚本」声明处
+├── scripts/
+│   ├── make-icon.py                        ← ★ 图标源图的生成脚本（可复现）
+│   └── icon-source.png                     ← ★ 1024×1024 源图，入库
 ├── src/
 │   ├── main.ts
 │   ├── App.vue
@@ -113,14 +117,23 @@ frontend/                                  ← 新增，与 backend/ 平级
 
 **这是本计划的风险验证**：Tauri 冒烟测试（`113db89`）验的是**裸 Tauri**，而这里要的是 **Tauri + Vite + Vue + pnpm** 的组合。先把它跑通，再往上加东西。
 
+> **本任务上一轮的缺陷已修**：`pnpm build` 因为 project references + `noEmit` 报
+> `TS6310`、退出 2（详见 Step 3 与 Step 13b）。`tauri dev` 不跑 `vue-tsc`，所以它躲过了
+> 当时的验收——Task 1 的验收里**因此补了 Step 13b**，并去掉了 `tsconfig.node.json`。
+> 同时补了图标的可复现来源（Step 12b）。
+
 **Files:**
 - Create: `frontend/package.json`
 - Create: `frontend/vite.config.ts`
 - Create: `frontend/tsconfig.json`
-- Create: `frontend/tsconfig.node.json`
 - Create: `frontend/index.html`
+- Create: `frontend/pnpm-workspace.yaml`（由 `pnpm install` 生成，随后补上理由注释）
+- Create: `frontend/README.md`
+- Create: `frontend/scripts/make-icon.py`
+- Create: `frontend/scripts/icon-source.png`
 - Create: `frontend/src/main.ts`
 - Create: `frontend/src/App.vue`
+- Create: `frontend/src/styles/theme.css`（空占位，Task 2 覆盖）
 - Create: `frontend/src-tauri/Cargo.toml`
 - Create: `frontend/src-tauri/build.rs`
 - Create: `frontend/src-tauri/tauri.conf.json`
@@ -189,9 +202,7 @@ export default defineConfig({
 })
 ```
 
-- [ ] **Step 3: 建 `frontend/tsconfig.json` 与 `tsconfig.node.json`**
-
-`tsconfig.json`：
+- [ ] **Step 3: 建 `frontend/tsconfig.json`（只有一份）**
 
 ```json
 {
@@ -211,29 +222,30 @@ export default defineConfig({
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    "types": ["vite/client", "node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.vue"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts", "vitest.config.ts"]
 }
 ```
 
-`tsconfig.node.json`：
-
-```json
-{
-  "compilerOptions": {
-    "composite": true,
-    "skipLibCheck": true,
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true,
-    "strict": true,
-    "noEmit": true
-  },
-  "include": ["vite.config.ts", "vitest.config.ts"]
-}
-```
+> ⚠️ **这里刻意没有 `tsconfig.node.json`，也没有 `references`。** 首版计划分了两个 config 并用
+> project references 串起来，那是**坏的**：被引用的 composite 项目不允许 `noEmit`
+> （`tsconfig.node.json` 同时写了 `"composite": true` 和 `"noEmit": true`），于是
+> `vue-tsc --noEmit` 直接报
+>
+> ```
+> tsconfig.json(21,18): error TS6310: Referenced project '.../tsconfig.node.json' may not disable emit.
+> ```
+>
+> 并让 `pnpm build` 退出 2。**`pnpm tauri dev` 不跑 `vue-tsc`，所以这个缺陷躲过了 Task 1 的验收**，
+> 而 `tauri.conf.json` 的 `beforeBuildCommand` 正是 `pnpm build`——第一次 `tauri build` 必然撞上。
+> 修法是**删掉第二个 config，改成单一 tsconfig**：本项目只有两个 config 文件、没有需要增量构建的
+> 规模，references 带来的复杂度不值得。`vite.config.ts` 与 `vitest.config.ts` 直接并进 `include`。
+>
+> 另外 `types` 里加了 `"node"`，因为 `src/styles/theme.spec.ts`（Task 2）要用 `node:fs` /
+> `node:url`。**因此 `@types/node` 是必需的 devDependency**，否则 `vue-tsc` 报找不到类型。
+> 它**不在 Step 1 的 fence 里**（那份 fence 是「首次创建 `package.json`」的原样口径），
+> 由 Step 12 安装后手动加进 `devDependencies`：`"@types/node": "^22"`。
 
 - [ ] **Step 4: 建 `frontend/index.html`**
 
@@ -439,6 +451,94 @@ pnpm install
 
 Expected: 装完无 error。**如果 `pnpm` 不在 PATH**，用绝对路径 `& 'E:\npm-global\pnpm.ps1' install`。
 
+装完之后把 `@types/node` 加进 `devDependencies`（版本 `"^22"`）再跑一次 `pnpm install`——
+理由见 Step 3 的注（`theme.spec.ts` 要用 `node:fs` / `node:url`）。
+
+> ⚠️ **首次 `pnpm install` 很可能在 `ERR_PNPM_IGNORED_BUILDS` 上退出 1**，看起来像：
+>
+> ```
+> [ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild@0.19.3, esbuild@0.25.0, vue-demi@0.14.10
+> Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+> ```
+>
+> **这不是「某个包被跳过」，是整个 npm script 面死掉。** 同一个原因会让
+> `pnpm run` / `pnpm exec` 全部以 1 退出——连 `pnpm exec tauri --version` 都进不去。
+> 所以这一步**必须解决掉**，不能带着它往下走。
+>
+> pnpm 11 会自动生成 `frontend/pnpm-workspace.yaml`，里面是一份**未填写的模板**
+> （`esbuild: set this to true or false`）。**占位值既不是 true 也不是 false，
+> 于是 pnpm 拒绝工作**。值只有两种含义：
+>
+> - `false` = 知道这个包有构建脚本，**且决定不执行**
+> - `true` = 知道，且允许它执行
+>
+> **本项目全部填 `false`**——即「不执行任何第三方 postinstall 代码」。这不是图省事，
+> 每个包都单独核过：
+>
+> | 包 | 为什么 `false` 是安全的 |
+> |---|---|
+> | `esbuild` | 它的 postinstall 只是「确认平台二进制在不在」。真正的 `@esbuild/win32-x64` 是通过 **`optionalDependencies`** 装的，**不经过** postinstall。实测 `pnpm build` 正常 |
+> | `vue-demi` | 它的 postinstall 只在 Vue 2 / Vue 3 之间切模式。本项目是 Vue 3，而出厂默认就是 `lib/index.vue3.mjs` 那条路径——脚本本身是 no-op |
+>
+> **不要用 `pnpm approve-builds` 交互式点选**（结果不可复现），也不要写别的占位值。
+> 直接手填 `frontend/pnpm-workspace.yaml`，**并把上面的判断依据作为注释写进文件里**——
+> 那个文件里一个字的解释都没有的话，下一个人会以为它是样板而删掉它。
+>
+> 将来某个包**确实**需要跑构建脚本时（症状：包能装上但功能报错，且报错指向它自己的
+> postinstall 产物缺失），把那一行改成 `true` 并重跑 `pnpm install`。
+
+- [ ] **Step 12b: 生成图标（`tauri icon` 的输入是可复现的脚本）**
+
+图标是**离线生成一次、然后入库**的产物，不是构建期步骤。首版计划漏了这一步：当时的源图是
+临时造的、放在 `%TEMP%`、没有入库，于是「重新生成一次图标」这件事不可复现。现在源图是代码。
+
+先建 `frontend/scripts/make-icon.py`（Pillow 画一张 1024×1024 的占位图：主题底色 `#0d0f12`
++ 强调色 `#e0453a` 的简单几何），然后：
+
+```powershell
+cd E:\idea\program\change\frontend
+python scripts\make-icon.py                  # 产出 scripts/icon-source.png
+pnpm tauri icon scripts/icon-source.png      # 铺开成各平台尺寸
+```
+
+Expected: 两条都退出 0；`src-tauri/icons/` 下出现 `icon.ico` / `icon.png` / 各尺寸 PNG。
+
+**把 `scripts/icon-source.png` 一起入库**（1024×1024，几十 KB 量级）——它是可复现链条的输入，
+不入库的话这个链条就断了。`make-icon.py` 要 Pillow，但**不写进 `package.json`**：
+它不参与任何构建。
+
+> `pnpm tauri icon` 会顺带生成 `src-tauri/icons/android/` 与 `ios/` 共约 40 个移动端文件。
+> **本项目是 desktop-only**（`tauri.conf.json` 的 `targets: ["nsis"]`，`bundle.icon` 只引用
+> `icons/icon.ico`），所以这两个目录**删掉且不入库**：
+>
+> ```powershell
+> Remove-Item -Recurse -Force src-tauri\icons\android, src-tauri\icons\ios
+> ```
+>
+> 实测删掉后 `cargo check --all-targets`、`pnpm tauri dev`、`pnpm build` 都不受影响。
+
+> ⚠️ **重跑图标后 `icons/icon.icns` 会出现二进制差异，这不是错误。** 实测连续跑两次
+> `pnpm tauri icon`，两次的 `icon.icns` sha256 就不同（120921 字节里约 109000 字节不同），
+> 但它的**像素是确定的**（1024×1024，每次一样）——不确定的是 ICNS 容器本身。
+> `.icns` 只在 macOS 上用，而本项目打包目标是 Windows NSIS 且 `bundle.icon` 没引用它，
+> 所以对本项目无实际影响。**验收时不要把它当成差异**；想保持工作区干净就
+> `git checkout -- src-tauri/icons/icon.icns`。这件事在 `frontend/README.md` 里也记了一份。
+
+- [ ] **Step 12c: 给 `pnpm-workspace.yaml` 补上理由注释**
+
+`pnpm install` 生成的那个文件只有干巴巴的 `esbuild: false` / `vue-demi: false`（见 Step 12 的
+表），**一个字的解释都没有**——下一个人会以为它是样板而删掉它。就在文件里把 Step 12 那张表的
+依据写成注释：为什么是 `false`（不是「随便填的占位值」）、两个包各自的判断依据、以及将来某个包
+**确实**需要跑构建脚本时该怎么做（把那一行改成 `true` 并重跑 `pnpm install`）。
+
+> 这里**不给这个文件的逐字 fence**：它的价值全在注释措辞上，而注释会随讨论变化，
+> 钉成 fence 只会制造无意义的同步负担。判断依据本身在 Step 12 的表里，那份是规格。
+
+同时建 `frontend/README.md`，把「怎么装依赖 / 怎么跑测试 / 怎么 `pnpm tauri dev` /
+端口 1420 被占为什么会响亮失败 / 图标从哪来 / pnpm 版本要求（11+）/ 后端 jar 要先
+`mvn package`（Task 5 起需要）」写清楚。**它是「图标从哪来」这个问题的答案**，
+所以 Step 12b 的两条命令要原样写进去。
+
 - [ ] **Step 13: 验证「能起来」——这是本任务真正的验收**
 
 Run:
@@ -457,11 +557,32 @@ Expected:
 
 **如果第 3 步起不来**：停下来报告实际报错。这一步是两个未知（Tauri+Vite 集成、pnpm 依赖解析）的交汇点，**不要靠猜去改配置**。
 
+- [ ] **Step 13b: `pnpm build` 必须退出 0 —— 本缺陷的回归守卫**
+
+Run:
+```powershell
+cd E:\idea\program\change\frontend
+pnpm build
+```
+
+Expected: **退出码 0**，并产出 `frontend/dist/`（`dist/index.html` + `dist/assets/*`）。
+不需要后端——`vite build` 只读 `index.html` 与 `src/`。
+
+> **这一步是首版计划漏掉的那道守卫，它就是 TS6310 漏到下一轮的原因。**
+> `pnpm tauri dev` 走的是 `beforeDevCommand`（只起 Vite），**不跑 `vue-tsc`**，
+> 所以两个 config 的 `TS6310` 能一路躲过 Step 13 的验收。而
+> `tauri.conf.json` 的 `beforeBuildCommand` 是 `pnpm build`，`pnpm build` 的第一步就是
+> `vue-tsc --noEmit`——**第一次 `pnpm tauri build`（计划 7）必然撞上它**。
+>
+> 也就是说：`tauri dev` 绿 ≠ 前端能构建。凡是 `beforeBuildCommand` 会跑的，
+> 都要在 Task 1 就被跑过一次。
+
 - [ ] **Step 14: 提交**
 
 ```bash
 git add frontend/package.json frontend/pnpm-lock.yaml frontend/vite.config.ts \
-        frontend/tsconfig.json frontend/tsconfig.node.json frontend/index.html \
+        frontend/tsconfig.json frontend/index.html frontend/README.md \
+        frontend/pnpm-workspace.yaml frontend/scripts \
         frontend/src frontend/src-tauri .gitignore
 git commit -m "feat(frontend): Tauri 2 + Vue 3 + Vite 骨架跑通，深色窗口不闪白
 
@@ -469,7 +590,12 @@ git commit -m "feat(frontend): Tauri 2 + Vue 3 + Vite 骨架跑通，深色窗�
 - 用 strictPort:true 让 1420 被占时响亮失败，而不是静默换端口
 - 两处防白屏：HTML 内联底色 + Tauri 窗口 backgroundColor
 - 不用 tauri-plugin-shell，改用 std::process（省掉插件能力配置，
-  且端口解析逻辑可脱离 Tauri 运行时被单元测试覆盖）"
+  且端口解析逻辑可脱离 Tauri 运行时被单元测试覆盖）
+- 单一 tsconfig（不用 project references）：被引用的 composite 项目
+  不允许 noEmit，那会让 pnpm build 报 TS6310、退出 2
+- 图标可复现：scripts/make-icon.py 画源图，pnpm tauri icon 铺开
+- pnpm-workspace.yaml 的 allowBuilds 全填 false，即不执行第三方
+  postinstall；每个包的判断依据写在文件注释里"
 ```
 
 ---
@@ -682,6 +808,10 @@ export default defineConfig({
   },
 })
 ```
+
+> 这个文件已经被 Task 1 Step 3 的 `tsconfig.json` 收进 `include` 了——原先它归
+> `tsconfig.node.json` 管，而那个 config 已随 project references 一起删除。**这里不需要再动
+> tsconfig。**
 
 - [ ] **Step 2: 写失败的测试（导航数据）**
 
