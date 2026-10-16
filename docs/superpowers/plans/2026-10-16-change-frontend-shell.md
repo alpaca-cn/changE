@@ -34,7 +34,7 @@
 | Node / pnpm | `E:\nodejs\node.exe` / `E:\npm-global\pnpm.ps1` | 本机实测 |
 | npm 源 | 已切 `registry.npmmirror.com`（`npx` 曾报 `EE certificate key too weak`） | `113db89` |
 | 后端 jar | `backend/target/change-backend-0.1.0-SNAPSHOT.jar`（79.1 MB） | 计划 1 |
-| 后端协议行 | `CHANGE_PORT=<端口>`，Windows 上以 `\r\n` 结尾，**18 字节含 `\r`** | 计划 1 Task 10 实测 |
+| 后端协议行 | `CHANGE_PORT=<端口>`，Windows 上以 `\r\n` 结尾；实测 `b'CHANGE_PORT=54791\r\n'` = **19 字节**（17 可见 + `0x0d 0x0a`） | 本计划 Task 4 额外要求 C 实测（2026-10-16，OpenJDK 25.0.2） |
 | 后端启动耗时 | 约 3.8–6.8 秒（取决于 Redis 探测） | 计划 1 实测 |
 
 **⚠️ 一条来自设计文档的硬要求**：计划 1 实测后端启动要 **3.8 秒以上**，所以外壳**不能只是不显示窗口**——必须配一个加载提示。这就是 Task 5 存在的理由。
@@ -1486,10 +1486,27 @@ pub const PORT_PREFIX: &str = "CHANGE_PORT=";
 ///
 /// 返回 `None` 表示这一行不是协议行（外壳应当继续读下一行）。
 ///
-/// **Windows 上的坑**：这一行以 `\r\n` 结尾，所以解析出来的数字后面可能带 `\r`。
-/// 实测原始字节是 `b'CHANGE_PORT=56934\r'`（18 字节，不是 17）。
-/// Java 的 `Integer.parseInt` 恰好容忍尾部 `\r`，所以这个坑只在 Rust 侧暴露——
-/// 必须 `trim`，否则 `parse::<u16>()` 会失败，外壳永远等不到端口。
+/// **为什么必须 `trim`**（以下三条是 2026-10-16 在本机实测出来的，不是推断）：
+///
+/// 1. 后端输出的那一行以 `\r\n` 结尾。按字节捕获真实后端 stdout 实测为
+///    `b'CHANGE_PORT=54791\r\n'`（19 字节 = 17 个可见字节 + `0x0d 0x0a`）。
+/// 2. 同一个函数、同一份输入，两种调用方拿到的字符串**不一样**：
+///    - `BufRead::lines()` 剥掉 `\r\n` → `"CHANGE_PORT=54791"`（17 字节）
+///    - `BufRead::read_line` **什么都不剥** → `"CHANGE_PORT=54791\r\n"`（19 字节）
+///      （实测：`n=19, len=19`；多行输入下循环读到 `n=18 …\r\n` 与 `n=5 "more\n"`）
+/// 3. 这个函数是 `pub` 的纯函数，它的正确性不该取决于谁调用它、以及那个人用了
+///    `lines()` 还是 `read_line`。所以它自己 `trim`，把这件事关在函数内部——
+///    调用方随便用哪种，行为都一样。
+///
+/// > 计划里曾有三处说法不成立，均已按实测改写：
+/// > (a) 「Windows 上是 18 字节」——实测 **19** 字节（含 `\n`；不含 `\n` 是 18）。
+/// > (b) 「Java 的 `Integer.parseInt` 恰好容忍尾部 `\r`」——实测**抛
+/// >     `NumberFormatException`**（OpenJDK 25.0.2 直接 `javac`/`java` 跑）。
+/// > (c) 「`read_line` 只剥 `\n`」——实测**它一个都不剥**，`\n` 与 `\r` 都留在
+/// >     字符串里。剥掉 `\r\n` 的只有 `lines()`。
+/// > 另外本链路里**根本没有 `parseInt`**：`PortReporter` 是生产者，它 `println` 的
+/// > 是 Spring 给它的 `local.server.port` 字符串，不做任何解析——(b) 与这条链路无关。
+/// > 详见 `docs/superpowers/plans/2026-10-16-change-frontend-shell.md` Task 4 的实测记录。
 pub fn parse_port_line(line: &str) -> Option<u16> {
     todo!("Task 4 Step 3 实现")
 }
@@ -1522,9 +1539,18 @@ mod tests {
     }
 
     #[test]
+    fn tolerates_whitespace_right_after_the_prefix() {
+        // 真实后端输出是 `CHANGE_PORT=54791\r\n`，经 line.trim() 后 \r 已经没了，
+        // 所以 rest.trim() 对它是冗余的。它实际多容忍的是「前缀后带空格」——
+        // 如果后端将来改成 `PREFIX + " " + port` 之类，这一步能救回来。
+        assert_eq!(parse_port_line("CHANGE_PORT= 8080"), Some(8080));
+        assert_eq!(parse_port_line("CHANGE_PORT=\t8080"), Some(8080));
+    }
+
+    #[test]
     fn tolerates_the_windows_carriage_return() {
-        // 这是实测出来的：Windows 上这一行是 18 字节，末尾带 \r。
-        // Java 的 Integer.parseInt 容忍它，Rust 的 parse::<u16>() 不容忍。
+        // 实测：Windows 上这一行是 19 字节且以 \r\n 结尾；read_line 什么都不剥
+        // （\r 与 \n 都留着），所以行尾的 \r 只能靠 line.trim() 处理。
         assert_eq!(parse_port_line("CHANGE_PORT=56934\r"), Some(56934));
     }
 
@@ -1560,7 +1586,6 @@ mod tests {
         assert_eq!(parse_port_line("CHANGE_PORT=abc"), None);
         assert_eq!(parse_port_line("CHANGE_PORT=-1"), None);
         assert_eq!(parse_port_line("CHANGE_PORT=80 80"), None);
-        // 前缀对但后缀是小数
         assert_eq!(parse_port_line("CHANGE_PORT=80.5"), None);
     }
 
@@ -1569,6 +1594,69 @@ mod tests {
         // 改一个字符就是改协议——这条测试守住前缀本身。
         assert_eq!(parse_port_line("CHANGE_PORTX=8080"), None);
         assert_eq!(parse_port_line("change_port=8080"), None);
+    }
+
+    #[test]
+    fn every_valid_port_round_trips() {
+        // 65535 次迭代，毫秒级。比抽几个点更能守住 u16 的边界。
+        for p in 1u16..=u16::MAX {
+            assert_eq!(
+                parse_port_line(&format!("{PORT_PREFIX}{p}")),
+                Some(p),
+                "端口 {p} 解析失败"
+            );
+        }
+    }
+
+    #[test]
+    fn every_port_above_u16_is_rejected() {
+        for p in 65_536u32..=100_000 {
+            assert_eq!(
+                parse_port_line(&format!("{PORT_PREFIX}{p}")),
+                None,
+                "{p} 不该被接受"
+            );
+        }
+    }
+
+    // ---- 与真实后端输出的对照（额外要求 C）----
+
+    /// 真实后端 stdout 里的协议行。
+    ///
+    /// 不是构造的：2026-10-16 用 Python `subprocess`（`stdout=PIPE`）起
+    /// `change-backend-0.1.0-SNAPSHOT.jar`，按字节读到的那一行就是
+    /// `b'CHANGE_PORT=54791\r\n'`——19 字节，末两字节 `0x0d 0x0a`，耗时 5.70 秒。
+    /// 端口是随机的（`server.port=0`），所以下面用 `PORT_PREFIX` 拼接来断言，
+    /// 只钉死**行尾形态**与解析结果。
+    const REAL_BACKEND_LINE: &[u8] = b"CHANGE_PORT=54791\r\n";
+
+    #[test]
+    fn parses_the_real_backend_bytes_when_using_lines() {
+        use std::io::{BufRead, BufReader, Cursor};
+
+        // lines() 剥掉 \r\n，调用方拿到干净的 17 字节。
+        let first = BufReader::new(Cursor::new(REAL_BACKEND_LINE))
+            .lines()
+            .next()
+            .unwrap()
+            .unwrap();
+        assert_eq!(first, format!("{PORT_PREFIX}54791"));
+        assert_eq!(parse_port_line(&first), Some(54791));
+    }
+
+    #[test]
+    fn parses_the_real_backend_bytes_when_using_read_line() {
+        use std::io::{BufRead, BufReader, Cursor};
+
+        // read_line 什么都不剥：\r 与 \n 都留在字符串里（实测 len=19）。
+        // 注意 reader 必须绑定到变量，否则读到的是别的语义。
+        let mut reader = BufReader::new(Cursor::new(REAL_BACKEND_LINE));
+        let mut line = String::new();
+        let n = reader.read_line(&mut line).unwrap();
+        assert_eq!(n, 19);
+        assert_eq!(line, format!("{PORT_PREFIX}54791\r\n"));
+        assert_eq!(line.parse::<u16>().ok(), None); // 不 trim 就解析不出来
+        assert_eq!(parse_port_line(&line), Some(54791)); // 函数自己 trim，解析得出
     }
 
     // ---- resolve_java ----
@@ -1594,6 +1682,13 @@ mod tests {
     }
 
     #[test]
+    fn ignores_an_empty_java_home() {
+        // 与 configured 那条同理：`$env:JAVA_HOME = ''` 是常见的，
+        // 空串不该被当成一个有效的 JDK 根目录（那会拼出 `\bin\java.exe` 这种相对路径）。
+        assert_eq!(resolve_java(None, Some("")), PathBuf::from("java"));
+    }
+
+    #[test]
     fn falls_back_to_java_on_path() {
         // 最后一档：交给操作系统去找。刻意不做 is_file 检查——
         // 那会让上面两条用假路径的测试没法写。
@@ -1612,7 +1707,7 @@ mod tests {
 
 Run: `cd frontend/src-tauri && cargo test`
 
-Expected: 编译通过但 **12 条测试全部 panic**，消息是 `not yet implemented: Task 4 Step 3 实现`。
+Expected: 编译通过但 **18 条测试全部 panic**，消息是 `not yet implemented: Task 4 Step 3 实现`。
 
 （`todo!()` 让「先写测试、确认它失败」这一步在 Rust 里也能成立——编译不会挡住你。）
 
@@ -1623,7 +1718,11 @@ pub fn parse_port_line(line: &str) -> Option<u16> {
     let rest = line.trim().strip_prefix(PORT_PREFIX)?;
     let port: u16 = rest.trim().parse().ok()?;
     // 0 不是操作系统会分配的端口，出现它说明这不是一条有效协议行
-    if port == 0 { None } else { Some(port) }
+    if port == 0 {
+        None
+    } else {
+        Some(port)
+    }
 }
 
 pub fn resolve_java(configured: Option<&str>, java_home: Option<&str>) -> PathBuf {
@@ -1649,21 +1748,138 @@ pub fn resolve_java(configured: Option<&str>, java_home: Option<&str>) -> PathBu
 
 Run: `cd frontend/src-tauri && cargo test`
 
-Expected: `test result: ok. 12 passed`
+Expected: `test result: ok. 18 passed`
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add frontend/src-tauri/src/backend.rs
-git commit -m "feat(shell): 端口协商的解析逻辑，12 条单元测试覆盖协议边界
+git add frontend/src-tauri/src/backend.rs \
+        docs/superpowers/plans/2026-10-16-change-frontend-shell.md
+git commit -m "feat(shell): 端口协商的解析逻辑，单元测试覆盖协议边界
 
 - parse_port_line 独立成纯函数，不依赖 Tauri 运行时，cargo test 直接覆盖
-- 专门钉住 Windows 的 \\r\\n 坑：原始字节是 18 不是 17，
-  Java 的 parseInt 容忍尾部 \\r 而 Rust 的 parse::<u16>() 不容忍——
-  不 trim 的话外壳会永远等不到端口
+- 实测：后端那一行是 b'CHANGE_PORT=54791\r\n'（19 字节），read_line 连 \n 都不剥，
+  所以函数自己 trim，正确性不取决于调用方用 lines() 还是 read_line
 - 边界：0 拒绝（OS 不会分配）、65535 接受、65536 拒绝
-- 前缀本身被两条 lookalike 测试守住（改一个字符就是改协议）"
+- 前缀本身被两条 lookalike 测试守住（改一个字符就是改协议）
+- 计划文档一并入库：三处被证伪的说法都换成实测结果（parseInt 不容忍 \r、链路里没有
+  parseInt、read_line 一个都不剥），后端输出长度 18 → 19"
 ```
+
+> 上一轮只 `git add frontend/src-tauri/src/backend.rs`，计划文档的改写没入库——
+> 这次把它一起提交（fence 与磁盘逐字一致，用脚本比对，不靠目测）。
+
+### Task 4 的实测记录（2026-10-16，实施时补的三条独立实验）
+
+原先这里写着一句「Windows 上是 18 字节，Java 的 `Integer.parseInt` 恰好容忍尾部 `\r`，
+所以这个坑只在 Rust 侧暴露」。**实施时对三条各做了独立实测，结论是这句话有三处不成立。**
+保留这段记录，是因为错的注释会被后来人当事实——以下是可复现的实测结果。
+
+**A1：`Integer.parseInt("123\r")` 会不会抛异常？→ 会抛。**
+
+```java
+public class ParseIntCr {
+    public static void main(String[] args) {
+        String[] cases = { "123\r", "123\n", "123\r\n", "123 " };
+        for (String c : cases) {
+            String label = c.replace("\r", "\\r").replace("\n", "\\n");
+            try {
+                System.out.println("parseInt(\"" + label + "\") = " + Integer.parseInt(c));
+            } catch (Throwable t) {
+                System.out.println("parseInt(\"" + label + "\") THREW " + t.getClass().getName()
+                        + ": " + t.getMessage());
+            }
+        }
+    }
+}
+```
+
+OpenJDK 25.0.2，`javac` 编译后 `java` 直跑的原始输出：
+
+```
+parseInt("123\r") THREW java.lang.NumberFormatException: For input string: "123"
+parseInt("123\n") THREW java.lang.NumberFormatException: For input string: "123
+"
+parseInt("123\r\n") THREW java.lang.NumberFormatException: For input string: "123
+"
+parseInt("123 ") THREW java.lang.NumberFormatException: For input string: "123 "
+```
+
+`parseInt` 不容忍任何空白——`\r`、`\n`、空格全部抛 `NumberFormatException`。
+**原说法反了。**
+
+**A2：整条链路里到底有没有 `parseInt`？→ 一处都没有。**
+
+`backend/src/main/java/com/change/config/PortReporter.java` 全文只有：
+
+```java
+String port = env.getProperty("local.server.port");   // 已经是 String
+System.out.println(PREFIX + port);                    // 只输出，不解析
+System.out.flush();
+```
+
+全仓 `grep parseInt` 在后端源码里**零命中**。后端是**生产者**：它 `println` 一个字符串。
+所以「Java 的 parseInt 容忍 `\r`」这句话**与这条链路无关**——链路里没有任何一步在解析端口。
+
+**A3：`read_line` 与 `lines()` 各自留下什么？→ `lines()` 剥 `\r\n`，`read_line` 什么都不剥。**
+
+同一份输入 `b"CHANGE_PORT=1234\r\nmore\n"`，`{:?}` 打印的实际字节：
+
+```
+read_line             : n=18 bytes="CHANGE_PORT=1234\r\n" len=18
+lines()               : bytes="CHANGE_PORT=1234" len=16
+read_line（纯 LF 输入）: bytes="CHANGE_PORT=1234\n" len=17
+```
+
+**这里连原计划的前提也错了**：计划写「`read_line` 不剥 `\n`、只留下 `\r`」，
+实测 **`read_line` 连 `\n` 都没剥**，两个字符都留在字符串里；剥掉 `\r\n` 的只有 `lines()`。
+
+**A4：`trim()` 的正当理由（与上面那句错话无关，所以实现不变）。**
+
+`parse_port_line` 是 `pub` 的纯函数，它的正确性不该取决于**调用方用了 `lines()` 还是
+`read_line`**：两者对同一份后端输出给出不同的字符串。函数自己 `trim`，把这件事关在函数内部。
+`trim()` 保留，理由换成这一条。
+
+**C：真实后端 stdout 的原始字节。**
+
+`mvn -B -q -DskipTests package` 后，用 Python `subprocess`（`stdout=PIPE`）起 jar，
+按字节读第一行，5.70 秒后拿到并 `terminate()`：
+
+```
+raw repr  = b'CHANGE_PORT=54791\r\n'
+raw bytes = 0x43 0x48 0x41 0x4e 0x47 0x45 0x5f 0x50 0x4f 0x52 0x54 0x3d 0x35 0x34 0x37 0x39 0x31 0x0d 0x0a
+length    = 19
+endswith \r\n = True
+```
+
+**19 字节**，不是 18（18 是不含 `\n` 时的长度）。这段字节被钉进了常驻测试
+`REAL_BACKEND_LINE`，端口部分用 `PORT_PREFIX` 拼，只钉行尾形态。
+
+**D：变异测试——第一轮留下两个覆盖缺口（已关掉，见 E）。**
+
+第一轮的变异测试报告里，`rest.trim()` 与 `resolve_java` 里的 `!home.is_empty()`
+两个变异**存活**：现有测试要么喂了已整行 `trim` 过的输入（`\r` 在 `line.trim()`
+那一步就没了），要么从未给 `java_home` 传过 `Some("")`。
+当时**如实报告了存活**，没有为了表格好看而跳过。
+
+**E：关掉两个缺口（2026-10-16 补测轮）。**
+
+各补一条测试钉住那两个分支，并逐个删掉被测代码，确认测试**变红**（原始输出见提交说明）：
+
+| 缺口 | 补的测试 | 删掉什么才变红 |
+|---|---|---|
+| `rest.trim()` 冗余宽松（对真实输出而言） | `tolerates_whitespace_right_after_the_prefix` | 把 `rest.trim()` 删成 `rest` |
+| `resolve_java` 的空串 `JAVA_HOME` 分支 | `ignores_an_empty_java_home` | 删掉 `!home.is_empty()` |
+
+`rest.trim()` 的真实贡献**不是** `\r`（那个 `line.trim()` 就已经处理掉），而是
+「前缀后带空格」：`CHANGE_PORT= 8080`、`CHANGE_PORT=\t8080`。**它是有意的，不是冗余的**，
+所以保留实现、补测试守住它——而不是删掉它。同理，空串 `JAVA_HOME`
+（`$env:JAVA_HOME = ''` 很常见）不该被当成有效的 JDK 根目录，否则会拼出
+`\bin\java.exe` 这种相对路径。
+
+至此 Task 4 的测试计数是 **16 + 2 = 18**；Task 5 完成后的总数是 18 + 6 = **24**
+（Task 5 的 Step 4 / Step 6 已按这两个数改过——原先写的 `22 passed` 与 `17 passed`
+都是没把这两条算进去的旧数）。
 
 ---
 
@@ -1918,7 +2134,7 @@ impl Backend {
 
 Run: `cd frontend/src-tauri && cargo test`
 
-Expected: `test result: ok. 18 passed`（Task 4 的 12 条 + 本任务的 6 条）
+Expected: `test result: ok. 24 passed`（Task 4 的 18 条 + 本任务的 6 条）
 
 - [ ] **Step 5: 在 `lib.rs` 里接线：加 `get_backend_status` 命令、启动时拉起后端、退出时关掉**
 
@@ -2028,7 +2244,7 @@ cargo test
 cargo build
 ```
 
-Expected: `cargo test` → 17 passed；`cargo build` → 编译通过。
+Expected: `cargo test` → 24 passed；`cargo build` → 编译通过。
 
 - [ ] **Step 7: 提交**
 
@@ -2423,7 +2639,7 @@ git commit -m "docs(plan): 记录外壳脚手架完成与端到端实测结果
 本计划结束时必须全部满足：
 
 - [ ] `cd frontend && pnpm test` 全绿，**报告实际条数**
-- [ ] `cd frontend/src-tauri && cargo test` 全绿，**报告实际条数**
+- [ ] `cd frontend/src-tauri && cargo test` 全绿，**报告实际条数**（Task 4 落地时实测 **18 passed**，2026-10-16）
 - [ ] `pnpm tauri dev` 能起出一个深色窗口，**不闪白**
 - [ ] 窗口里能看到「后端已连接 · 端口 <数字>」与缓存状态
 - [ ] 关窗后**没有残留的 java 进程**

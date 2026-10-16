@@ -87,8 +87,18 @@ mod tests {
     }
 
     #[test]
+    fn tolerates_whitespace_right_after_the_prefix() {
+        // 真实后端输出是 `CHANGE_PORT=54791\r\n`，经 line.trim() 后 \r 已经没了，
+        // 所以 rest.trim() 对它是冗余的。它实际多容忍的是「前缀后带空格」——
+        // 如果后端将来改成 `PREFIX + " " + port` 之类，这一步能救回来。
+        assert_eq!(parse_port_line("CHANGE_PORT= 8080"), Some(8080));
+        assert_eq!(parse_port_line("CHANGE_PORT=\t8080"), Some(8080));
+    }
+
+    #[test]
     fn tolerates_the_windows_carriage_return() {
-        // 实测：Windows 上 println 写出 \r\n，read_line 只剥 \n，留下 \r。
+        // 实测：Windows 上这一行是 19 字节且以 \r\n 结尾；read_line 什么都不剥
+        // （\r 与 \n 都留着），所以行尾的 \r 只能靠 line.trim() 处理。
         assert_eq!(parse_port_line("CHANGE_PORT=56934\r"), Some(56934));
     }
 
@@ -217,6 +227,13 @@ mod tests {
     fn falls_back_to_java_home() {
         // JAVA_HOME 指向 JDK 根目录，java 在 bin/ 下
         assert_eq!(resolve_java(None, Some("/jh")), java_in("/jh"));
+    }
+
+    #[test]
+    fn ignores_an_empty_java_home() {
+        // 与 configured 那条同理：`$env:JAVA_HOME = ''` 是常见的，
+        // 空串不该被当成一个有效的 JDK 根目录（那会拼出 `\bin\java.exe` 这种相对路径）。
+        assert_eq!(resolve_java(None, Some("")), PathBuf::from("java"));
     }
 
     #[test]
