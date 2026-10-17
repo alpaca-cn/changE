@@ -124,13 +124,20 @@ class MigrationTest {
      *
      * 版本号写死成 containsExactly（不是「前四个必须是」）：将来新增 V5 时这条会红，
      * 那是**有意的**——新迁移一旦发布就该被一起冻结，加进来的同时也要确认它已发布。
+     *
+     * 计划 2 的 Task 1 新增 V5 / V6，这条如约变红（红得对：两份新迁移必须被一起冻结），
+     * 于是把它们的 checksum 一并钉进来：
+     *   5:exercise muscle surrogate id / 6:change log origin import。
+     * V1–V4 的四个值一个都没变，说明这一轮只落了两个新文件，没有回头改已发布的迁移。
      */
     @Test
     void published_migrations_are_byte_frozen() {
         assertThat(jdbc.queryForList(
                 "SELECT version || ':' || checksum FROM flyway_schema_history ORDER BY installed_rank",
                 String.class))
-                .containsExactly("1:1904735359", "2:1428719958", "3:1207314981", "4:1460974919");
+                .containsExactly(
+                        "1:1904735359", "2:1428719958", "3:1207314981", "4:1460974919",
+                        "5:-468526944", "6:1910071904");
     }
 
     private String readMigration(String fileName) {

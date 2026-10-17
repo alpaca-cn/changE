@@ -2,6 +2,7 @@ package com.change;
 
 import com.change.calc.VolumeCalculator;
 import com.change.domain.WorkoutSet;
+import com.change.service.ChangeLogService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -126,8 +127,11 @@ class SchemaTest {
         expectedColumns.put("exercise", List.of(
                 "id", "name_en", "name_zh", "equipment", "is_compound", "default_unit",
                 "source_id", "note", "archived"));
+        // V5 给它加了代理主键 id：复合主键 (exercise_id, muscle_group_id) 用
+        // `WHERE id = ?` 定位不到，所以这张表此前被挡在审计网之外
+        // （见 ChangeLogService.ALLOWED_TABLES 的注释）。
         expectedColumns.put("exercise_muscle", List.of(
-                "exercise_id", "muscle_group_id", "role"));
+                "id", "exercise_id", "muscle_group_id", "role"));
         expectedColumns.put("workout_session", List.of(
                 "id", "session_date", "started_at", "ended_at", "title", "perceived_state",
                 "note", "source_routine_day_id"));
@@ -195,9 +199,11 @@ class SchemaTest {
         expectedNotNull.put("body_metric", List.of("measured_on", "metric_type", "value", "unit"));
         expectedNotNull.put("chat_session", List.of("created_at"));
         expectedNotNull.put("chat_message", List.of("session_id", "role", "created_at"));
+        // after_json 从 V6 起可空：delete 没有「改动之后」的状态，而旧的 NOT NULL
+        // 迫使调用方拿 before 去充数——写进库的是一句假话。三种 action 各自的快照规则
+        // 现在改由三条 CHECK 守（见下面 constraint_snapshot 里的逐条断言）。
         expectedNotNull.put("change_log", List.of(
-                "changed_at", "origin", "action", "target_table", "target_id", "after_json",
-                "undone"));
+                "changed_at", "origin", "action", "target_table", "target_id", "undone"));
 
         assertThat(expectedNotNull.keySet())
                 .as("NOT NULL 快照必须覆盖全部十五张表")
@@ -229,6 +235,10 @@ class SchemaTest {
         expected.put("ux_exercise_name_en", "UNIQUE");
         expected.put("ix_exercise_name_zh", "NOT UNIQUE");
         expected.put("ix_exercise_muscle_muscle_group", "NOT UNIQUE");
+        // V5 把这条 join 表的业务唯一性从「主键」降级成了这条唯一索引。
+        // 索引漏建不会报任何错，只会让同一个动作把同一块肌肉标两次——
+        // 「本周 20 组」被静默算成 40 组。
+        expected.put("ux_exercise_muscle_pair", "UNIQUE");
         expected.put("ix_session_date", "NOT UNIQUE");
         expected.put("ix_session_exercise_session", "NOT UNIQUE");
         expected.put("ux_session_exercise_session_order", "UNIQUE");
@@ -312,13 +322,20 @@ class SchemaTest {
         assertThat(ddlOf("chat_message")).contains(
                 collapseWhitespace("CHECK (role IN ('user','assistant','tool'))"));
         assertThat(ddlOf("change_log")).contains(
-                collapseWhitespace("CHECK (origin IN ('user','agent'))"));
+                collapseWhitespace("CHECK (origin IN ('user','agent','import'))"));
         assertThat(ddlOf("change_log")).contains(
-                collapseWhitespace("CHECK (action IN ('insert','update'))"));
-        // 「一键回退」的守卫：action='update' 必须有 before 快照，否则这行永远回不去，
-        // 而 UI 只看 action 就会画出一个按下去无事可撤的「撤销」按钮。
+                collapseWhitespace("CHECK (action IN ('insert','update','delete'))"));
+        // 三种 action 各自的快照规则。**三条都要有**：少了 insert 那条就能写一行
+        // 「不知道插了什么」的记录；少了 delete 那条的 `after_json IS NULL`，
+        // 调用方又可以拿 before 充数，而这正是 V6 要堵掉的假话。
+        // 旧的那条 CHECK (action <> 'update' OR before_json IS NOT NULL) 已被中间这条
+        // **加强**取代（现在要求 before 与 after 都非空），所以这里断言的是新文本。
         assertThat(ddlOf("change_log")).contains(
-                collapseWhitespace("CHECK (action <> 'update' OR before_json IS NOT NULL)"));
+                collapseWhitespace("CHECK (action <> 'insert' OR after_json IS NOT NULL)"));
+        assertThat(ddlOf("change_log")).contains(collapseWhitespace(
+                "CHECK (action <> 'update' OR (before_json IS NOT NULL AND after_json IS NOT NULL))"));
+        assertThat(ddlOf("change_log")).contains(collapseWhitespace(
+                "CHECK (action <> 'delete' OR (before_json IS NOT NULL AND after_json IS NULL))"));
 
         // workout_set 的数值合法性（刻意不加 NOT NULL：三空行是有意的状态）
         assertThat(ddlOf("workout_set")).contains(collapseWhitespace("CHECK (weight IS NULL OR weight >= 0)"));
@@ -365,16 +382,25 @@ class SchemaTest {
 
         // autoincrement：丢掉它，SQLite 会把删掉的最大 rowid 重新发出去，
         // 于是「删掉第 7 条训练之后再建一条」会拿到 7，而 change_log 里还留着旧的 7。
-        // 十四张表都有单列 id 主键；exercise_muscle 是复合主键的关联表
-        // （PRIMARY KEY (exercise_id, muscle_group_id)），本来就没有 AUTOINCREMENT，
-        // 它由上面那条 DDL 断言里的 PRIMARY KEY 片段守着。
-        EXPECTED.stream()
-                .filter(table -> !"exercise_muscle".equals(table))
-                .forEach(table -> assertThat(ddlOf(table))
-                        .as("表 %s 的主键必须显式 AUTOINCREMENT", table)
-                        .contains(collapseWhitespace("INTEGER PRIMARY KEY AUTOINCREMENT")));
-        assertThat(ddlOf("exercise_muscle")).contains(
-                collapseWhitespace("PRIMARY KEY (exercise_id, muscle_group_id)"));
+        // 十五张表现在都有单列 id 主键：exercise_muscle 的复合主键在 V5 里降级成了
+        // 「代理 id + 唯一索引」。旧的复合主键必须**彻底消失**——它若还在，V5 就没做成。
+        EXPECTED.forEach(table -> assertThat(ddlOf(table))
+                .as("表 %s 的主键必须显式 AUTOINCREMENT", table)
+                .contains(collapseWhitespace("INTEGER PRIMARY KEY AUTOINCREMENT")));
+        assertThat(ddlOf("exercise_muscle"))
+                .as("旧复合主键必须已经不存在（否则 exercise_muscle 仍定位不到目标行）")
+                .doesNotContain("PRIMARY KEY (exercise_id");
+
+        // 索引的**列**也要钉住：index_snapshot 只比名字与唯一性，
+        // 「ux_exercise_muscle_pair ON exercise_muscle(muscle_group_id)」这种
+        // 名字对、列错的重建它看不出来。
+        assertThat(indexDdl("ux_exercise_muscle_pair")).contains(
+                collapseWhitespace("ON exercise_muscle(exercise_id, muscle_group_id)"));
+        // V6 重建 change_log 时把这两个索引一并带了过来；列与顺序同样不能走样。
+        assertThat(indexDdl("ix_change_log_target")).contains(
+                collapseWhitespace("ON change_log(target_table, target_id)"));
+        assertThat(indexDdl("ix_change_log_time")).contains(
+                collapseWhitespace("ON change_log(changed_at)"));
     }
 
     /**
@@ -391,10 +417,14 @@ class SchemaTest {
      * 注释里的清单和 DDL 之间没有任何机械收口，DDL 加了第十种组类型，注释照样写着九种，
      * 谁也不报错。现在两处都走同一套机制。
      *
-     * <p>九处 `TEXT + CHECK (x IN (...))` 里，只有这两处有 Java 侧白名单；
-     * 其余七处（food.source / photo.kind / meal.slot / meal_item.origin /
-     * chat_message.role / change_log.origin / change_log.action）对应的表**连实体都没有**，
-     * 白名单无处安放。它们已记入计划文档的待办（不是遗忘）。
+     * <p>九处 `TEXT + CHECK (x IN (...))` 里，三处有 Java 侧白名单：本参数化的两处，
+     * 加上 `change_log.origin`（`ChangeLogService.ALLOWED_ORIGINS`）。第三处是在计划 2
+     * 的 Task 1 里补进来的——那一步的要求正是「CHECK 与 Java 常量两处都要改，缺一不可」，
+     * 而在此之前这条一致性只有一条行为测试在守（Java 放行后 DB 拒绝，报
+     * `CHECK constraint failed`），没有机械比对。
+     * 其余六处（food.source / photo.kind / meal.slot / meal_item.origin /
+     * chat_message.role / change_log.action）对应的表**连实体都没有**，白名单无处安放。
+     * 它们已记入计划文档的待办（不是遗忘）。
      *
      * <p>将来若合法值扩容（比如肌群角色加 `'stabilizer'`、组类型加 `'cluster'`），
      * **两处都要改**：迁移里的 CHECK 与 Java 侧的常量。迁移一旦发布
@@ -435,7 +465,10 @@ class SchemaTest {
     private static Stream<Arguments> enumWhitelistCases() {
         return Stream.of(
                 Arguments.of("exercise_muscle", "role", VolumeCalculator.VALID_ROLES),
-                Arguments.of("workout_set", "set_type", WorkoutSet.VALID_SET_TYPES));
+                Arguments.of("workout_set", "set_type", WorkoutSet.VALID_SET_TYPES),
+                // 'import' 是 V6 新加的值：只改 Java 侧（或只改 DDL 侧）都会让这条变红，
+                // 而这正是「两处都要改，缺一不可」的机械收口。
+                Arguments.of("change_log", "origin", ChangeLogService.ALLOWED_ORIGINS));
     }
 
     // ------------------------------------------------------------------

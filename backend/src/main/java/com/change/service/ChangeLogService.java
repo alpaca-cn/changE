@@ -20,8 +20,13 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * 三条设计约束（设计文档决定 4）：
  *   1. 表名必须在白名单里 —— 工具集是白名单，不是让模型自由写 SQL
- *   2. 只记录 insert / update，不提供 delete —— 删除无法撤销，所以干脆不给
- *   3. 每条改动存下 before / after 的 JSON 快照，可一键回退
+ *   2. 记录 insert / update / delete，但**只有 insert 与 update 能被 undo 回放**——
+ *      回退 delete 需要重建整行（含主键），通用回放做不到，所以 undo 显式拒绝它
+ *      （见 undo 里的守卫）。第一阶段唯一会记 delete 的地方是批量导入的撤销，
+ *      而它本身就是删除，不需要被回退
+ *   3. 每条改动存下 before / after 的 JSON 快照，可一键回退。快照的形状按 action
+ *      分别由数据库的 CHECK 钉死：insert 必须有 after、update 两边都要有、
+ *      delete 必须有 before 且 after 必须为空
  *
  * ## 回退的语义（契约）
  *
@@ -33,10 +38,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *   不要凭记忆手写列名。
  * - **列名必须真实存在于目标表且不是主键**；SQLite 的 rowid / _rowid_ / oid
  *   是主键别名，会被拒绝（否则回退会搬走目标行的主键）。
- * - **撤销一个被外键 CASCADE 引用的父行会连带删掉子行**，而快照里不含子行。
- *   典型例子：撤销 `exercise` 的创建会级联删掉 `exercise_muscle` 的映射行，
+ * - **撤销一个被外键 CASCADE 引用的父行会连带删掉子行**，而那一行的快照里不含子行。
+ *   典型例子：只记了 `exercise` 的创建就 undo 它，会级联删掉 `exercise_muscle` 的映射行，
  *   而快照两侧都不含映射——「撤销后再重做」会静默丢掉肌群标注。
- *   动作编辑功能落地时必须扩展快照（记下 muscle_map）或改为整组重建 join 行。
+ *   从 V5 起，join 行自己也能进日志（`exercise_muscle` 已有代理 id）：把它们逐条记下来
+ *   再逆序 undo，映射就能一起撤干净。但如果只记父行、不记 join 行，这个缺口仍然存在。
  */
 @Service
 public class ChangeLogService {
@@ -44,28 +50,44 @@ public class ChangeLogService {
     /**
      * 允许被记录与回退的表。
      *
-     * **准入条件：必须有单列整型主键 `id`。** 回退靠 `WHERE id = ?` 定位目标行，
-     * 复合主键的表（如 exercise_muscle，主键是 (exercise_id, muscle_group_id)）
-     * 定位不到，所以不进白名单——它的增删应通过所属的 exercise 记录来审计。
+     * **准入条件：必须有单列整型主键 `id`。** 回退靠 `WHERE id = ?` 定位目标行。
+     *
+     * <p>这条准入条件曾经把 join 表挡在门外：`exercise_muscle` 原来是复合主键
+     * `(exercise_id, muscle_group_id)`，用 `WHERE id = ?` 定位不到，所以被排除在审计
+     * 之外——后果是「创建一个动作并挂 3 块肌肉，日志里只有 1 行」，而 undo 掉
+     * `exercise` 会级联删掉那 3 行、日志里没有任何东西能让它们回来。
+     * `V5__exercise_muscle_surrogate_id.sql` 给它加了代理主键 `id`，业务唯一性降级成
+     * 唯一索引 `ux_exercise_muscle_pair`，于是它现在就是这个集合里的普通成员，
+     * 不需要任何特例。**以后任何 join 表遇到同一个问题都按这一条办：**
+     * **加代理 id，而不是把它排除在审计之外。**
      *
      * 加表必须改这里，改这里必须同时加测试（见 ChangeLogServiceTest 的白名单自检）。
      */
     public static final Set<String> ALLOWED_TABLES = Set.of(
             "food", "food_portion", "meal", "meal_item",
-            "exercise",
+            "exercise", "exercise_muscle",
             "workout_session", "session_exercise", "workout_set",
             "body_metric", "photo");
 
     /**
-     * 合法的变更来源。必须与 {@code V4__auxiliary.sql} 里
-     * {@code change_log.origin} 的 {@code CHECK (origin IN ('user','agent'))} 一致。
+     * 合法的变更来源。必须与 {@code V6__change_log_origin_import.sql} 里
+     * {@code change_log.origin} 的 {@code CHECK (origin IN ('user','agent','import'))} 一致。
+     *
+     * <p>{@code import} 与另外两个是**不同的语义**：{@code user} 是用户手点的，
+     * {@code agent} 是智能体改的，{@code import} 是批量导入产生的（一次 876 个动作）。
+     * 分开之后界面才能把「一次导入的 3400 条改动」与「你手改的 3 条」分组显示。
+     *
+     * <p>两处必须同时改，缺一不可：只改这里会在写日志时撞数据库的 CHECK，
+     * 用户看到的是一句 {@code CHECK constraint failed}；只改 CHECK 则这道「先拦下来、
+     * 给一句能读懂的话」的防线就没了。两侧的一致性由
+     * {@code SchemaTest#java_whitelist_matches_the_ddl} 机械比对（含顺序）。
      *
      * <p>用 {@link List} 而不是 {@code Set}：报错文案要把它拼进消息，而 {@code Set.of}
      * 的迭代顺序按 JVM 运行随机（同一个集合两次运行可能给出不同顺序），
      * 拼进消息就成了「同一处错误、两种文案」。包内 {@code VolumeCalculator.VALID_ROLES}
      * 出于同一理由也是 {@code List}。
      */
-    public static final List<String> ALLOWED_ORIGINS = List.of("user", "agent");
+    public static final List<String> ALLOWED_ORIGINS = List.of("user", "agent", "import");
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
@@ -84,12 +106,33 @@ public class ChangeLogService {
     public long recordUpdate(String table, long targetId, Map<String, Object> before,
                              Map<String, Object> after, String origin, Long chatSessionId) {
         if (before == null || before.isEmpty()) {
-            // 数据库侧有 CHECK (action <> 'update' OR before_json IS NOT NULL) 兜底，
-            // 但在 Java 侧先拦能给出能读懂的报错，而不是一句 CHECK constraint failed。
+            // 数据库侧有 CHECK (action <> 'update' OR (before_json IS NOT NULL AND
+            // after_json IS NOT NULL)) 兜底，但在 Java 侧先拦能给出能读懂的报错，
+            // 而不是一句 CHECK constraint failed。
             throw new IllegalArgumentException(
                     "update 记录必须带 before 快照，否则撤销时无从恢复");
         }
         return write(table, targetId, "update", before, after, origin, chatSessionId);
+    }
+
+    /**
+     * 记录一次删除。{@code after} 恒为 {@code null}——删除没有「改动之后」的状态。
+     *
+     * <p>这正是 {@code V6__change_log_origin_import.sql} 把 {@code after_json} 放宽成可空的
+     * 原因。旧 schema 的 {@code NOT NULL} 会迫使调用方拿 {@code before} 去充数，那写进库的
+     * 是一句假话，而假话比空值危险得多：将来任何读 {@code after_json} 的代码都会得出一份
+     * 「删掉之后长这样」的错误结论。
+     */
+    public long recordDelete(String table, long targetId, Map<String, Object> before,
+                             String origin, Long chatSessionId) {
+        if (before == null || before.isEmpty()) {
+            // 与 recordUpdate 那条同一个理由：把约束翻译成能读懂的话。
+            // 数据库侧有 CHECK (action <> 'delete' OR (before_json IS NOT NULL AND
+            // after_json IS NULL)) 兜底。
+            throw new IllegalArgumentException(
+                    "delete 记录必须带 before 快照，否则无从追溯删了什么");
+        }
+        return write(table, targetId, "delete", before, null, origin, chatSessionId);
     }
 
     private long write(String table, long targetId, String action,
@@ -97,38 +140,44 @@ public class ChangeLogService {
                        String origin, Long chatSessionId) {
         requireAllowed(table);
         if (!ALLOWED_ORIGINS.contains(origin)) {
-            // schema 侧同样有 CHECK (origin IN ('user','agent')) 兜底；
+            // schema 侧同样有 CHECK (origin IN ('user','agent','import')) 兜底；
             // 在这里先拦的理由与上面 before 那条相同：把约束翻译成能读懂的话。
             throw new IllegalArgumentException(
                     "origin 必须是 " + String.join(" 或 ", ALLOWED_ORIGINS)
                             + "，实际为 " + origin);
         }
-        if (after == null || after.isEmpty()) {
-            // 不拦的话 toJson(null) 会写出**字面量字符串 "null"**：after_json 是 NOT NULL，
-            // 于是库里留下一行「看起来合法、语义为空」的记录。
+        if (!"delete".equals(action) && (after == null || after.isEmpty())) {
+            // insert / update 必须有 after。空 Map 也不行：toJson(Map.of()) 会写出 "{}"，
+            // 那是「看起来有快照、实际上什么都没记」的同一类假话。
+            // delete 是例外：它本来就没有「改动之后」的状态（见 recordDelete），数据库侧的
+            // CHECK (action <> 'delete' OR (... after_json IS NULL)) 还要求它必须为空。
             throw new IllegalArgumentException("after 快照不能为空");
         }
         // 与 undo 对 before 的校验对称：after 的键也必须是该表上真实存在、
         // 且不是主键的列。不校验的话，拼写错误/多余键/主键别名会被原样写进
         // after_json 并记一条成功的日志——而 after_json 至今没有读路径，
         // 写错了永远不会被发现（本项目一路在消灭的「静默失效」）。
-        for (String column : after.keySet()) {
-            if (!writableColumns(table).contains(column)) {
-                throw new IllegalArgumentException(
-                        "列名「" + column + "」不是 " + table + " 上可记录的列"
-                                + "（必须真实存在且不是主键——SQLite 的 rowid/_rowid_/oid 是主键别名）");
+        if (after != null) {
+            for (String column : after.keySet()) {
+                if (!writableColumns(table).contains(column)) {
+                    throw new IllegalArgumentException(
+                            "列名「" + column + "」不是 " + table + " 上可记录的列"
+                                    + "（必须真实存在且不是主键——SQLite 的 rowid/_rowid_/oid 是主键别名）");
+                }
             }
         }
         jdbc.update("INSERT INTO change_log(changed_at, origin, action, target_table, " +
                     "target_id, before_json, after_json, chat_session_id, undone) " +
                     "VALUES (?,?,?,?,?,?,?,?,0)",
                 LocalDateTime.now().format(ISO), origin, action, table, targetId,
-                before == null ? null : toJson(before), toJson(after), chatSessionId);
+                before == null ? null : toJson(before), after == null ? null : toJson(after),
+                chatSessionId);
         return jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
     }
 
     /**
-     * 回退一条改动。insert 的回退是删除该行；update 的回退是写回 before 值。
+     * 回退一条改动。insert 的回退是删除该行；update 的回退是写回 before 值；
+     * **delete 的回退会被拒绝**（重建整行需要主键，通用回放做不到——见下面的守卫）。
      *
      * {@code @Transactional} 不是可选的：本方法要写两处（目标表 + change_log）。
      * 没有事务时第二步失败会留下「数据删了、日志说没撤」的矛盾状态，
@@ -158,6 +207,24 @@ public class ChangeLogService {
         // 而 target_table 上没有 CHECK：一行被写坏的日志就能变成一条越权回退路径
         // （删掉/改写白名单之外的任何表）。所以这里必须重新校验。
         requireAllowed(table);
+
+        if ("delete".equals(action)) {
+            // 回退一个 delete 需要把整行重新 INSERT——那要重建全部列与主键，
+            // 而这在通用回放里做不到（一行快照并不含主键）。
+            //
+            // 不加这条守卫的后果是最坏的一类失效：undo 会走到下面「从 before 写回」
+            // 的分支，对已删除的行 UPDATE 0 行，然后把 undone 标成 1——
+            // **日志说撤了，数据没变**。
+            //
+            // 为什么第一阶段不做「回退 delete」：唯一会记录 delete 的地方是 unimport
+            // （批量撤销导入），而它本身就是删除，不需要被回退。用户手动删动作的功能
+            // 还没有。等真有那个需求时，再设计「重建整行」的路径——那时 before
+            // 快照足够（除了主键，而那可以记在别处）。
+            throw new IllegalStateException(
+                    "删除不能通过通用回放撤销（日志 " + logId + "）："
+                            + "回退它需要重建整行，包括主键。"
+                            + "第一阶段的删除只有批量导入的撤销，那是一次专用操作而不是回放。");
+        }
 
         int affected;
         try {
