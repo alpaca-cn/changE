@@ -188,10 +188,19 @@ CREATE TABLE change_log_new (
     target_table    TEXT    NOT NULL,
     target_id       INTEGER NOT NULL,
     before_json     TEXT,
-    after_json      TEXT    NOT NULL,
+    -- 放宽成可空：delete 没有「改动之后」的状态。
+    -- 之前的 NOT NULL 迫使调用方拿 before 去充数——那写进库的是一句假话，
+    -- 而审计表里最不该有的就是「看起来合法但语义是错的」行。
+    after_json      TEXT,
     undone          INTEGER NOT NULL DEFAULT 0,
     chat_session_id INTEGER,
-    CHECK (action <> 'update' OR before_json IS NOT NULL)
+    -- 三种 action 各自的快照规则，全部用 CHECK 钉死：
+    --   insert：必须有 after（不然不知道插了什么）
+    CHECK (action <> 'insert' OR after_json IS NOT NULL),
+    --   update：两边都要有（撤销靠 before，追溯靠 after）
+    CHECK (action <> 'update' OR (before_json IS NOT NULL AND after_json IS NOT NULL)),
+    --   delete：必须有 before（不然不知道删了什么），且 after 必须为空
+    CHECK (action <> 'delete' OR (before_json IS NOT NULL AND after_json IS NULL))
 );
 
 INSERT INTO change_log_new (id, changed_at, origin, action, target_table, target_id,
@@ -407,43 +416,104 @@ Expected:
 
 **同时把 `ALLOWED_TABLES` 上面那段注释改准**——它现在写着「复合主键的表……所以不进白名单」，那是 V5 之前的真实情况，现在是错的。
 
-- [ ] **Step 6: 补一个公开的 `recordDelete`**
+- [ ] **Step 6: 补一个公开的 `recordDelete`，并让 `undo` 拒绝它**
 
-`unimport`（Task 5）需要记录删除，但现在 `write(...)` 是 private 且没有 delete 的公开入口。加：
+`unimport`（Task 5）需要记录删除，但现在 `write(...)` 是 private 且没有 delete 的公开入口。
+
+**设计已定（不走权宜之计）**：Step 2 的迁移已经把 `after_json` 放宽成可空，并用三条 `CHECK` 钉住每种 action 的快照规则。所以 `recordDelete` **传 `after` 为 null**，不拿 `before` 去充数——审计表里最不该有的就是「看起来合法但语义是错的」行。
 
 ```java
     /**
-     * 记录一次删除。
+     * 记录一次删除。{@code after} 恒为 {@code null}——删除没有「改动之后」的状态。
      *
-     * <p><b>没有通用的 undo 分支处理它</b>：{@link #undo} 只有「insert → 删除」与
-     * 「其余 → 从 before 写回」两条路径，而「回退一个 delete」需要把整行重新 INSERT——
-     * 那要重建全部列与主键。第一阶段的删除只有两种：用户手动删（先不做）与
-     * 批量导入的撤销（{@code unimport}，它本身就是删除，不需要被回退）。
-     *
-     * <p>所以这里只**记录**，供追溯；调 {@code undo} 到一条 delete 日志会走到
-     * 「从 before 写回」那条分支上，对已删除的行 UPDATE 0 行——那是个静默空操作。
-     * <b>因此 undo 必须显式拒绝 action='delete'</b>，见 Task 5 的验收。
+     * <p>这正是 V6 迁移把 {@code after_json} 放宽成可空的原因。旧 schema 的
+     * {@code NOT NULL} 会迫使调用方拿 {@code before} 去充数，那写进库的是一句假话，
+     * 而假话比空值危险得多：将来任何读 {@code after_json} 的代码都会得出一份
+     * 「删掉之后长这样」的错误结论。
      */
     public long recordDelete(String table, long targetId, Map<String, Object> before,
                              String origin, Long chatSessionId) {
         if (before == null || before.isEmpty()) {
-            throw new IllegalArgumentException("delete 记录必须带 before 快照，否则无从追溯删了什么");
+            // 与 recordUpdate 那条同一个理由：把约束翻译成能读懂的话。
+            // 数据库侧有 CHECK (action <> 'delete' OR before_json IS NOT NULL) 兜底。
+            throw new IllegalArgumentException(
+                    "delete 记录必须带 before 快照，否则无从追溯删了什么");
         }
-        return write(table, targetId, "delete", before, before, origin, chatSessionId);
+        return write(table, targetId, "delete", before, null, origin, chatSessionId);
     }
 ```
 
-> **⚠️ 这里有个真陷阱**：`write` 里对 `after` 有非空校验，所以 delete 传 `before` 当 `after` 是权宜。**更好的做法是让 `write` 接受 `after` 为 null 当 action 是 delete**——但 `after_json` 是 `NOT NULL`。你实现时判断哪种更干净，**并在注释里写明你选了哪种、为什么**。
->
-> 更重要的一条：**给 `undo` 加上 `if ("delete".equals(action)) throw new IllegalStateException(...)`**。不加的话，撤销一条 delete 日志会静默地 UPDATE 0 行然后标记 `undone=1`——**日志说撤了，数据没变**，这是最坏的一类失效。
+`write(...)` 要相应放宽：**`after` 的非空校验只在 action 不是 `delete` 时生效**。
 
-- [ ] **Step 7: 跑测试**
+**并且给 `undo` 加一条守卫**（紧跟在 `requireAllowed(table)` 之后）：
+
+```java
+        if ("delete".equals(action)) {
+            // 回退一个 delete 需要把整行重新 INSERT——那要重建全部列与主键，
+            // 而这在通用回放里做不到（一行快照并不含主键）。
+            //
+            // 不加这条守卫的后果是最坏的一类失效：undo 会走到下面「从 before 写回」
+            // 的分支，对已删除的行 UPDATE 0 行，然后把 undone 标成 1——
+            // **日志说撤了，数据没变**。
+            throw new IllegalStateException(
+                    "删除不能通过通用回放撤销（日志 " + logId + "）："
+                            + "回退它需要重建整行，包括主键。"
+                            + "第一阶段的删除只有批量导入的撤销，那是一次专用操作而不是回放。");
+        }
+```
+
+**为什么第一阶段不做「回退 delete」**：唯一会记录 delete 的地方是 `unimport`（批量撤销导入），而它本身就是删除，不需要被回退。用户手动删动作的功能还没有。等真有那个需求时，再设计「重建整行」的路径——那时 `before` 快照足够（除了主键，而那可以记在别处）。
+
+- [ ] **Step 7: 补两条测试，把上面这套语义钉住**
+
+加进 `ChangeLogJoinTableTest`：
+
+```java
+    @Test
+    void a_delete_record_carries_a_before_snapshot_and_no_after() {
+        // 三种 action 的快照规则是 DB 侧的 CHECK 守的，这里钉住 Java 侧的行为。
+        long exId = newExercise("ZZ Delete Record Test");
+        long logId = changeLog.recordDelete("exercise", exId,
+                Map.of("name_en", "ZZ Delete Record Test", "default_unit", "kg"), "import", null);
+
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT before_json, after_json FROM change_log WHERE id = ?", logId);
+        assertThat(row.get("before_json")).as("delete 必须有 before").isNotNull();
+        assertThat(row.get("after_json")).as("delete 的 after 必须是 NULL，不能拿 before 充数").isNull();
+
+        jdbc.update("DELETE FROM change_log WHERE id = ?", logId);
+        jdbc.update("DELETE FROM exercise WHERE id = ?", exId);
+    }
+
+    @Test
+    void undoing_a_delete_is_refused_instead_of_silently_doing_nothing() {
+        // 不加守卫的话 undo 会 UPDATE 0 行然后把 undone 标成 1：
+        // 日志说撤了，数据没变——最坏的一类失效。
+        long exId = newExercise("ZZ Undo Delete Test");
+        long logId = changeLog.recordDelete("exercise", exId,
+                Map.of("name_en", "ZZ Undo Delete Test", "default_unit", "kg"), "import", null);
+
+        assertThatThrownBy(() -> changeLog.undo(logId))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("删除不能通过通用回放撤销");
+
+        // 而且它没有把 undone 标成 1
+        assertThat(jdbc.queryForObject(
+                "SELECT undone FROM change_log WHERE id = ?", Integer.class, logId))
+                .as("拒绝之后不能留下「已撤销」的印记").isZero();
+
+        jdbc.update("DELETE FROM change_log WHERE id = ?", logId);
+        jdbc.update("DELETE FROM exercise WHERE id = ?", exId);
+    }
+```
+
+- [ ] **Step 8: 跑测试**
 
 Run: `cd backend && mvn -B clean test`
 
-Expected: 迁移后 schema 校验通过；`ChangeLogJoinTableTest` 除那条标了 `@Disabled` 的全绿。
+Expected: 迁移后 schema 校验通过；`ChangeLogJoinTableTest` 除那条标了 `@Disabled` 的全绿（含新增的两条）。
 
-- [ ] **Step 8: 提交**
+- [ ] **Step 9: 提交**
 
 ```bash
 git add backend/src/main/resources/db/migration/V5__exercise_muscle_surrogate_id.sql \
