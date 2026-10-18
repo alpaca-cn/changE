@@ -1,3 +1,7 @@
+// @vitest-environment node
+// 这条用例只读文件、不碰 DOM，必须跑在 node 环境：jsdom 模式下 Vite 会把
+// node:fs / node:url / node:path 当作浏览器模块 externalize 成空壳，
+// 于是 fileURLToPath 不是函数（2026-10-18 实测）。
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
