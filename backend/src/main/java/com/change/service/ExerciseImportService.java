@@ -154,6 +154,38 @@ public class ExerciseImportService {
         return ids.size();
     }
 
+    /**
+     * 启动时是否应当自动安装动作库。
+     *
+     * <p>两个条件同时成立才装：库里当前**没有**导入的动作，且用户**从没撤销过**导入。
+     *
+     * <p>第二个条件是关键：撤销导入之后重启**不该**把库装回来——否则「撤销」这个动作就没有
+     * 意义（用户点了移除，下次打开又回来了）。「撤销过」的证据就是 {@link #unimport()} 写下的
+     * 那条汇总 delete 日志（{@code origin='import'} / {@code action='delete'} /
+     * {@code target_table='exercise'}），它是那次撤销唯一留下的、可追溯的记录。
+     *
+     * <p>要把库重新装回来是一个**显式**动作（{@code POST /api/exercises/import}），
+     * 不是重启的副作用。
+     */
+    public boolean shouldInstallOnStartup() {
+        return !hasImportedExercises() && !wasEverUnimported();
+    }
+
+    /** 库里当前有没有导入的动作（{@code source_id} 带命名空间前缀）。 */
+    public boolean hasImportedExercises() {
+        return count("SELECT COUNT(*) FROM exercise WHERE source_id LIKE ?", SOURCE_PREFIX + "%") > 0;
+    }
+
+    /** 用户有没有撤销过导入——读 {@link #unimport()} 写下的那条汇总日志。 */
+    public boolean wasEverUnimported() {
+        return count("SELECT COUNT(*) FROM change_log "
+                + "WHERE origin = ? AND action = 'delete' AND target_table = 'exercise'", ORIGIN) > 0;
+    }
+
+    private int count(String sql, Object... args) {
+        return jdbc.queryForObject(sql, Integer.class, args);
+    }
+
     private Set<String> existingSourceIds() {
         return new HashSet<>(jdbc.queryForList(
                 "SELECT source_id FROM exercise WHERE source_id LIKE '" + SOURCE_PREFIX + "%'",

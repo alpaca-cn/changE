@@ -49,6 +49,12 @@ public class ExerciseImportRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
+        // 只在「库里没有、且用户从没撤销过」时才装。撤销过就让它保持被撤销的状态——
+        // 否则「撤销」会被下一次重启悄悄推翻。要装回来是显式动作（POST /api/exercises/import）。
+        if (!importService.shouldInstallOnStartup()) {
+            log.info("动作库：已安装（或已被撤销），跳过启动导入");
+            return;
+        }
         ExerciseImportService.Result result = importService.importAll();
         log.info("动作库导入：新增 {} 个动作 / 跳过 {} 个（已存在）/ 写入 {} 条肌群标注（源前缀 {}）",
                 result.inserted(), result.skipped(), result.musclesInserted(),

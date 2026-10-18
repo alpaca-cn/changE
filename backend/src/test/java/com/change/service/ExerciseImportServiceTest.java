@@ -245,6 +245,29 @@ class ExerciseImportServiceTest {
         assertThat(importedLinks()).isEqualTo(2587);
     }
 
+    @Test
+    void a_clean_database_should_install_the_library_on_startup() {
+        assertThat(importService.shouldInstallOnStartup()).isTrue();
+        assertThat(importService.hasImportedExercises()).isFalse();
+        assertThat(importService.wasEverUnimported()).isFalse();
+    }
+
+    @Test
+    void an_installed_library_is_not_reinstalled_and_a_removed_one_stays_removed() {
+        importService.importAll();
+        assertThat(importService.shouldInstallOnStartup())
+                .as("已经装过之后，启动不该再装一遍").isFalse();
+
+        importService.unimport();
+        assertThat(importService.wasEverUnimported()).isTrue();
+        assertThat(importService.shouldInstallOnStartup())
+                .as("撤销过之后，重启不该把库装回来——否则「撤销」就没意义了").isFalse();
+
+        // 但显式装回来仍然可以（这正是 POST /api/exercises/import 干的事）
+        assertThat(importService.importAll().inserted()).isEqualTo(876);
+        assertThat(importService.shouldInstallOnStartup()).isFalse();
+    }
+
     // ------------------------------------------------------------------
     // 工具：按 source_id 收口的计数
     // ------------------------------------------------------------------

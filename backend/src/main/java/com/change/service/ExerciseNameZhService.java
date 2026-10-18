@@ -1,10 +1,15 @@
 package com.change.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -32,6 +37,9 @@ import java.util.Set;
  */
 @Service
 public class ExerciseNameZhService {
+
+    /** classpath 上的「英文名 → 中文名」映射。随包分发。 */
+    public static final String MAPPING_RESOURCE = "seed/name-zh.json";
 
     /** 一次写入的结果。四个计数互不重叠，加起来等于映射里与库里动作能对上的条目数。 */
     public record Result(int updated, int skippedAlreadyNamed, int skippedDuplicate, int skippedNotImported) {}
@@ -90,6 +98,42 @@ public class ExerciseNameZhService {
         }
 
         return new Result(updated, alreadyNamed, duplicate, notImported);
+    }
+
+    /**
+     * 从 classpath 读 {@link #MAPPING_RESOURCE} 并应用。
+     *
+     * <p>启动时用，{@code POST /api/exercises/import} 之后也用——导入完不写名字的话，库会停在
+     * 「有动作、没中文名」的半成品状态（要等下一次重启才补上）。
+     *
+     * @return 应用结果；classpath 上没有这份映射时返回 {@code null}（不是错误）
+     */
+    @Transactional
+    public Result applyMappingFromClasspath() {
+        ClassPathResource resource = new ClassPathResource(MAPPING_RESOURCE);
+        if (!resource.exists()) {
+            return null;
+        }
+        Map<String, String> mapping;
+        try (var in = resource.getInputStream()) {
+            mapping = new ObjectMapper().readValue(
+                    in, new TypeReference<LinkedHashMap<String, String>>() {});
+        } catch (IOException e) {
+            throw new IllegalStateException("读取中文名映射失败: " + MAPPING_RESOURCE, e);
+        }
+        return apply(mapping);
+    }
+
+    /**
+     * 有没有「已导入、但还没有中文名」的动作。
+     *
+     * <p>启动时用它决定要不要读那份映射：正常启动（都已命名）时直接跳过，不必每次启动都读
+     * 一遍那份 JSON。也让「映射新增了名字」这类情况能被自动补上——只要还有空着的行就会处理。
+     */
+    public boolean hasUnnamedImportedExercises() {
+        return jdbc.queryForObject(
+                "SELECT COUNT(*) FROM exercise WHERE source_id IS NOT NULL AND name_zh IS NULL",
+                Integer.class) > 0;
     }
 
     private Long firstId(String sql, Object... args) {

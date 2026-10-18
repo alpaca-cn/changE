@@ -1614,7 +1614,7 @@ Run: `cd backend && mvn -B clean test`
 
 > ✅ **启动导入已接线并实测（2026-10-18）。** 新增 `ExerciseImportRunner`（`ApplicationRunner`，默认开；可用 `change.exercise.import-on-startup=false` 关闭，测试套件正是用它关掉的）。干净库 `java -jar` 实测：V1–V8 应用后日志打出 `动作库导入：新增 876 个动作 / 跳过 0 个（已存在）/ 写入 2587 条肌群标注`；库内 `exercise=876` / `exercise_muscle=2587` / `muscle_group=17` / `change_log(origin='import')=3463`。清单第 1–7 条因此可在真实应用上核对（第 2–7 条另有 `ExerciseImportServiceTest` 与 `ExerciseImportRunnerTest` 覆盖）。
 >
-> ⚠️ **第 8、9 条仍不可用**：`unimport()` 没有端点 / CLI 入口（只能在代码与测试里调），而且因为每次启动都会导入，撤销之后**重启会把动作库装回来**——这个取舍留给「接界面」那一步一起定。另：清单第 6 条的 `origin='IMPORT'` 应为小写 `'import'`。详见总览文档「计划 2」一节。
+> ✅ **第 8、9 条已可用（2026-10-18 补齐入口）。** 新增 `ExerciseController`（`/api/exercises`）：`GET /status`、`POST /import`、`POST /unimport`。并且把「每次启动都导入」改成**只自动安装一次、撤销后不再自动装**：`ExerciseImportService.shouldInstallOnStartup()` = 库里没有导入的动作 **且** 从没撤销过（依据是 `unimport()` 写下的那条汇总 delete 日志，**不需要新表**）。**重启实测**：导入 → `POST /unimport` → 重启 → 启动日志 `动作库：已安装（或已被撤销），跳过启动导入`、`imported=0`；只有显式 `POST /import` 才装回来（并连中文名一起写）。另：清单第 6 条的 `origin='IMPORT'` 应为小写 `'import'`。详见总览文档「计划 2」一节。
 
 - [ ] **Step 1: 干净库上跑一遍全链路**
 
