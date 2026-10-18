@@ -129,6 +129,18 @@ class MigrationTest {
      * 于是把它们的 checksum 一并钉进来：
      *   5:exercise muscle surrogate id / 6:change log origin import。
      * V1–V4 的四个值一个都没变，说明这一轮只落了两个新文件，没有回头改已发布的迁移。
+     *
+     * 计划 2 的 Task 2 新增 V8（17 块肌群的种子），这条再次如约变红，V8 的 checksum
+     * 从实跑后的库里读出后钉进来：
+     *   8:muscle group seed。
+     * V1–V6 的六个值一个都没变——V8 只加了一个新文件，没有回头改已发布的迁移。
+     *
+     * <p><b>版本号里暂时缺 V7，是有意的。</b>V7（动作分类与说明）是计划 2 的 Task 3
+     * 的产物，而本任务是 Task 2，编号不连续并不影响 Flyway 在全新库上按序应用。
+     * Task 3 落地时 V7 会出现在这里，届时它的 checksum 同样必须从实跑后的库读出，
+     * 不能猜。注意：如果某个本地库已经应用到 V8，事后才出现 V7，Flyway 默认的
+     * outOfOrder=false 会拒绝应用并让启动失败——测试库每次 clean 都是新的，不受影响；
+     * 开发机上的旧库需要删掉重建（或显式开启 outOfOrder）。
      */
     @Test
     void published_migrations_are_byte_frozen() {
@@ -137,7 +149,7 @@ class MigrationTest {
                 String.class))
                 .containsExactly(
                         "1:1904735359", "2:1428719958", "3:1207314981", "4:1460974919",
-                        "5:-468526944", "6:1910071904");
+                        "5:-468526944", "6:1910071904", "8:-673302036");
     }
 
     private String readMigration(String fileName) {
