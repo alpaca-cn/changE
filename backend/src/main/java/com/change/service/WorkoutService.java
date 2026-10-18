@@ -127,6 +127,45 @@ public class WorkoutService {
         return new Result(session.id, exerciseCount, setCount);
     }
 
+    /** 最近 5 次训练，新的在前（首页用）。 */
+    public List<SessionSummary> recentSessions() {
+        return sessions.findTop5ByOrderBySessionDateDesc().stream()
+                .map(s -> new SessionSummary(s.id, s.sessionDate, s.title, s.perceivedState))
+                .toList();
+    }
+
+    /** 一次训练的完整内容；找不到返回 {@link Optional#empty()}（调用方翻译成 404）。 */
+    public Optional<SessionDetail> sessionDetail(long sessionId) {
+        Optional<WorkoutSession> found = sessions.findById(sessionId);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        WorkoutSession s = found.get();
+        List<SessionExercise> ses = sessionExercises.findBySessionIdOrderByOrderIndexAsc(sessionId);
+
+        Map<Long, Exercise> exerciseById = exercises
+                .findAllById(ses.stream().map(se -> se.exerciseId).toList()).stream()
+                .collect(Collectors.toMap(e -> e.id, e -> e));
+
+        List<ExerciseDetail> details = new ArrayList<>();
+        for (SessionExercise se : ses) {
+            Exercise e = exerciseById.get(se.exerciseId);
+            List<SetDetail> setDetails = sets.findBySessionExerciseIdOrderBySetIndexAsc(se.id)
+                    .stream().map(WorkoutService::toSetDetail).toList();
+            details.add(new ExerciseDetail(se.id, se.exerciseId,
+                    e == null ? null : e.nameZh, e == null ? null : e.nameEn,
+                    se.orderIndex, se.note, se.supersetGroup, setDetails));
+        }
+        return Optional.of(new SessionDetail(s.id, s.sessionDate, s.title, s.perceivedState,
+                s.note, s.startedAt, s.endedAt, details));
+    }
+
+    private static SetDetail toSetDetail(WorkoutSet ws) {
+        return new SetDetail(ws.id, ws.setIndex, ws.setType, ws.weight, ws.repetitions,
+                ws.durationSeconds, ws.perSide, ws.rir, ws.restSeconds, ws.completed,
+                ws.targetWeight, ws.targetReps);
+    }
+
     private static WorkoutSet toSet(long sessionExerciseId, int setIndex, SetInput in) {
         WorkoutSet ws = new WorkoutSet();
         ws.sessionExerciseId = sessionExerciseId;

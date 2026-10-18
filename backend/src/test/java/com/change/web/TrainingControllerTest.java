@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -78,5 +79,32 @@ class TrainingControllerTest {
         mvc.perform(post("/api/sessions").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").exists());
+    }
+
+    @Test
+    void reads_a_session_back_through_the_api() throws Exception {
+        long bench = newExercise("ZZ Ctrl Detail Bench");
+        String body = """
+                { "sessionDate": "2026-10-18", "title": "腿日",
+                  "exercises": [ { "exerciseId": %d, "sets": [ { "weight": 100, "repetitions": 5, "completed": true } ] } ] }
+                """.formatted(bench);
+
+        String created = mvc.perform(post("/api/sessions").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        int sessionId = com.jayway.jsonpath.JsonPath.read(created, "$.sessionId");
+
+        mvc.perform(get("/api/sessions/" + sessionId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("腿日"))
+                .andExpect(jsonPath("$.exercises[0].exerciseId").value((int) bench))
+                .andExpect(jsonPath("$.exercises[0].sets[0].weight").value(100.0));
+
+        mvc.perform(get("/api/sessions/recent"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").isNumber());
+
+        mvc.perform(get("/api/sessions/999999"))
+                .andExpect(status().isNotFound());
     }
 }

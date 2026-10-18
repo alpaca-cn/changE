@@ -115,4 +115,28 @@ class WorkoutServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("一组");
     }
+
+    @Test
+    void the_session_detail_reads_back_exercises_in_order_with_their_sets() {
+        long bench = newExercise("ZZ Workout Detail Bench");
+        long fly = newExercise("ZZ Workout Detail Fly");
+        WorkoutService.Result r = workouts.recordSession(oneSession(List.of(
+                new WorkoutService.ExerciseInput(bench, "主项", null, List.of(set(60, 8), set(62.5, 6))),
+                new WorkoutService.ExerciseInput(fly, null, "A", List.of(set(12, 12))))));
+
+        WorkoutService.SessionDetail d = workouts.sessionDetail(r.sessionId()).orElseThrow();
+
+        assertThat(d.sessionDate()).isEqualTo(LocalDate.of(2026, 10, 18));
+        assertThat(d.title()).isEqualTo("胸 + 三头");
+        assertThat(d.exercises()).extracting(WorkoutService.ExerciseDetail::exerciseId)
+                .containsExactly(bench, fly);
+        assertThat(d.exercises().get(0).sets()).extracting(WorkoutService.SetDetail::weight)
+                .containsExactly(60.0, 62.5);
+        assertThat(d.exercises().get(1).supersetGroup()).isEqualTo("A");
+    }
+
+    @Test
+    void an_unknown_session_has_no_detail() {
+        assertThat(workouts.sessionDetail(-1L)).isEmpty();
+    }
 }
