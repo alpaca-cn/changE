@@ -101,6 +101,18 @@ class ExerciseControllerTest {
     }
 
     @Test
+    void lists_exercises_through_the_api() throws Exception {
+        jdbc.update("DELETE FROM exercise WHERE name_en = 'ZZ Ctrl Selector'");
+        jdbc.update("INSERT INTO exercise(name_en, name_zh, default_unit, category) "
+                + "VALUES ('ZZ Ctrl Selector', '选择器', 'kg', 'strength')");
+
+        mvc.perform(get("/api/exercises").param("q", "选择器"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].nameZh").value("选择器"))
+                .andExpect(jsonPath("$[0].category").value("strength"));
+    }
+
+    @Test
     void last_performance_is_204_when_never_done_and_200_after_a_session() throws Exception {
         jdbc.update("DELETE FROM exercise WHERE name_en = 'ZZ Ctrl LastPerf'");
         jdbc.update("INSERT INTO exercise(name_en, default_unit) VALUES ('ZZ Ctrl LastPerf', 'kg')");

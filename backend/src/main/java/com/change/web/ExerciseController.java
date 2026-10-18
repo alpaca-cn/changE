@@ -2,6 +2,7 @@ package com.change.web;
 
 import com.change.service.ExerciseImportService;
 import com.change.service.ExerciseNameZhService;
+import com.change.service.ExerciseQueryService;
 import com.change.service.LastPerformanceService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -9,9 +10,11 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -48,16 +51,33 @@ public class ExerciseController {
     private final ExerciseImportService importService;
     private final ExerciseNameZhService nameZhService;
     private final LastPerformanceService lastPerformanceService;
+    private final ExerciseQueryService query;
     private final JdbcTemplate jdbc;
 
     public ExerciseController(ExerciseImportService importService,
                               ExerciseNameZhService nameZhService,
                               LastPerformanceService lastPerformanceService,
+                              ExerciseQueryService query,
                               JdbcTemplate jdbc) {
         this.importService = importService;
         this.nameZhService = nameZhService;
         this.lastPerformanceService = lastPerformanceService;
+        this.query = query;
         this.jdbc = jdbc;
+    }
+
+    /**
+     * 动作选择器：按肌群 / 关键词 / 分类筛。
+     *
+     * <p>不给 {@code category} 时**排除拉伸**（见 {@link ExerciseQueryService} 的说明）。
+     */
+    @GetMapping
+    public List<ExerciseQueryService.ExerciseSummary> list(
+            @RequestParam(required = false) Long muscleGroupId,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) Integer limit) {
+        return query.search(muscleGroupId, q, category, limit);
     }
 
     /** 只读状态。 */
