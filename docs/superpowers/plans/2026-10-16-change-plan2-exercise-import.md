@@ -1601,6 +1601,14 @@ Run: `cd backend && mvn -B clean test`
 
 ---
 
+### 实施修正（Task 7 落地进度，逐条回写）
+
+1. **Step 1 的前提是错的（H 型）。** 计划说「`hasaneyldrm/exercises-dataset` 的 `instructions.zh` 里有**中文动作名**」。打开真实文件核对（`data/exercises.json`，**17,391,530 字节**，MIT，2026-10-18）后：它确实有 `zh`，但那是**整段中文做法说明**（`instructions.zh` 与 `instruction_steps.zh`），**没有中文动作名**——`name` 字段只有英文。例：`3/4 sit-up` 的 `instructions.zh` 是「平躺，膝盖弯曲，双脚平放在地上。…」，名字不在里面。所以「拿中文名按英文名精确匹配」这条交叉校验**产不出任何名字**，命中率必然为 0。计划里第 6 次「重述了别处的结构却与事实不符」。
+2. **Step 2/3 已落地。** `ExerciseNameZhService.apply(Map<String,String>)` + `ExerciseNameZhServiceTest` 6 条：只碰导入动作（`source_id IS NOT NULL`）、只改 `name_zh IS NULL`（断点续）、已有的不覆盖（幂等）、中文名去重。**变异实测**：去掉 `source_id IS NOT NULL` → 手工动作被改，红；去掉 `name_zh IS NULL` → 幂等/断点续两条红；去掉去重块 → 两条去重断言红。三次均已按字节级备份还原。
+3. **Step 4（产出 876 条中文名）是本任务剩下的唯一一步**。因为来源数据里没有名字，只能从英文名翻译；按设计这是「智能体批量翻译」（由智能体产出映射、分批落盘），不是应用去调外部 API。产出的映射与「怎么应用进库」见后续提交。
+
+---
+
 ## Task 8: 端到端验收与文档
 
 > ✅ **启动导入已接线并实测（2026-10-18）。** 新增 `ExerciseImportRunner`（`ApplicationRunner`，默认开；可用 `change.exercise.import-on-startup=false` 关闭，测试套件正是用它关掉的）。干净库 `java -jar` 实测：V1–V8 应用后日志打出 `动作库导入：新增 876 个动作 / 跳过 0 个（已存在）/ 写入 2587 条肌群标注`；库内 `exercise=876` / `exercise_muscle=2587` / `muscle_group=17` / `change_log(origin='import')=3463`。清单第 1–7 条因此可在真实应用上核对（第 2–7 条另有 `ExerciseImportServiceTest` 与 `ExerciseImportRunnerTest` 覆盖）。
