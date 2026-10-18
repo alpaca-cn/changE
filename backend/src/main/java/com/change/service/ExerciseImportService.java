@@ -110,6 +110,50 @@ public class ExerciseImportService {
         return new Result(inserted, skipped, musclesInserted);
     }
 
+    /**
+     * 撤销整个导入：删掉所有带命名空间前缀的动作，返回删掉的动作数。
+     *
+     * <p><b>为什么是一个专用操作，而不是 3463 次逐行 {@code undo}</b>：那是「撤销 3463 个
+     * 东西」，不是「撤销这次导入」；而且逐行回放的代价与顺序都难以控制。按前缀删除是
+     * <b>一次操作</b>，且天然幂等（没导入过的库上返回 0、不报错）。
+     *
+     * <p><b>顺序不能反</b>：先按前缀查出 id（用来报告删了什么），再删。反过来先删就查不到了。
+     * 删 {@code exercise} 会经 {@code ON DELETE CASCADE} 带走 {@code exercise_muscle}——
+     * 这里**不**显式删 join 行，正是为了让级联真的发生（{@code foreign_keys=true} 由 JDBC URL
+     * 打开，测试实测它生效）。
+     *
+     * <p><b>记一条汇总 delete 日志，但不删任何 change_log。</b>日志是历史，撤销不是抹除历史。
+     * 这条日志是「我那 876 个动作哪去了」的可追溯证据；它**不该**被 {@code undo} 回放，
+     * 而 {@code ChangeLogService.undo} 已经显式拒绝 {@code action='delete'}，正好被那道守卫挡住。
+     */
+    @Transactional
+    public int unimport() {
+        List<Long> ids = jdbc.queryForList(
+                "SELECT id FROM exercise WHERE source_id LIKE ?",
+                Long.class, SOURCE_PREFIX + "%");
+        if (ids.isEmpty()) {
+            return 0;
+        }
+
+        int links = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM exercise_muscle em "
+                        + "JOIN exercise e ON e.id = em.exercise_id "
+                        + "WHERE e.source_id LIKE ?",
+                Integer.class, SOURCE_PREFIX + "%");
+
+        jdbc.update("DELETE FROM exercise WHERE source_id LIKE ?", SOURCE_PREFIX + "%");
+
+        // 汇总，而不是单行快照。target_id 用 0：批量删除没有单个目标行，而 AUTOINCREMENT
+        // 的 id 从 1 起，0 永远不是一个真实动作的 id，不会被误读成「第 0 号动作」。
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("source_prefix", SOURCE_PREFIX);
+        summary.put("exercises", ids.size());
+        summary.put("muscle_links", links);
+        changeLog.recordDelete("exercise", 0L, summary, ORIGIN, null);
+
+        return ids.size();
+    }
+
     private Set<String> existingSourceIds() {
         return new HashSet<>(jdbc.queryForList(
                 "SELECT source_id FROM exercise WHERE source_id LIKE '" + SOURCE_PREFIX + "%'",

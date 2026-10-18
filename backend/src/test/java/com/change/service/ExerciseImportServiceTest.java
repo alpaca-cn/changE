@@ -185,6 +185,66 @@ class ExerciseImportServiceTest {
         }
     }
 
+    @Test
+    void unimport_removes_every_imported_exercise_and_its_muscle_links() {
+        importService.importAll();
+        assertThat(importedExercises()).isEqualTo(876);
+        assertThat(importedLinks()).isEqualTo(2587);
+
+        int removed = importService.unimport();
+
+        assertThat(removed).isEqualTo(876);
+        assertThat(importedExercises()).isZero();
+        // 级联删除实测生效：unimport() 没有显式删 join 行，它们是被 ON DELETE CASCADE 带走的
+        // （foreign_keys=true 靠 JDBC URL，计划 1 踩过它为 0 的坑）。
+        assertThat(importedLinks()).as("join 行必须被级联删掉，不能留下孤儿").isZero();
+
+        // 日志是历史，撤销不是抹除历史：3463 条 insert 日志仍在
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM change_log WHERE origin = 'import' AND action = 'insert'",
+                Integer.class))
+                .isEqualTo(876 + 2587);
+        // 外加一条汇总 delete 日志，作为「那 876 个动作哪去了」的证据
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM change_log WHERE origin = 'import' AND action = 'delete'",
+                Integer.class))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void unimport_is_idempotent_and_spares_manual_exercises() {
+        jdbc.update("INSERT INTO exercise (name_en, default_unit) VALUES ('ZZ Manual Unimport', 'kg')");
+
+        assertThat(importService.unimport())
+                .as("没导入过的库上调 unimport() 应当返回 0、不报错")
+                .isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM change_log WHERE origin = 'import' AND action = 'delete'",
+                Integer.class))
+                .as("什么都没删时不该留下一条「删了 0 个」的日志")
+                .isZero();
+
+        importService.importAll();
+        assertThat(importService.unimport()).isEqualTo(876);
+
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM exercise WHERE name_en = 'ZZ Manual Unimport'", Integer.class))
+                .as("手工动作一条都不能少")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void re_import_after_unimport_restores_the_full_dataset() {
+        importService.importAll();
+        importService.unimport();
+
+        ExerciseImportService.Result again = importService.importAll();
+
+        assertThat(again.inserted()).as("撤销是可逆的").isEqualTo(876);
+        assertThat(importedExercises()).isEqualTo(876);
+        assertThat(importedLinks()).isEqualTo(2587);
+    }
+
     // ------------------------------------------------------------------
     // 工具：按 source_id 收口的计数
     // ------------------------------------------------------------------

@@ -1451,7 +1451,7 @@ Expected: 全绿。⚠️ 计划原写「记得去掉 `undoing_every_log_row_ret
 - Modify: `backend/src/main/java/com/change/service/ExerciseImportService.java`
 - Test: `backend/src/test/java/com/change/service/ExerciseImportServiceTest.java`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 要求覆盖：
 
@@ -1461,11 +1461,11 @@ Expected: 全绿。⚠️ 计划原写「记得去掉 `undoing_every_log_row_ret
 4. **再导入一次能恢复全部 876 / 2587 行**（撤销是可逆的）
 5. 在**没有导入过**的库上调 `unimport()` 不报错、返回 0（幂等）
 
-- [ ] **Step 2: 跑测试，确认失败**
+- [x] **Step 2: 跑测试，确认失败**
 
 Run: `cd backend && mvn -B -q -Dtest=ExerciseImportServiceTest test`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 要点：
 
@@ -1474,11 +1474,21 @@ Run: `cd backend && mvn -B -q -Dtest=ExerciseImportServiceTest test`
 3. **记录一条日志**：`origin="import"`、`action=DELETE`（用 Task 1 Step 6 加的 `recordDelete`），`before` 里放一条汇总（删了多少动作、多少肌群标注、源前缀是什么）。这条日志**不是单行快照而是汇总**，所以它不该被 `undo` 回放——Task 1 Step 6 已经让 `undo` 显式拒绝 `action='delete'`，这条正好被那道守卫挡住。它的用途是**可追溯的证据**：用户将来问「我那 876 个动作哪去了」，库里能查到。
 4. **不要删 `change_log`**。日志是历史，撤销不是抹除历史。
 
-- [ ] **Step 4: 跑测试**
+- [x] **Step 4: 跑测试**
 
 Run: `cd backend && mvn -B clean test`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
+
+---
+
+### 实施修正（Task 5 落地时，逐条回写）
+
+1. **`recordDelete` 需要一个 `target_id`，而批量删除没有单个目标行。** 用 **0** 作哨兵：`AUTOINCREMENT` 的 id 从 1 起，0 永远不是真实动作的 id，不会被误读成「第 0 号动作」。`before` 里放汇总（`source_prefix` / `exercises` / `muscle_links`）。
+2. **删除语句按前缀删（`DELETE FROM exercise WHERE source_id LIKE ?`），而不是把 876 个 id 拼进 `IN (...)`。** id 仍按计划「先查再删」——查出来的列表用来报告删了多少。级联由 `ON DELETE CASCADE` 完成，`unimport()` **不**显式删 join 行（正是为了让级联真的发生并被测试实测到）。
+3. **补了一条断言**：什么都没删时（`ids` 为空）**不写**那条汇总 delete 日志。它把 `if (ids.isEmpty()) return 0;` 这个提前返回钉住——否则删掉它不会有任何测试变红，而库里会多出一条「删了 0 个」的噪音日志。
+4. **变异实测**：把删除语句改成不带前缀过滤（`DELETE FROM exercise`）→ `unimport_is_idempotent_and_spares_manual_exercises` 变红（手工动作被误删）；删掉提前返回 → 同一条测试变红（多出汇总日志）。两次均已按字节级备份还原（sha256 比对通过）。
+5. `ExerciseImportServiceTest` 现在 **10 条**（Task 4 的 7 条 + 本任务 3 条）；整套 `mvn -B clean test` 为 **171 条、1 skipped**。
 
 ---
 
