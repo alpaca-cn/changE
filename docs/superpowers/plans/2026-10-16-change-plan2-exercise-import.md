@@ -148,7 +148,7 @@ backend/src/main/
 - Modify: `backend/src/main/java/com/change/service/ChangeLogService.java`
 - Test: `backend/src/test/java/com/change/service/ChangeLogJoinTableTest.java`
 
-- [ ] **Step 1: 迁移一 —— 给 `exercise_muscle` 加代理主键**
+- [x] **Step 1: 迁移一 —— 给 `exercise_muscle` 加代理主键**
 
 ```sql
 -- exercise_muscle 加代理主键。
@@ -182,7 +182,7 @@ ALTER TABLE exercise_muscle_new RENAME TO exercise_muscle;
 
 > **为什么不直接改 `V2__training.sql`**：Flyway 校验已应用迁移的 checksum，改字节会让现有的库在下次启动时校验失败。**只增不改**是硬规矩。
 
-- [ ] **Step 2: 迁移二 —— 让 `origin` 接受 `import`**
+- [x] **Step 2: 迁移二 —— 让 `origin` 接受 `import`**
 
 **这一条是必须的**：`origin` 是 `String`，而 `ChangeLogService.ALLOWED_ORIGINS` 与 `change_log.origin` 的 `CHECK` 约束**两处都是 `('user','agent')`**。导入的动作不是用户手点的，也不是智能体改的，它是第三种来源。
 
@@ -234,7 +234,7 @@ ALTER TABLE change_log_new RENAME TO change_log;
 >
 > 有一条 `MigrationTest` 会比对 schema 快照；迁移写错它会红。**红的时候去看它报的差异，不要改测试。**
 
-- [ ] **Step 3: 写失败的测试（先核对 API，别照抄本计划的签名）**
+- [x] **Step 3: 写失败的测试（先核对 API，别照抄本计划的签名）**
 
 ⚠️ **`ChangeLogService` 的真实公开 API 是这三个，没有 `record` / `redo` / `Action` / `Origin` 枚举**：
 
@@ -400,7 +400,7 @@ class ChangeLogJoinTableTest {
 >
 > 如果 Task 1 单独跑时它挡住了其它测试，用 `@Disabled("Task 4 才会转绿：需要导入路径把 join 行写日志")` 标住，**并在 Task 4 的提交里去掉这个注解**。
 
-- [ ] **Step 4: 跑测试，确认失败**
+- [x] **Step 4: 跑测试，确认失败**
 
 Run: `cd backend && mvn -B -q -Dtest=ChangeLogJoinTableTest test`
 
@@ -409,7 +409,7 @@ Expected:
 - `origin_import_is_accepted` **失败**（`ALLOWED_ORIGINS` 还没有 import）
 - 其余按上面的说明（`undoing_every_log_row…` 预期失败或 `@Disabled`）
 
-- [ ] **Step 5: 改 `ChangeLogService` 的两处常量**
+- [x] **Step 5: 改 `ChangeLogService` 的两处常量**
 
 ```java
     // 加一行，并改写上面注释里那句「exercise_muscle 不进白名单」——
@@ -433,7 +433,7 @@ Expected:
 
 **同时把 `ALLOWED_TABLES` 上面那段注释改准**——它现在写着「复合主键的表……所以不进白名单」，那是 V5 之前的真实情况，现在是错的。
 
-- [ ] **Step 6: 补一个公开的 `recordDelete`，并让 `undo` 拒绝它**
+- [x] **Step 6: 补一个公开的 `recordDelete`，并让 `undo` 拒绝它**
 
 `unimport`（Task 5）需要记录删除，但现在 `write(...)` 是 private 且没有 delete 的公开入口。
 
@@ -481,7 +481,7 @@ Expected:
 
 **为什么第一阶段不做「回退 delete」**：唯一会记录 delete 的地方是 `unimport`（批量撤销导入），而它本身就是删除，不需要被回退。用户手动删动作的功能还没有。等真有那个需求时，再设计「重建整行」的路径——那时 `before` 快照足够（除了主键，而那可以记在别处）。
 
-- [ ] **Step 7: 补两条测试，把上面这套语义钉住**
+- [x] **Step 7: 补两条测试，把上面这套语义钉住**
 
 加进 `ChangeLogJoinTableTest`：
 
@@ -524,13 +524,13 @@ Expected:
     }
 ```
 
-- [ ] **Step 8: 跑测试**
+- [x] **Step 8: 跑测试**
 
 Run: `cd backend && mvn -B clean test`
 
 Expected: 迁移后 schema 校验通过；`ChangeLogJoinTableTest` 除那条标了 `@Disabled` 的全绿（含新增的两条）。
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 ```bash
 git add backend/src/main/resources/db/migration/V5__exercise_muscle_surrogate_id.sql \
@@ -570,7 +570,7 @@ git commit -m "feat(db): exercise_muscle 进审计网 + origin 增加 import
 - Create: `backend/src/main/resources/db/migration/V7__muscle_group_seed.sql`
 - Test: `backend/src/test/java/com/change/seed/MuscleGroupSeedTest.java`
 
-- [ ] **Step 1: 定 `region_ids` 的口径（先定词汇，再建数据）**
+- [x] **Step 1: 定 `region_ids` 的口径（先定词汇，再建数据）**
 
 `region_ids` 是「人体图区域 id，逗号分隔」。**这个 id 的词汇由我们定义，不由外部文件定义。**
 
@@ -628,7 +628,7 @@ public enum MuscleRegion {
 }
 ```
 
-- [ ] **Step 2: 写失败的测试**
+- [x] **Step 2: 写失败的测试**
 
 `backend/src/test/java/com/change/seed/MuscleGroupSeedTest.java`：
 
@@ -719,13 +719,13 @@ class MuscleGroupSeedTest {
 }
 ```
 
-- [ ] **Step 3: 跑测试，确认失败**
+- [x] **Step 3: 跑测试，确认失败**
 
 Run: `cd backend && mvn -B -q -Dtest=MuscleGroupSeedTest test`
 
 Expected: 编译失败 —— `cannot find symbol: class MuscleGroupSeed` / `MuscleRegion`。
 
-- [ ] **Step 4: 写种子数据**
+- [x] **Step 4: 写种子数据**
 
 `backend/src/main/java/com/change/seed/MuscleGroupSeed.java`：
 
@@ -832,7 +832,7 @@ public final class MuscleGroupSeed {
 
 > `neck` 的周容量给 `null`：**颈部训练不该被「本周 0 组」提醒追着**。`classify` 对未配置的肌肉返回 `NOT_CONFIGURED`，正好用得上（计划 1 的 `VolumeCalculator` 就是这么设计的）。
 
-- [ ] **Step 5: 写实体、Repo 与迁移**
+- [x] **Step 5: 写实体、Repo 与迁移**
 
 `MuscleGroup` 实体（公开字段、无 getter，与项目既有风格一致）：
 
@@ -903,13 +903,13 @@ public interface MuscleGroupRepo extends JpaRepository<MuscleGroup, Long> {
 
 **这一步的验收**：迁移跑完之后 `SELECT COUNT(*) FROM muscle_group` 等于 17，且 `name_en` 集合与数据集逐字相同（用 Task 2 Step 2 那条测试守）。
 
-- [ ] **Step 6: 跑测试**
+- [x] **Step 6: 跑测试**
 
 Run: `cd backend && mvn -B clean test`
 
 Expected: 全绿，且 `MuscleGroupSeedTest` 7 条通过。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add backend/src/main/java/com/change/seed backend/src/main/java/com/change/domain/MuscleGroup.java \
