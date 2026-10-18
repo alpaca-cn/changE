@@ -1603,6 +1603,8 @@ Run: `cd backend && mvn -B clean test`
 
 ## Task 8: 端到端验收与文档
 
+> ⚠️ **本任务的核对清单目前无法原样执行（2026-10-18 实测发现）。** 干净库上 `java -jar` 起来后 Flyway **V1–V8 全部应用成功**、`muscle_group = 17`，但 `exercise = 0` / `exercise_muscle = 0` / `change_log = 0`——**导入没有在启动时发生**：`ExerciseImportService` 没有任何生产调用方（没有 `ApplicationRunner` / CLI / 端点）。于是清单第 1 条（启动日志里报 876 / 2587）与第 8、9 条（触发 `unimport()`）都跑不了。先要定一个「什么时候触发导入、以及它如何与 `unimport()` 共存（每次启动重导入会让撤销在重启后复活）」的产品决定，再补接线。清单第 2–7 条已被 `ExerciseImportServiceTest` 以集成测试覆盖。另：清单第 6 条的 `origin='IMPORT'` 应为小写 `'import'`。详见总览文档「计划 2」一节的「未完成 / 待决」。
+
 - [ ] **Step 1: 干净库上跑一遍全链路**
 
 ```powershell
