@@ -1,5 +1,6 @@
 package com.change.web;
 
+import com.change.service.WorkoutService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,8 +41,15 @@ class ExerciseControllerTest {
     @Autowired
     JdbcTemplate jdbc;
 
+    @Autowired
+    WorkoutService workouts;
+
     @BeforeEach
     void clean() {
+        // 训练域先清（session_exercise.exercise_id 是裸外键，没有级联），否则删动作会撞 FK。
+        jdbc.update("DELETE FROM workout_set");
+        jdbc.update("DELETE FROM session_exercise");
+        jdbc.update("DELETE FROM workout_session");
         jdbc.update("DELETE FROM exercise WHERE source_id IS NOT NULL");
         jdbc.update("DELETE FROM change_log WHERE origin = 'import'");
     }
@@ -90,5 +98,26 @@ class ExerciseControllerTest {
         mvc.perform(post("/api/exercises/unimport"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.removed").value(0));
+    }
+
+    @Test
+    void last_performance_is_204_when_never_done_and_200_after_a_session() throws Exception {
+        jdbc.update("DELETE FROM exercise WHERE name_en = 'ZZ Ctrl LastPerf'");
+        jdbc.update("INSERT INTO exercise(name_en, default_unit) VALUES ('ZZ Ctrl LastPerf', 'kg')");
+        long ex = jdbc.queryForObject("SELECT last_insert_rowid()", Long.class);
+
+        mvc.perform(get("/api/exercises/" + ex + "/last-performance"))
+                .andExpect(status().isNoContent());
+
+        workouts.recordSession(new WorkoutService.SessionInput(java.time.LocalDate.of(2026, 10, 18),
+                null, null, null, null, null,
+                java.util.List.of(new WorkoutService.ExerciseInput(ex, null, null,
+                        java.util.List.of(new WorkoutService.SetInput("normal", 70.0, 5, null, false,
+                                null, null, true, null, null))))));
+
+        mvc.perform(get("/api/exercises/" + ex + "/last-performance"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessionDate").value("2026-10-18"))
+                .andExpect(jsonPath("$.sets[0].weight").value(70.0));
     }
 }

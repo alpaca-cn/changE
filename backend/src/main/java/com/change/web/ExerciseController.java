@@ -2,8 +2,11 @@ package com.change.web;
 
 import com.change.service.ExerciseImportService;
 import com.change.service.ExerciseNameZhService;
+import com.change.service.LastPerformanceService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -44,13 +47,16 @@ public class ExerciseController {
 
     private final ExerciseImportService importService;
     private final ExerciseNameZhService nameZhService;
+    private final LastPerformanceService lastPerformanceService;
     private final JdbcTemplate jdbc;
 
     public ExerciseController(ExerciseImportService importService,
                               ExerciseNameZhService nameZhService,
+                              LastPerformanceService lastPerformanceService,
                               JdbcTemplate jdbc) {
         this.importService = importService;
         this.nameZhService = nameZhService;
+        this.lastPerformanceService = lastPerformanceService;
         this.jdbc = jdbc;
     }
 
@@ -81,6 +87,14 @@ public class ExerciseController {
     @PostMapping("/unimport")
     public Map<String, Object> unimport() {
         return Map.of("removed", importService.unimport());
+    }
+
+    /** 某动作上次练了多重；从没做过时 204（不是 404——「没做过」不是错误）。 */
+    @GetMapping("/{id}/last-performance")
+    public ResponseEntity<LastPerformanceService.LastPerformance> lastPerformance(@PathVariable long id) {
+        return lastPerformanceService.lastPerformance(id)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     private Integer count(String sql) {
