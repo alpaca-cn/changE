@@ -1502,7 +1502,7 @@ Run: `cd backend && mvn -B clean test`
 - Modify: `backend/src/main/java/com/change/repo/ExerciseRepo.java`
 - Test: `backend/src/test/java/com/change/repo/ExerciseRepoTest.java`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 必须覆盖：
 
@@ -1512,20 +1512,24 @@ Run: `cd backend && mvn -B clean test`
 4. 搜索：`nameZh` 为 null 的动作不会让查询出错
 5. 搜索：空字符串的行为被明确钉住（返回全部，还是返回空？**选定一种并写进测试**）
 
-- [ ] **Step 2: 跑测试，确认第 3 条失败**
+- [x] **Step 2: 跑测试，确认第 3 条失败**
 
-- [ ] **Step 3: 改签名**
+- [x] **Step 3: 改签名**
 
 ```java
     /**
-     * 中英文混合搜索。
+     * 中英文混合搜索。nameZh 用 Containing（区分大小写对中文无意义），nameEn 用 IgnoreCase。
      *
-     * <p>nameZh 用 Containing（区分大小写对中文无意义），nameEn 用 IgnoreCase。
+     * <p><b>必须排除已归档的</b>：归档的语义是「不再出现在候选里，但仍要能被旧记录
+     * 解析」。搜索是「候选」的一种，所以它和 {@link #findByArchivedFalse()} 遵守同一条规则。
+     * 原来这个方法漏了 archived 过滤，归档的动作会从搜索里冒出来——而它的零测试让这个
+     * 不一致一直没被发现。
      *
-     * <p><b>必须排除已归档的</b>：归档的语义是「不再出现在候选里但仍要能被旧记录
-     * 解析」。原来这个方法漏了 archived 过滤，归档的动作会从搜索里冒出来——
-     * 而 findByArchivedFalse 的注释里写的就是这条规则。零测试让这个不一致
-     * 一直没被发现。
+     * <p>名字很长，但 Spring Data 的方法名派生就是靠它。**不要**为它换成 {@code @Query}：
+     * 本项目的约定是「能用方法名派生就不用 JPQL」。
+     *
+     * <p>空串的行为：{@code Containing("")} 生成 {@code LIKE '%%'}，所以空串匹配
+     * **所有未归档**的行（归档的仍被排除）。这条被 {@code ExerciseRepoTest} 钉住。
      */
     List<Exercise> findByArchivedFalseAndNameZhContainingOrArchivedFalseAndNameEnContainingIgnoreCase(
             String zh, String en);
@@ -1533,11 +1537,20 @@ Run: `cd backend && mvn -B clean test`
 
 > 名字长，但 Spring Data 的方法名派生就是靠它。**不要**为它换 `@Query`——本项目的一条约定是「能用方法名派生就不用 JPQL」（计划 1 的 `ExerciseRepo` 注释里写了理由）。
 
-- [ ] **Step 4: 跑测试**
+- [x] **Step 4: 跑测试**
 
 Run: `cd backend && mvn -B clean test`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
+
+---
+
+### 实施修正（Task 6 落地时，逐条回写）
+
+1. **先按旧方法名写测试、跑出真实的红。** 按计划的 Step 2 先让 `search_excludes_archived_rows` 与 `an_empty_query_matches_every_non_archived_row` 两条**真的失败**（归档的动作被搜索带了出来）——这是 bug 的现场证据，而不是「改完再看绿」。改名之后 5 条全绿。
+2. **空串行为选定为「匹配所有未归档的行」**：`Containing("")` 生成 `LIKE '%%'`，于是空串命中每一行，但归档的仍被排除。这条写进了 `an_empty_query_matches_every_non_archived_row`。
+3. **改名不影响生产代码**：这两个查询方法此前没有任何调用方（只有接口声明），所以 `findByArchivedFalseAndNameZhContainingOrArchivedFalseAndNameEnContainingIgnoreCase` 这个名字只在 repo 与测试里出现。
+4. `ExerciseRepoTest` 落地为 **5 条**；整套 `mvn -B clean test` 为 **176 条、1 skipped**。
 
 ---
 
