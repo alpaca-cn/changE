@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 /**
@@ -33,6 +34,7 @@ import org.springframework.stereotype.Component;
  * 的 {@code Plank} 撞上 {@code ux_exercise_name_en}，红在无关的地方。
  */
 @Component
+@Order(1)
 @ConditionalOnProperty(prefix = "change.exercise", name = "import-on-startup",
         havingValue = "true", matchIfMissing = true)
 public class ExerciseImportRunner implements ApplicationRunner {

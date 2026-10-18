@@ -1605,7 +1605,8 @@ Run: `cd backend && mvn -B clean test`
 
 1. **Step 1 的前提是错的（H 型）。** 计划说「`hasaneyldrm/exercises-dataset` 的 `instructions.zh` 里有**中文动作名**」。打开真实文件核对（`data/exercises.json`，**17,391,530 字节**，MIT，2026-10-18）后：它确实有 `zh`，但那是**整段中文做法说明**（`instructions.zh` 与 `instruction_steps.zh`），**没有中文动作名**——`name` 字段只有英文。例：`3/4 sit-up` 的 `instructions.zh` 是「平躺，膝盖弯曲，双脚平放在地上。…」，名字不在里面。所以「拿中文名按英文名精确匹配」这条交叉校验**产不出任何名字**，命中率必然为 0。计划里第 6 次「重述了别处的结构却与事实不符」。
 2. **Step 2/3 已落地。** `ExerciseNameZhService.apply(Map<String,String>)` + `ExerciseNameZhServiceTest` 6 条：只碰导入动作（`source_id IS NOT NULL`）、只改 `name_zh IS NULL`（断点续）、已有的不覆盖（幂等）、中文名去重。**变异实测**：去掉 `source_id IS NOT NULL` → 手工动作被改，红；去掉 `name_zh IS NULL` → 幂等/断点续两条红；去掉去重块 → 两条去重断言红。三次均已按字节级备份还原。
-3. **Step 4（产出 876 条中文名）是本任务剩下的唯一一步**。因为来源数据里没有名字，只能从英文名翻译；按设计这是「智能体批量翻译」（由智能体产出映射、分批落盘），不是应用去调外部 API。产出的映射与「怎么应用进库」见后续提交。
+3. **Step 4 已完成**（2026-10-18）：由**智能体**（不是应用去调外部 API）产出了全量 **876** 条中文名，落在 `backend/src/main/resources/seed/name-zh.json`（**44,684 字节**，按数据集顺序）。**校验**：键集合与数据集的 876 个 `name` **精确相等**（无多、无缺）、值**互不重复**、无空值。数据集里有 4 组近似名会让直译撞车，已逐一区分：`Cable Crunch`/`Rope Crunch`、两处「绳索过顶三头肌伸展」、`Dumbbell Raise`/`Front Dumbbell Raise`、`Power Stairs`/`Stairmaster`/`Step Mill`。**这是机器（智能体）产出、未经人工逐条复核的数据**——和「来源里根本没有名字」一起记在这里。
+4. **应用进库**：新增 `ExerciseNameZhRunner`（`@Order(2)`，排在导入 `@Order(1)` 之后），启动时读 `seed/name-zh.json` 调 `ExerciseNameZhService.apply`。干净库 `java -jar` 实测：日志 `动作中文名：写入 876 / 已有跳过 0 / 重名跳过 0 / 找不到导入动作 0`；库内 876 条动作全部有中文名、且互不重复，抽查 `Plank→平板支撑`、`Barbell Bench Press - Medium Grip→中握距杠铃卧推`、`Clean and Jerk→挺举`。映射文件缺失时只记一行日志跳过，不让应用起不来。
 
 ---
 
