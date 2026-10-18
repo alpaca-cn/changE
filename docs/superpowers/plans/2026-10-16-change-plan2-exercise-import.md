@@ -1306,7 +1306,7 @@ git commit -m "feat(seed): vendor free-exercise-db 并把 876 条映射成纯函
 - Create: `backend/src/main/java/com/change/service/ExerciseImportService.java`
 - Test: `backend/src/test/java/com/change/service/ExerciseImportServiceTest.java`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 要求覆盖这几件事（**代码由你写**，但每条都要有）：
 
@@ -1317,13 +1317,13 @@ git commit -m "feat(seed): vendor free-exercise-db 并把 876 条映射成纯函
 5. 导入写入的 `exercise_muscle` 行**在 `change_log` 里有对应记录**（这是 Task 4 Step 5 的重点）
 6. 手工录入的动作（`source_id IS NULL`）**不受导入影响**——导入前后它的行数不变
 
-- [ ] **Step 2: 跑测试，确认失败**
+- [x] **Step 2: 跑测试，确认失败**
 
 Run: `cd backend && mvn -B -q -Dtest=ExerciseImportServiceTest test`
 
 Expected: 编译失败 —— `cannot find symbol: class ExerciseImportService`。
 
-- [ ] **Step 3: 写实体与 Repo**
+- [x] **Step 3: 写实体与 Repo**
 
 `ExerciseMuscle`（复合业务键 + 代理主键，与 Task 1 的迁移一致）：
 
@@ -1340,8 +1340,10 @@ import jakarta.persistence.Table;
 /**
  * 「这个动作练哪块肌肉、主要还是次要」。
  *
- * <p>有代理主键是因为审计网（ChangeLogService）的准入条件是「单列整型 id」——
- * 见 V5 迁移的注释。业务唯一性是 {@code (exercise_id, muscle_group_id)} 上的唯一索引。
+ * <p>有代理主键是因为审计网（{@link com.change.service.ChangeLogService}）的准入条件是
+ * 「单列整型 id」——见 {@code V5__exercise_muscle_surrogate_id.sql} 的注释。业务唯一性是
+ * {@code (exercise_id, muscle_group_id)} 上的唯一索引 {@code ux_exercise_muscle_pair}：
+ * 索引漏建时同一个动作能把同一块肌肉标两次，而「本周 20 组」会被静默算成 40 组。
  */
 @Entity
 @Table(name = "exercise_muscle")
@@ -1357,7 +1359,7 @@ public class ExerciseMuscle {
     @Column(name = "muscle_group_id", nullable = false)
     public Long muscleGroupId;
 
-    /** 'primary' 或 'secondary'，DDL 有 CHECK，Java 侧见 V2 里的约定。 */
+    /** {@code 'primary'} 或 {@code 'secondary'}，DDL 有 CHECK（见 V2 里的约定）。 */
     @Column(name = "role", nullable = false)
     public String role;
 }
@@ -1373,28 +1375,29 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
 
+/** 动作↔肌群标注的读写入口。 */
 public interface ExerciseMuscleRepo extends JpaRepository<ExerciseMuscle, Long> {
 
     List<ExerciseMuscle> findByExerciseId(Long exerciseId);
 
-    /** 撤销导入时按动作 id 批量删。 */
+    /** 撤销整个导入时按动作 id 批量删。 */
     void deleteByExerciseIdIn(List<Long> exerciseIds);
 }
 ```
 
-- [ ] **Step 4: 写导入服务**
+- [x] **Step 4: 写导入服务**
 
 要求：
 
 1. **整个导入一个事务**。876 条 + 2587 行任何一个失败就整批回滚——半导入的库比没导入更糟。
 2. **幂等**：靠 `source_id` 上的部分唯一索引 + 「已存在就跳过」。**不要用 `INSERT OR REPLACE`**——那会静默改掉已有的行。
-3. **`origin = IMPORT`**（`ChangeLog.Origin` 已有这个值）。导入的动作与手工录入的动作来源不同，撤销时要能分开。
+3. **`origin = "import"`**。⚠️ **`origin` 是字符串，没有 `ChangeLog.Origin` 枚举**（Task 1 落地的真实签名是 `recordInsert(table, targetId, after, String origin, Long chatSessionId)`；合法值见 `ChangeLogService.ALLOWED_ORIGINS`，小写 `"import"`）。导入的动作与手工录入的动作来源不同，撤销时要能分开。
 4. 返回一个结果对象：`inserted` / `skipped` / `musclesInserted`，供任务调用方报告。
 5. 肌群查找走 `MuscleGroupRepo.findByNameEn`，**查不到就抛异常并说清是哪条动作的哪块肌肉**——静默跳过会让那个动作少一块标注而无人知晓。
 
-- [ ] **Step 5: 让导入把 join 行走审计**
+- [x] **Step 5: 让导入把 join 行走审计**
 
-**这一步是 Task 1 那条 `undoing_every_log_row_returns_the_database_to_its_original_state` 去 `@Disabled` 的地方。**
+⚠️ **计划原写「这一步是 Task 1 那条 `undoing_every_log_row_returns_the_database_to_its_original_state` 去 `@Disabled` 的地方」——实测不存在这条 `@Disabled`**：`ChangeLogJoinTableTest` 里那个方法一直是启用的、且已经通过（它自己写 join 日志，不依赖本任务）。所以这里没有 `@Disabled` 要去。
 
 对每一条写入的 `exercise_muscle` 行，用**真实的签名**记录（`origin` 是字符串，`chatSessionId` 传 `null`）：
 
@@ -1409,19 +1412,32 @@ changeLog.recordInsert(
 
 `after` 的键必须与表的真实列一致（`exercise_id` / `muscle_group_id` / `role`）——`write` 会拿 `writableColumns` 逐个校验，写错键名会抛 `IllegalArgumentException`。
 
-> **注意**：876 条 × 平均 3 块肌肉 ≈ 2587 条日志行。这是**故意的**——它让「这次导入动了什么」答得出来。如果将来嫌日志太胖，那是另一个决定，不要现在偷偷跳过。
+> **动作行本身也要记日志**（不只是 join 行）：`origin="import"` 且 `target_table="exercise"` 的日志有 **876** 条。只记 join 行的话，「这 876 个动作从哪来的」答不出来。合起来导入总共写 **876 + 2587 = 3463** 条日志（Task 8 的核对清单里 `origin='import'` 的期望值是「≈ 876 + 2587 + 1」，那 `+1` 是 Task 5 撤销时的 delete 汇总）。
+>
+> **注意**：876 条 × 平均 3 块肌肉 ≈ 2587 条 join 日志。这是**故意的**——它让「这次导入动了什么」答得出来。如果将来嫌日志太胖，那是另一个决定，不要现在偷偷跳过。
 >
 > 另外注意「撤销导入」**不走**这些日志（Task 5 是按前缀删除的专用操作）。两者都保留：日志供追溯，专用操作供撤销。
 
-- [ ] **Step 6: 跑测试**
+- [x] **Step 6: 跑测试**
 
 Run: `cd backend && mvn -B clean test`
 
-Expected: 全绿。Task 1 里那条 `undoing_every_log_row_returns_the_database_to_its_original_state` 现在**通过**（记得去掉它的 `@Disabled`）。
+Expected: 全绿。⚠️ 计划原写「记得去掉 `undoing_every_log_row_returns_the_database_to_its_original_state` 的 `@Disabled`」——**没有这条 `@Disabled` 需要去掉**，它一直启用且通过（见 Step 5 的说明）。`ExerciseImportServiceTest` 落地为 **7 条**；整套 `mvn -B clean test` 为 **168 条、1 skipped**。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 （提交信息说明幂等、事务、为什么日志行数是 2587 且不嫌它多。）
+
+---
+
+### 实施修正（Task 4 落地时，逐条回写）
+
+1. **`origin` 是字符串，没有 `ChangeLog.Origin` 枚举**（第 3 条要求里的原话）。落地用的是真实签名 `recordInsert(table, targetId, after, String origin, Long chatSessionId)`，传小写 `"import"`。这是计划里第 5 次「重述磁盘上已有的 API 却与磁盘不符」（H 型）。
+2. **没有 `@Disabled` 要去掉**（Step 5 / Step 6 的原话）。`ChangeLogJoinTableTest#undoing_every_log_row_returns_the_database_to_its_original_state` 一直是启用的、且已通过。
+3. **动作行也记日志（876 条）**。计划 Step 5 只示范了 join 行的日志，但 Task 8 的核对清单要求 `origin='import'` 约 876 + 2587 + 1——那 876 只能是动作行本身。故 `importAll()` 对每条动作也 `recordInsert("exercise", ...)`，总日志 3463。
+4. **`ExerciseImportServiceTest` 必须自己清库（`@BeforeEach` + `@AfterEach`）。** 数据里有 `Plank`，而 `TrainingRepoTest` 也要插一个叫 `Plank` 的动作；导入是**提交**的（不 `@Transactional`），留下的 876 行会让那条测试撞 `ux_exercise_name_en`、红在无关的地方。断言一律按 `source_id` 收口，避免被别处的手工行干扰。
+5. **新增守卫测试 `a_missing_muscle_aborts_the_whole_import_and_rolls_it_back`。** 计划把「查不到肌群就抛异常」（Step 4 第 5 条）与「整个导入一个事务」（Step 4 第 1 条）都写成要求，却各没有测试：删掉那句 `orElseThrow`（改成静默跳过）或删掉 `@Transactional`，原有 6 条断言**一条都不会红**。该测试临时删掉 `neck` 这块肌群（数据集里 9 条动作引用它、首次出现在第 161 条附近），导入到它时抛异常，然后断言已写入的动作/标注/日志**全部回滚**（各为 0）。**变异实测**：删掉幂等跳过 → `a_second_import_changes_nothing` 变红；去掉 `@Transactional` → 该回滚测试变红。两次都已按字节级备份还原（sha256 比对通过）。
+6. `ExerciseImportServiceTest` 落地为 **7 条**；整套 `mvn -B clean test` 为 **168 条、1 skipped**。
 
 ---
 
