@@ -90,19 +90,19 @@ CSP 随之收紧成 `connect-src 'self'`。复测后状态栏右侧是 `缓存�
 | 分类 | **292** 条不是 `strength`（stretching 123 / plyometrics 61 / powerlifting 38 / olympic weightlifting 35 / strongman 21 / cardio 14）→ 加 `exercise.category` 供「记一组」的选择器过滤 |
 | 其它分布（测试钉住） | mechanic=null 87 / equipment=null 77 / body only 111 / instructions 非空 871 / id≠name 844 |
 | 迁移 | 新增 **V8**（`exercise.category` + `exercise.instructions`）。V8 的 checksum 从实跑后的库读出后钉入 `MigrationTest`（`-1311493510`）；V1–V7 的七个值一个未变 |
-| 测试 | `mvn -B clean test` → **176 条、0 失败、1 skipped** |
+| 测试 | `mvn -B clean test` → **177 条、0 失败、1 skipped** |
 
-**干净库端到端实跑**（2026-10-18，`java -jar`，`CHANGE_DATA_DIR` 指向临时目录）：应用正常启动；Flyway 依次应用 **V1–V8**（全部 `success=1`，V8 checksum `-1311493510` 与冻结值一致）；`muscle_group = 17`（V7 种子落库）。**但 `exercise = 0` / `exercise_muscle = 0` / `change_log = 0`**——导入**没有**在启动时发生（见下方第 2 条）。
+**干净库端到端实跑**（2026-10-18，`java -jar`，`CHANGE_DATA_DIR` 指向临时目录）：应用正常启动；Flyway 依次应用 **V1–V8**（全部 `success=1`，V8 checksum `-1311493510` 与冻结值一致）；`ExerciseImportRunner` 在启动时导入，日志打出 `动作库导入：新增 876 个动作 / 跳过 0 个（已存在）/ 写入 2587 条肌群标注（源前缀 free-exercise-db:）`。库内实测：`exercise=876` / `exercise_muscle=2587` / `muscle_group=17` / `change_log(origin='import')=3463`（= 876 动作 + 2587 标注），`Barbell Step Ups` 的 quadriceps 恰好 1 条且 `role='primary'`。应用启动 3.6 秒，导入再花约 2.3 秒；`CHANGE_PORT`（外壳据此判定「后端已连接」）由 `ApplicationReadyEvent` 发出、**排在导入之后**，所以前端连上时数据一定已就位。再启动一次则全部跳过（幂等）。
 
 **`region_ids` 的口径**：词汇由**我们**定义（`com.change.seed.MuscleRegion` 的 27 个 id），**不是**直接用某个 SVG 文件的 path id——那是外部实现细节，换版本不该让库里 876 条动作的标注跟着漂。SVG path → region id 的映射放在前端（计划 6）。`muscle_group.region_ids` 存的是**逗号分隔的字符串**（不是数组）：多区域肌群写两个 id（如 `chest_left,chest_right`）。
 
 **「撤销导入」是一个专用操作，不是日志回放**：`ExerciseImportService.unimport()` 按 `source_id LIKE 'free-exercise-db:%'` 前缀**一次删掉**全部导入动作（join 行由 `ON DELETE CASCADE` 带走），并写**一条**汇总 `delete` 日志作为可追溯证据。它**不**走那 3,463 条逐行日志的回放——那是「撤销 3,463 个东西」而不是「撤销这次导入」。`change_log` 一行不删：日志是历史。撤销可逆：再导入一次恢复 876 / 2,587。
 
-**未完成 / 待决**：
+**仍未完成 / 待决**：
 
 1. **中文名（Task 7）未产出**：876 条动作的 `name_zh` 目前恒为 `null`。计划 2 的 Task 7 要求「智能体批量翻译 + 用 hasaneyldrm 的中文说明交叉校验」，**会花模型调用**，且计划自己写明「允许剩余 null、不挡路」。本阶段未执行——因此上面计划清单里「876 个动作入库、**带中文名**」这一句**只完成了一半**。
-2. **导入尚未在启动时接线（Task 8 的阻塞点）**：`ExerciseImportService` 已可用、有 10 条测试，但**没有任何 `ApplicationRunner` / CLI / 端点调用它**——干净库实跑证明启动后 `exercise` 仍是 0。计划 2 的 Task 8 核对清单第 1 条（「启动日志里有导入报告 876 / 2587」）与第 8、9 条（触发 `unimport()`）因此**当前无法在真实应用上执行**。接线方式（每次启动都导入？只在首次？以及它如何与 `unimport()` 共存——每次启动重导入会让「撤销」在重启后复活）是一个**需要先定的产品决定**，故未擅自实现。清单第 2–7 条已在 `ExerciseImportServiceTest` 里以集成测试形式覆盖（同一套真实库 + 真实迁移）。
-3. **清单第 6 条的措辞过时**：写的是 `origin='IMPORT'`，实际存的是小写 `'import'`（`change_log.origin` 的 CHECK 是小写）。
+2. **`unimport()` 没有触发入口**：它是服务方法（有测试覆盖），但没有端点 / CLI 去调它——「用户撤销导入」目前只能发生在代码与测试里，界面上没有入口。并且因为**每次启动都会导入**，一次撤销之后**重启会把动作库装回来**：对「随包分发的动作库」这是合理语义（它是应用内容、不是用户数据，`unimport` 更像「重置」）；若将来要让用户的移除持久生效，需要加一个「只导入一次」的持久标记。这两点留给「接界面」的那一步一起定。
+3. **Task 8 核对清单第 6 条的措辞过时**：写的是 `origin='IMPORT'`，实际存的是小写 `'import'`（`change_log.origin` 的 CHECK 是小写）。第 1–7 条现已可在真实应用上核对（见上面的端到端实跑）；第 8、9 条（触发 `unimport()`）见上一条。
 
 ## 已完成的前置验证
 

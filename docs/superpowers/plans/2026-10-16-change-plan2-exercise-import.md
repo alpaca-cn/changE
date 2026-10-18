@@ -1603,7 +1603,9 @@ Run: `cd backend && mvn -B clean test`
 
 ## Task 8: 端到端验收与文档
 
-> ⚠️ **本任务的核对清单目前无法原样执行（2026-10-18 实测发现）。** 干净库上 `java -jar` 起来后 Flyway **V1–V8 全部应用成功**、`muscle_group = 17`，但 `exercise = 0` / `exercise_muscle = 0` / `change_log = 0`——**导入没有在启动时发生**：`ExerciseImportService` 没有任何生产调用方（没有 `ApplicationRunner` / CLI / 端点）。于是清单第 1 条（启动日志里报 876 / 2587）与第 8、9 条（触发 `unimport()`）都跑不了。先要定一个「什么时候触发导入、以及它如何与 `unimport()` 共存（每次启动重导入会让撤销在重启后复活）」的产品决定，再补接线。清单第 2–7 条已被 `ExerciseImportServiceTest` 以集成测试覆盖。另：清单第 6 条的 `origin='IMPORT'` 应为小写 `'import'`。详见总览文档「计划 2」一节的「未完成 / 待决」。
+> ✅ **启动导入已接线并实测（2026-10-18）。** 新增 `ExerciseImportRunner`（`ApplicationRunner`，默认开；可用 `change.exercise.import-on-startup=false` 关闭，测试套件正是用它关掉的）。干净库 `java -jar` 实测：V1–V8 应用后日志打出 `动作库导入：新增 876 个动作 / 跳过 0 个（已存在）/ 写入 2587 条肌群标注`；库内 `exercise=876` / `exercise_muscle=2587` / `muscle_group=17` / `change_log(origin='import')=3463`。清单第 1–7 条因此可在真实应用上核对（第 2–7 条另有 `ExerciseImportServiceTest` 与 `ExerciseImportRunnerTest` 覆盖）。
+>
+> ⚠️ **第 8、9 条仍不可用**：`unimport()` 没有端点 / CLI 入口（只能在代码与测试里调），而且因为每次启动都会导入，撤销之后**重启会把动作库装回来**——这个取舍留给「接界面」那一步一起定。另：清单第 6 条的 `origin='IMPORT'` 应为小写 `'import'`。详见总览文档「计划 2」一节。
 
 - [ ] **Step 1: 干净库上跑一遍全链路**
 
