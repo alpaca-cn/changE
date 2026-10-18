@@ -1,4 +1,4 @@
--- V8: 17 块肌群的种子数据。
+-- V7: 17 块肌群的种子数据。
 --
 -- ⚠️ 这个文件是**生成的**，不要手改。它由 MuscleGroupSeedTest 从
 -- com.change.seed.MuscleGroupSeed.ALL 生成；改种子请改那个类，然后重新生成：

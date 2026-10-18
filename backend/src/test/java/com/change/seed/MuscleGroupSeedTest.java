@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *   <li>常量自身的形状（17 行、中英文名、无重复、region id 在词汇表里、min/max 成对、
  *       英文名与数据集逐字一致）——纯 Java 常量就能查；</li>
  *   <li><b>生成物与常量一致</b>（{@link #the_seed_migration_matches_the_java_constants}）——
- *       V8 那份 SQL 是从 {@link MuscleGroupSeed#ALL} 生成的。两层比对：先把 SQL 里
+ *       V7 那份 SQL 是从 {@link MuscleGroupSeed#ALL} 生成的。两层比对：先把 SQL 里
  *       每一行的 6 个字段解析出来与常量逐字段比（失败信息能指出哪一行哪个字段），
  *       再逐字节比对整个文件（连注释、排版、行数、有没有多出一条 UPDATE 都算）。</li>
  *   <li><b>库里真的有 17 行</b>（{@link #after_migration_the_database_really_has_seventeen_groups}）——
@@ -39,24 +39,24 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * </ul>
  *
  * <p>为什么要 @SpringBootTest：这些断言里有两类必须碰到真实的库与真实的 Spring
- * Data 派生查询（V8 是否被 Flyway 应用、{@code findByNameEn} 是否真能解析出
+ * Data 派生查询（V7 是否被 Flyway 应用、{@code findByNameEn} 是否真能解析出
  * {@code name_en} 列）。代价是这个类的纯常量测试也会启动一次上下文；上下文在
  * 整个测试套件里是复用的，值得。
  *
- * <p><b>V8 是生成的，不要手改。</b>改种子请改 {@link MuscleGroupSeed#ALL}，然后：
+ * <p><b>V7 是生成的，不要手改。</b>改种子请改 {@link MuscleGroupSeed#ALL}，然后：
  * <pre>
  *   cd backend
  *   mvn -B clean test -Dtest=MuscleGroupSeedTest#regenerate_the_migration \
  *       -Dchange.seed.write=true
  * </pre>
- * 再跑一遍完整测试。{@code clean} 是必要的：V8 的字节变了，旧库的 Flyway checksum
+ * 再跑一遍完整测试。{@code clean} 是必要的：V7 的字节变了，旧库的 Flyway checksum
  * 会对不上，而测试库在 {@code target/data} 下。
  */
 @SpringBootTest
 class MuscleGroupSeedTest {
 
     /** 生成物在 classpath 上的位置（也用于读文件比对）。 */
-    private static final String MIGRATION_RESOURCE = "db/migration/V8__muscle_group_seed.sql";
+    private static final String MIGRATION_RESOURCE = "db/migration/V7__muscle_group_seed.sql";
 
     /** 生成器写盘的位置。Maven 在 backend/ 下跑测试，所以相对路径是稳定的。 */
     private static final Path MIGRATION_PATH = Path.of("src/main/resources", MIGRATION_RESOURCE);
@@ -144,13 +144,13 @@ class MuscleGroupSeedTest {
     }
 
     // ------------------------------------------------------------------
-    // 生成物（V8）与常量的一致性 —— 本任务最重要的一条
+    // 生成物（V7）与常量的一致性 —— 本任务最重要的一条
     // ------------------------------------------------------------------
 
     @Test
     void the_seed_migration_matches_the_java_constants() throws IOException {
-        // V8 的 SQL 是由 MuscleGroupSeed 生成的，但生成之后两者可能各自被改。
-        // 这条测试把它们重新钉在一起：读 V8 文件，把每一行的
+        // V7 的 SQL 是由 MuscleGroupSeed 生成的，但生成之后两者可能各自被改。
+        // 这条测试把它们重新钉在一起：读 V7 文件，把每一行的
         // (name_zh, name_en, body_part, region_ids, min, max) 与 Java 常量逐个比。
         // 少了这条，「Java 改了、SQL 没改」不会有任何东西报警，
         // 而库里的 17 块肌肉就和代码里的不一致了。
@@ -163,20 +163,20 @@ class MuscleGroupSeedTest {
         List<SeedRow> actual = parseSeedRows(onDisk);
 
         assertThat(actual)
-                .as("V8 里每一行的 6 个字段必须与 MuscleGroupSeed.ALL 逐字段相同（含顺序）")
+                .as("V7 里每一行的 6 个字段必须与 MuscleGroupSeed.ALL 逐字段相同（含顺序）")
                 .containsExactlyElementsOf(expected);
 
         // 第二层：逐字节。字段级比对放过的东西（注释、排版、多一条 UPDATE、
         // 某一行被删掉但字段恰好凑巧对得上）在这里全部被拦住。
         // 生成物的唯一正确形态就是生成器此刻给出的文本。
         assertThat(onDisk)
-                .as("V8 是生成物：它与生成器输出必须逐字相同。"
+                .as("V7 是生成物：它与生成器输出必须逐字相同。"
                         + "改种子请改 MuscleGroupSeed.ALL 并重新生成，不要手改这个文件")
                 .isEqualTo(toSql());
     }
 
     /**
-     * 重新生成 V8。默认**跳过**，只有显式传 {@code -Dchange.seed.write=true} 才落盘。
+     * 重新生成 V7。默认**跳过**，只有显式传 {@code -Dchange.seed.write=true} 才落盘。
      *
      * <p>为什么生成器写在测试里而不是 production 代码里：它只在开发时跑一次，
      * 属于构建工具而不是运行时逻辑；把它放进 {@code src/main} 会让一份永远不会
@@ -258,9 +258,9 @@ class MuscleGroupSeedTest {
     // ------------------------------------------------------------------
 
     /**
-     * 从 {@link MuscleGroupSeed#ALL} 生成 V8 的完整正文。
+     * 从 {@link MuscleGroupSeed#ALL} 生成 V7 的完整正文。
      *
-     * <p><b>{@code V8__muscle_group_seed.sql} 是本方法产出的生成物，不要手改。</b>
+     * <p><b>{@code V7__muscle_group_seed.sql} 是本方法产出的生成物，不要手改。</b>
      * 改种子请改 {@link MuscleGroupSeed#ALL}，再用上面类注释里的命令重新生成。
      *
      * <p>输出格式是**固定的、可解析的**：一条 INSERT，每行一个元组，字段顺序
@@ -270,7 +270,7 @@ class MuscleGroupSeedTest {
      */
     static String toSql() {
         StringBuilder sb = new StringBuilder();
-        sb.append("-- V8: 17 块肌群的种子数据。\n");
+        sb.append("-- V7: 17 块肌群的种子数据。\n");
         sb.append("--\n");
         sb.append("-- ⚠️ 这个文件是**生成的**，不要手改。它由 MuscleGroupSeedTest 从\n");
         sb.append("-- com.change.seed.MuscleGroupSeed.ALL 生成；改种子请改那个类，然后重新生成：\n");
@@ -325,7 +325,7 @@ class MuscleGroupSeedTest {
     private record Token(String value, boolean quoted) {}
 
     /**
-     * 从 V8 的 SQL 里解出每一行元组。
+     * 从 V7 的 SQL 里解出每一行元组。
      *
      * <p>只认生成器写出的固定形状：一条 {@code INSERT INTO muscle_group ... VALUES}，
      * 之后每行一个以 {@code (} 开头、以 {@code ),} 或 {@code );} 结尾的元组。
@@ -342,7 +342,7 @@ class MuscleGroupSeedTest {
             }
         }
         assertThat(start)
-                .as("V8 里应当有一条 `INSERT INTO muscle_group ...` 语句")
+                .as("V7 里应当有一条 `INSERT INTO muscle_group ...` 语句")
                 .isPositive();
 
         List<SeedRow> rows = new ArrayList<>();
@@ -353,13 +353,13 @@ class MuscleGroupSeedTest {
 
             String tail = line.endsWith(");") ? ");" : line.endsWith("),") ? ")," : null;
             assertThat(tail)
-                    .as("V8 第 %d 行必须以 `),` 或 `);` 结尾，实际是: %s", i + 1, line)
+                    .as("V7 第 %d 行必须以 `),` 或 `);` 结尾，实际是: %s", i + 1, line)
                     .isNotNull();
 
             String body = line.substring(1, line.length() - tail.length());
             List<Token> tokens = splitTokens(body);
             assertThat(tokens)
-                    .as("V8 第 %d 行必须恰好 6 个字段（name_zh/name_en/body_part/region_ids/min/max）: %s",
+                    .as("V7 第 %d 行必须恰好 6 个字段（name_zh/name_en/body_part/region_ids/min/max）: %s",
                             i + 1, line)
                     .hasSize(6);
 
@@ -418,21 +418,21 @@ class MuscleGroupSeedTest {
 
     private static String text(Token token, int line) {
         assertThat(token.quoted())
-                .as("V8 第 %d 行的字符串字段必须带单引号，实际是: %s", line, token.value())
+                .as("V7 第 %d 行的字符串字段必须带单引号，实际是: %s", line, token.value())
                 .isTrue();
         return token.value();
     }
 
     private static Integer number(Token token, int line) {
         assertThat(token.quoted())
-                .as("V8 第 %d 行的数值字段不应带引号，实际是: %s", line, token.value())
+                .as("V7 第 %d 行的数值字段不应带引号，实际是: %s", line, token.value())
                 .isFalse();
         if (token.value().equals("NULL")) return null;
         try {
             return Integer.valueOf(token.value());
         } catch (NumberFormatException e) {
             throw new AssertionError(
-                    "V8 第 " + line + " 行的数值字段既不是 NULL 也不是整数: " + token.value(), e);
+                    "V7 第 " + line + " 行的数值字段既不是 NULL 也不是整数: " + token.value(), e);
         }
     }
 

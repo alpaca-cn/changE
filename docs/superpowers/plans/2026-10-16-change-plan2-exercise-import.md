@@ -57,6 +57,20 @@
 
 ---
 
+## 迁移编号的一处对调（落地时修正）
+
+计划最初把「17 块肌群种子」编成 **V8**、「动作分类与说明」编成 **V7**。但 Task 2 先落地，
+那样会在版本号里留一个洞：
+
+- **全新库没问题**——Flyway 按版本号应用，不看文件创建顺序
+- **已经应用到 V8 的库会出问题**——事后才等到 V7 时，Flyway 报 `resolved migration not applied`，
+  默认 `outOfOrder=false` 会让启动直接失败，只能删库重建
+
+所以落地时把两者对调：**Task 2 用 V7，Task 3 用 V8**，版本号顺序与创建顺序一致。
+`MigrationTest` 里那段 javadoc 记了这件事。
+
+---
+
 ## 全局约定
 
 承接计划 1：
@@ -81,11 +95,14 @@ backend/src/main/
 │   ├── db/migration/
 │   │   ├── V5__exercise_muscle_surrogate_id.sql       ← 新（Task 1）
 │   │   ├── V6__change_log_origin_import.sql           ← 新（Task 1）
-│   │   ├── V7__exercise_category_and_instructions.sql ← 新（Task 3）
-│   │   └── V8__muscle_group_seed.sql                  ← 新（Task 2）
+│   │   ├── V7__muscle_group_seed.sql                  ← 新（Task 2，已落地）
+│   │   └── V8__exercise_category_and_instructions.sql ← 新（Task 3）
 │   └── seed/free-exercise-db/
 │       ├── exercises.json                             ← vendor（1,005,327 字节）
-│       └── LICENSE                                    ← Unlicense 原文，必须随包
+│       ├── schema.json                                ← vendor（权威字段契约，2,765 字节）
+│       └── LICENSE.md                                 ← Unlicense 原文，必须随包
+│                                                         （是 .md，不是 LICENSE——
+│                                                          仓库根目录没有 LICENSE）
 └── java/com/change/
     ├── domain/
     │   ├── Exercise.java                              ← 改（加 category / instructions）
@@ -550,7 +567,7 @@ git commit -m "feat(db): exercise_muscle 进审计网 + origin 增加 import
 - Create: `backend/src/main/java/com/change/seed/MuscleGroupSeed.java`
 - Create: `backend/src/main/java/com/change/domain/MuscleGroup.java`
 - Create: `backend/src/main/java/com/change/repo/MuscleGroupRepo.java`
-- Create: `backend/src/main/resources/db/migration/V8__muscle_group_seed.sql`
+- Create: `backend/src/main/resources/db/migration/V7__muscle_group_seed.sql`
 - Test: `backend/src/test/java/com/change/seed/MuscleGroupSeedTest.java`
 
 - [ ] **Step 1: 定 `region_ids` 的口径（先定词汇，再建数据）**
@@ -877,7 +894,7 @@ public interface MuscleGroupRepo extends JpaRepository<MuscleGroup, Long> {
 }
 ```
 
-迁移 `V8__muscle_group_seed.sql` —— **由代码从 `MuscleGroupSeed` 生成，不手抄**，避免「代码里改了、SQL 没改」。生成方式：
+迁移 `V7__muscle_group_seed.sql` —— **由代码从 `MuscleGroupSeed` 生成，不手抄**，避免「代码里改了、SQL 没改」。生成方式：
 
 ```powershell
 # 在 backend/ 下，用一个临时 JUnit 把 Seed 打成 SQL 打到 stdout，再人工核对后落盘。
@@ -897,7 +914,7 @@ Expected: 全绿，且 `MuscleGroupSeedTest` 7 条通过。
 ```bash
 git add backend/src/main/java/com/change/seed backend/src/main/java/com/change/domain/MuscleGroup.java \
         backend/src/main/java/com/change/repo/MuscleGroupRepo.java \
-        backend/src/main/resources/db/migration/V8__muscle_group_seed.sql \
+        backend/src/main/resources/db/migration/V7__muscle_group_seed.sql \
         backend/src/test/java/com/change/seed/MuscleGroupSeedTest.java
 git commit -m "feat(db): 17 块肌群的种子数据 + region_ids 的词汇表
 
@@ -920,19 +937,28 @@ neck 的周容量给 null：颈部训练不该被「本周 0 组」追着。
 - Create: `backend/src/main/resources/seed/free-exercise-db/exercises.json`（vendor）
 - Create: `backend/src/main/resources/seed/free-exercise-db/LICENSE`
 - Create: `backend/src/main/java/com/change/seed/FreeExerciseDb.java`
-- Create: `backend/src/main/resources/db/migration/V7__exercise_category_and_instructions.sql`
+- Create: `backend/src/main/resources/db/migration/V8__exercise_category_and_instructions.sql`
 - Modify: `backend/src/main/java/com/change/domain/Exercise.java`
 - Test: `backend/src/test/java/com/change/seed/FreeExerciseDbTest.java`
 
-- [ ] **Step 1: vendor 数据集与许可证**
+- [ ] **Step 1: vendor 数据集、schema 与许可证**
 
 ```powershell
 # 直连被掐，走镜像（实测 fastly.jsdelivr 最快，319ms）
-$url = 'https://fastly.jsdelivr.net/gh/yuhonas/free-exercise-db@main/dist/exercises.json'
-$dir = 'E:\idea\program\change\backend\src\main\resources\seed\free-exercise-db'
+$base = 'https://fastly.jsdelivr.net/gh/yuhonas/free-exercise-db@main'
+$dir  = 'E:\idea\program\change\backend\src\main\resources\seed\free-exercise-db'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
-Invoke-WebRequest -Uri $url -OutFile "$dir\exercises.json"
+Invoke-WebRequest -Uri "$base/dist/exercises.json" -OutFile "$dir\exercises.json"
+Invoke-WebRequest -Uri "$base/schema.json"        -OutFile "$dir\schema.json"
+Invoke-WebRequest -Uri "$base/LICENSE.md"         -OutFile "$dir\LICENSE.md"
 ```
+
+> **⚠️ 许可证的真实文件名是 `LICENSE.md`，不是 `LICENSE`。** 仓库根目录没有 `LICENSE`
+> （实测 404）。许可证类型经 GitHub API 确认：`spdx_id = Unlicense`，
+> 正文首行 `This is free and unencumbered software released into the public domain.`
+>
+> **`schema.json` 也要 vendor**：它是数据集的**权威字段契约**（哪些字段 required、
+> 各自的 enum）。字段映射对不对，最终以它为准，而不是以本计划的描述为准。
 
 **必须校验**：
 
@@ -951,7 +977,23 @@ import json; print('条数 =', len(json.loads(b.decode('utf-8'))))
 
 Expected: `bytes = 1005327`，`条数 = 876`。**大小对不上就停下来**——数据集换了版本，字段映射要重新核对。
 
-许可证：把 `https://fastly.jsdelivr.net/gh/yuhonas/free-exercise-db@main/LICENSE` 也 vendor 进来（**Unlicense 要求随分发保留**）。
+**再核 `schema.json`**（它是字段契约的权威来源，与实测的分布应当一致）：
+
+| 字段 | schema 说 | 实测分布 |
+|---|---|---|
+| `id` / `name` | required | 876 条都有，无重复 |
+| `mechanic` | required，值可为 null | 789 字符串 + **87 null** |
+| `equipment` | required，值可为 null | 799 字符串 + **77 null** |
+| `force` | **不 required**（可选） | 846 字符串 + 30 null |
+| `level` | required | 876 条都有（beginner/intermediate/expert） |
+| `category` | required，7 值 | 876 条都有 |
+| `instructions` | required（数组） | **5 条是空数组** |
+
+> `mechanic` / `equipment` 的 null 是 **schema 允许的**，不是数据缺失。所以
+> `is_compound = "compound".equals(mechanic)`（null → false）是对的，不需要额外缺省逻辑。
+
+**许可证**：`LICENSE.md` 已在 Step 1 一起 vendor。**Unlicense 要求随分发保留**，所以它必须在
+`src/main/resources/` 里进 jar，不能只在仓库根放着。
 
 - [ ] **Step 2: 迁移加两个列**
 
@@ -1181,7 +1223,7 @@ Expected: 全绿，`FreeExerciseDbTest` 13 条通过。
 - [ ] **Step 8: 提交**
 
 ```bash
-git add backend/src/main/resources/seed backend/src/main/resources/db/migration/V7__exercise_category_and_instructions.sql \
+git add backend/src/main/resources/seed backend/src/main/resources/db/migration/V8__exercise_category_and_instructions.sql \
         backend/src/main/java/com/change/seed/FreeExerciseDb.java \
         backend/src/main/java/com/change/domain/Exercise.java \
         backend/src/test/java/com/change/seed/FreeExerciseDbTest.java
