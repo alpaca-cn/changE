@@ -941,7 +941,7 @@ neck 的周容量给 null：颈部训练不该被「本周 0 组」追着。
 - Modify: `backend/src/main/java/com/change/domain/Exercise.java`
 - Test: `backend/src/test/java/com/change/seed/FreeExerciseDbTest.java`
 
-- [ ] **Step 1: vendor 数据集、schema 与许可证**
+- [x] **Step 1: vendor 数据集、schema 与许可证**
 
 ```powershell
 # 直连被掐，走镜像（实测 fastly.jsdelivr 最快，319ms）
@@ -995,10 +995,14 @@ Expected: `bytes = 1005327`，`条数 = 876`。**大小对不上就停下来**�
 **许可证**：`LICENSE.md` 已在 Step 1 一起 vendor。**Unlicense 要求随分发保留**，所以它必须在
 `src/main/resources/` 里进 jar，不能只在仓库根放着。
 
-- [ ] **Step 2: 迁移加两个列**
+- [x] **Step 2: 迁移加两个列**
+
+文件：`backend/src/main/resources/db/migration/V8__exercise_category_and_instructions.sql`
 
 ```sql
--- 数据集里有四处信息在现有 exercise 表上没有位置：
+-- V8: exercise 加 category 与 instructions 两列。
+--
+-- 数据集（free-exercise-db，876 条）里有四处信息在现有 exercise 表上没有位置：
 -- category(7 值) / level(3 值) / force(3 值) / instructions(多段文本)。
 --
 -- 只加 category 与 instructions，理由：
@@ -1008,11 +1012,14 @@ Expected: `bytes = 1005327`，`条数 = 876`。**大小对不上就停下来**�
 --   instructions 是「这个动作怎么做」，缺了动作库就只能当名字列表用。
 -- level / force 第一阶段用不上（YAGNI），而且 dataset 是 vendor 的，
 -- 需要时凭 source_id 能反查回来，不会丢。
+--
+-- 两列都可空：instructions 在 876 条里有 5 条是空数组（写 NULL）；
+-- category 对导入前已存在的手工动作不存在，不该被强行编一个值。
 ALTER TABLE exercise ADD COLUMN category     TEXT;
 ALTER TABLE exercise ADD COLUMN instructions TEXT;
 ```
 
-- [ ] **Step 3: 写失败的测试**
+- [x] **Step 3: 写失败的测试**
 
 `backend/src/test/java/com/change/seed/FreeExerciseDbTest.java`：
 
@@ -1020,13 +1027,16 @@ ALTER TABLE exercise ADD COLUMN instructions TEXT;
 package com.change.seed;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ClassPathResource;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 876 条数据集的解析与字段映射。
@@ -1170,16 +1180,43 @@ class FreeExerciseDbTest {
             assertThat(r.nameZh).isNull();
         }
     }
+
+    @Test
+    void a_tampered_dataset_is_rejected_not_silently_parsed() throws Exception {
+        // 「加载即校验」是一条守卫，而守卫本身也要有测试——否则把 verify() 删掉，
+        // 上面 14 条断言一条都不会红（它们只碰真实数据）。这里喂两份坏数据进来：
+        // 一份内容变了（sha256 拦），一份长度变了（大小拦）。
+        byte[] real = readDataset();
+
+        byte[] flipped = real.clone();
+        flipped[100] ^= 0x01;
+        assertThatThrownBy(() -> FreeExerciseDb.decode(flipped))
+                .as("同为 1,005,327 字节但内容变了时，sha256 校验必须拦下它")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("sha256");
+
+        byte[] truncated = Arrays.copyOf(real, real.length - 1);
+        assertThatThrownBy(() -> FreeExerciseDb.decode(truncated))
+                .as("长度变了时，大小校验必须拦下它")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("大小");
+    }
+
+    private static byte[] readDataset() throws Exception {
+        try (var in = new ClassPathResource(FreeExerciseDb.RESOURCE).getInputStream()) {
+            return in.readAllBytes();
+        }
+    }
 }
 ```
 
-- [ ] **Step 4: 跑测试，确认失败**
+- [x] **Step 4: 跑测试，确认失败**
 
 Run: `cd backend && mvn -B -q -Dtest=FreeExerciseDbTest test`
 
 Expected: 编译失败 —— `cannot find symbol: class FreeExerciseDb`。
 
-- [ ] **Step 5: 写 `FreeExerciseDb`**
+- [x] **Step 5: 写 `FreeExerciseDb`**
 
 要求（**按这些要求实现，代码由你写**）：
 
@@ -1202,25 +1239,29 @@ Expected: 编译失败 —— `cannot find symbol: class FreeExerciseDb`。
    - **规则是「primary 赢」**，不是「后写的覆盖先写的」，也不是「随便丢一个」
 5. **`hasOverlap()`**——primary 与 secondary 是否有交集。
 
-- [ ] **Step 6: 改 `Exercise` 实体加两列**
+- [x] **Step 6: 改 `Exercise` 实体加两列**
 
 ```java
-    /** 数据集的 category（7 值）。strength 之外的 292 条不该出现在「记一组」的选择器里。 */
+    /**
+     * 数据集的 category（7 值）。876 条里 292 条不是 {@code strength}，因此「记一组」的
+     * 选择器必须能把它滤掉——否则拉伸（123 条）会混进训练记录。手工动作可空。
+     */
     @Column(name = "category")
     public String category;
 
-    /** 动作做法，多段用 \n 连接。可能为 null（876 条里 5 条没有）。 */
+    /** 动作做法，多段用 {@code \n} 连接。可能为 null（876 条里 5 条没有）。 */
     @Column(name = "instructions")
     public String instructions;
 ```
 
-- [ ] **Step 7: 跑测试**
+- [x] **Step 7: 跑测试**
 
 Run: `cd backend && mvn -B clean test`
 
-Expected: 全绿，`FreeExerciseDbTest` 13 条通过。
+Expected: 全绿，`FreeExerciseDbTest` 15 条通过（本计划原先写「13 条」，实际是 14 条映射断言
++ 1 条「加载即校验」守卫，见下面的实施修正）。整套 `mvn -B clean test` 为 161 条、1 skipped。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add backend/src/main/resources/seed backend/src/main/resources/db/migration/V8__exercise_category_and_instructions.sql \
@@ -1243,6 +1284,17 @@ git commit -m "feat(seed): vendor free-exercise-db 并把 876 条映射成纯函
 中文名在这一步**刻意不生成**（恒 null）——空着比编一个错的诚实，Task 7 单独产出。
 "
 ```
+
+---
+
+### 实施修正（Task 3 落地时，逐条回写）
+
+1. **测试条数是 15，不是 13。** 计划里其实写的是 14 个 `@Test`（数错成「13」），落地时又加了 1 条守卫，共 **15**。
+2. **新增一条守卫测试 `a_tampered_dataset_is_rejected_not_silently_parsed`。** 计划把「加载时校验 sha256 与字节数」列为要求，却没有任何一条测试会因为**删掉这段校验**而变红——那就是「死代码冒充保护」（失效形态 E）。为此把「校验 + 解析」抽成包级可见的 `FreeExerciseDb.decode(byte[])`，测试直接喂两份坏数据：同长度改一字节（应撞 sha256）、截短一字节（应撞大小）。**变异实测**：注释掉 `verify(bytes)` 后这条立刻变红，随后按字节级备份还原（sha256 比对通过）。
+3. **`FreeExerciseDb` 没有代码 fence**：Step 5 只有文字要求，实现见 `backend/src/main/java/com/change/seed/FreeExerciseDb.java`。
+4. **`LICENSE.md` 的取法**：本机 `fastly.jsdelivr` 取 `LICENSE.md` 时连接被重置，改用 `gcore.jsdelivr` 成功（1,211 字节，Unlicense，首行 `This is free and unencumbered software released into the public domain.`）。文件名确为 `LICENSE.md`——仓库根目录**没有** `LICENSE`。
+5. **V8 的 checksum 从实跑后的库读出**（`-1311493510`）后钉入 `published_migrations_are_byte_frozen`，未猜。V1–V7 的七个值一个未变。
+6. **数据集 11 项分布全部独立复算过**，与计划一致：876 行 / 2587 条标注（朴素 2596）/ 292 条非 strength / mechanic null 87 / equipment null 77 / body only 111 / instructions 非空 871 / id≠name 844 / 重叠 9（命中计划所列的**同一批** 9 条）/ 最长 name 58 / 最长合并 instructions 3,214。
 
 ---
 

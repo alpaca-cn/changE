@@ -49,6 +49,17 @@ public class Exercise {
 
     public String note;
 
+    /**
+     * 数据集的 category（7 值）。876 条里 292 条不是 {@code strength}，因此「记一组」的
+     * 选择器必须能把它滤掉——否则拉伸（123 条）会混进训练记录。手工动作可空。
+     */
+    @Column(name = "category")
+    public String category;
+
+    /** 动作做法，多段用 {@code \n} 连接。可能为 null（876 条里 5 条没有）。 */
+    @Column(name = "instructions")
+    public String instructions;
+
     /** 归档而不是删除：旧训练记录仍要能解析出这个动作的名字。 */
     @Column(nullable = false)
     public boolean archived = false;

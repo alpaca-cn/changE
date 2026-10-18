@@ -141,7 +141,11 @@ class MigrationTest {
      * 可是**已经应用到 V8 的库**事后才等到 V7 就会出现「resolved migration not applied」，
      * 默认 {@code outOfOrder=false} 会让启动直接失败，只能删库重建。
      * 所以落地时把两者对调，让版本号顺序与创建顺序一致。
-     * Task 3 将新增 V8，届时它的 checksum 同样必须从实跑后的库读出，不能猜。
+     *
+     * 计划 2 的 Task 3 新增 V8（exercise 加 category / instructions 两列），这条如约变红，
+     * V8 的 checksum 从实跑后的库里读出后钉进来：
+     *   8:exercise category and instructions。
+     * V1–V7 的七个值一个都没变——V8 只加了一个新文件，没有回头改已发布的迁移。
      */
     @Test
     void published_migrations_are_byte_frozen() {
@@ -150,7 +154,7 @@ class MigrationTest {
                 String.class))
                 .containsExactly(
                         "1:1904735359", "2:1428719958", "3:1207314981", "4:1460974919",
-                        "5:-468526944", "6:1910071904", "7:-1279212921");
+                        "5:-468526944", "6:1910071904", "7:-1279212921", "8:-1311493510");
     }
 
     private String readMigration(String fileName) {

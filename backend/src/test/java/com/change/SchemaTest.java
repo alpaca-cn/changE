@@ -124,9 +124,12 @@ class SchemaTest {
         expectedColumns.put("muscle_group", List.of(
                 "id", "name_zh", "name_en", "body_part", "region_ids",
                 "weekly_sets_min", "weekly_sets_max"));
+        // V8 追加了 category / instructions 两列（ALTER TABLE ADD COLUMN 追加在末尾）：
+        // category 让「记一组」的选择器能滤掉 292 条非 strength 动作，
+        // instructions 是动作做法。两列都可空。
         expectedColumns.put("exercise", List.of(
                 "id", "name_en", "name_zh", "equipment", "is_compound", "default_unit",
-                "source_id", "note", "archived"));
+                "source_id", "note", "archived", "category", "instructions"));
         // V5 给它加了代理主键 id：复合主键 (exercise_id, muscle_group_id) 用
         // `WHERE id = ?` 定位不到，所以这张表此前被挡在审计网之外
         // （见 ChangeLogService.ALLOWED_TABLES 的注释）。
