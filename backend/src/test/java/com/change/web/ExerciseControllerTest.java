@@ -361,4 +361,66 @@ class ExerciseControllerTest {
         assertThat(empty.has("instructionsZh")).isTrue();
         assertThat(empty.get("instructionsZh").isNull()).isTrue();
     }
+
+    /**
+     * 「移除再重新导入动作库」不能让 871 条中文做法静默消失。
+     *
+     * <p>缺陷的本体在 {@code POST /api/exercises/import}：它调了
+     * {@link com.change.service.ExerciseNameZhService#applyMappingFromClasspath()} 补中文名，
+     * 却**没有**调 {@link ExerciseInstructionsZhService#applyMappingFromClasspath()} 补中文做法。
+     * 重新导入是「删了重建」，{@code instructions_zh} 因此被写成 NULL，并把
+     * {@code ExerciseInstructionsZhService} 注释里承诺的「import 之后也用」变成空话——
+     * 用户要等到下一次重启（{@code ExerciseInstructionsZhRunner}）才看得回中文做法。
+     *
+     * <p>测试上下文把启动钩子整体关掉了（见类注释），所以第一次导入之后显式跑一遍
+     * 「启动时那条路径」，把库恢复成用户机器上的真实状态：有动作、有中文名、有中文做法。
+     * 之后的两步全部走真实端点，不再手工补任何东西——补了就等于替缺陷打掩护。
+     */
+    @Test
+    void reimport_keeps_the_chinese_instructions_of_the_imported_library() throws Exception {
+        // 1. 装一次库，并补上启动 Runner 会写的那些内容。
+        mvc.perform(post("/api/exercises/import"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.inserted").value(876));
+        instructionsZhService.applyMappingFromClasspath();
+
+        long before = importedExerciseId("Straight-Arm Dumbbell Pullover");
+        assertThat(instructionsZhOf(before))
+                .as("初始状态：动作库里有中文做法").isNotNull().isNotBlank();
+
+        // 2. 用户点了「移除动作库」：动作行被物理删除，中文做法一并消失。
+        mvc.perform(post("/api/exercises/unimport"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.removed").value(876));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM exercise WHERE source_id IS NOT NULL", Integer.class))
+                .as("移除之后库里没有导入的动作").isEqualTo(0);
+
+        // 3. 用户又点了「重新导入动作库」。
+        mvc.perform(post("/api/exercises/import"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.inserted").value(876));
+
+        // 4. 不重启，中文做法就应该回来 —— 这就是缺陷：只补中文名的 import 会把它弄丢。
+        long after = importedExerciseId("Straight-Arm Dumbbell Pullover");
+        assertThat(instructionsZhOf(after))
+                .as("重新导入后中文做法不该为 NULL（不重启）").isNotNull().isNotBlank();
+
+        JsonNode detail = json.readTree(detailBody(after));
+        assertThat(detail.get("instructionsZh").isNull())
+                .as("详情端点也不该拿到 instructionsZh:null").isFalse();
+        assertThat(detail.get("instructionsZh").asText()).isNotBlank();
+    }
+
+    /** 按英文名取一个**导入的**动作的 id。 */
+    private long importedExerciseId(String nameEn) {
+        return jdbc.queryForObject(
+                "SELECT id FROM exercise WHERE name_en = ? AND source_id IS NOT NULL",
+                Long.class, nameEn);
+    }
+
+    private String instructionsZhOf(long exerciseId) {
+        return jdbc.queryForObject(
+                "SELECT instructions_zh FROM exercise WHERE id = ?", String.class, exerciseId);
+    }
 }
