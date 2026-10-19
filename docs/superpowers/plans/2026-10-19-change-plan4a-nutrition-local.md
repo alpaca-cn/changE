@@ -10,6 +10,8 @@
 
 **Tech Stack:** JDK 25 · Spring Boot 3.5.16 · Spring Data JPA + JdbcTemplate · SQLite + Flyway · JUnit 5；前端 Vue 3 + TS + vitest。
 
+> **状态：已完成（2026-10-19）。** 7 个任务全部落地，提交 `3dab582` / `bbdf5d1` / `260eef4` / `10fd0d0` / `5679fe1` / `9595949`。后端 214 → **274**、前端 125 → **176**，干净库 8 条端到端实测的真实数字记在总览的「计划 4a」一节。与本文写法不一致的地方见文末「实施修正」。
+
 ---
 
 ## 前置事实（已核对磁盘，不需要重新验证）
@@ -135,10 +137,10 @@
 
 **要守住的两件事**：① `Meal.mealDate` 与 `Meal.eatenAt` 必须照抄 `WorkoutSession` 的 `@JdbcTypeCode` 注解（一个是响亮失败、一个是**静默**存成数字串）；② `MealItemRepo` 必须**按 `orderIndex` 升序**——调用方（餐详情）依赖顺序，反了不会报错、只会错位。
 
-- [ ] **Step 1: 先看 `WorkoutSession.java`**
+- [x] **Step 1: 先看 `WorkoutSession.java`**
   把 `@JdbcTypeCode(SqlTypes.LOCAL_DATE)` / `(SqlTypes.LOCAL_DATE_TIME)` 那两行**原样抄过来**（计划 3 的前置事实第 3 条就是踩过的坑）。字段用 public 字段还是 getter 沿用既有实体的写法（**不要**一半一种）。
 
-- [ ] **Step 2: 写失败的测试**（`MealItemRepoTest`）
+- [x] **Step 2: 写失败的测试**（`MealItemRepoTest`）
 
 | 测试 | 断言 |
 |---|---|
@@ -146,7 +148,7 @@
 | `the_meal_date_round_trips_as_an_iso_string` | 直接 `jdbc.queryForObject("SELECT meal_date …", String.class)` → `"2026-10-19"`（**用 JdbcTemplate 读原始列**，绕开实体，才看得见驱动写进去的到底是什么） |
 | `the_eaten_at_is_not_stored_as_epoch_millis` | 同上读 `eaten_at` → 以 `"2026-10-19T12:30"` 开头。**这条是那个静默坑的杀手**：`eaten_at` 没有 CHECK，写错不会报错，只会存成 `1750000000000` 这样的串 |
 
-- [ ] **Step 3: 跑测试确认失败 → 写实现 → 跑测试确认通过**
+- [x] **Step 3: 跑测试确认失败 → 写实现 → 跑测试确认通过**
 
 ```powershell
 cd backend
@@ -155,7 +157,7 @@ $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 mvn -B -q -Dtest=MealItemRepoTest test
 ```
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add backend/src/main/java/com/change/domain/Food.java \
@@ -185,11 +187,11 @@ git commit -m "feat(nutrition): 饮食域的四张表实体与仓储"
 - 设计文档对精度的定位是「**不需要太精准，大致热量即可。精度不是目标，可修正是**」，所以近似值是可接受的**前提是它被说成近似值**——不要在任何地方写「权威」「准确」。
 - 每条都带 `source: "manual"`；每条至少一个 `portions` 项（否则「1 碗」这种常用单位选不了）。
 
-- [ ] **Step 1: 写 `food-zh.json`**（形状：`[{nameZh, nameEn, source, per100:{…}, portions:[{unitName, grams}]}]`）
+- [x] **Step 1: 写 `food-zh.json`**（形状：`[{nameZh, nameEn, source, per100:{…}, portions:[{unitName, grams}]}]`）
 
   覆盖要实用：主食（白米饭/馒头/面条/全麦面包）、蛋白（鸡胸/鸡蛋/牛奶/豆腐/牛肉/鱼）、蔬菜水果（西兰花/番茄/苹果/香蕉）、常见菜（番茄炒蛋/宫保鸡丁）。**至少 30 条**。
 
-- [ ] **Step 2: 写失败的测试**
+- [x] **Step 2: 写失败的测试**
 
 | 测试 | 断言 |
 |---|---|
@@ -198,12 +200,12 @@ git commit -m "feat(nutrition): 饮食域的四张表实体与仓储"
 | `every_seed_value_is_non_negative_and_finite` | 六项数值都 `>= 0` 且有限（`Nutrition` 的紧凑构造器本来就拒绝 NaN/负值，但**在写入前就拦**能报出是**哪一条**食物坏了） |
 | `the_seed_does_not_contain_a_disallowed_source` | 所有 `source` ∈ `('manual','cn-food-table','agent','takeout')`——**尤其不能出现 `cn-food-table`**（那会谎称数据来自不可分发的成分表） |
 
-- [ ] **Step 3: 跑测试 → 写 Runner → 跑测试**
+- [x] **Step 3: 跑测试 → 写 Runner → 跑测试**
 
   `FoodSeedRunner` 形状照抄 `ExerciseNameZhRunner`（`ApplicationRunner` + 日志打计数）。**日志必须能看出它干了什么**，例如
   `食物库：写入 30 / 已存在跳过 0 / 非法跳过 0`。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git commit -m "feat(nutrition): 常吃项 seed（30 条，数值为近似值并标注）"
@@ -219,7 +221,7 @@ git commit -m "feat(nutrition): 常吃项 seed（30 条，数值为近似值并�
 
 **要守住的三件事**：① 三层一次写完，任何一步失败整批回滚；② **克数由后端算**（`PortionConverter.toGrams`，前端传的 `unitName` 只是选择）；③ 每行都进 `change_log`（`origin='user'`），日期进快照一律 `.toString()`。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 `NutritionServiceTest`（`@SpringBootTest` + `@Transactional`，照 `WorkoutServiceTest` 的形状）：
 
@@ -241,13 +243,13 @@ git commit -m "feat(nutrition): 常吃项 seed（30 条，数值为近似值并�
 | `posts_a_meal_and_returns_its_totals` | 200，`$.items==2`，`$.nutrition.kcal` 是数字 |
 | `a_bad_request_is_a_400_with_a_readable_message` | `items: []` → 400 且 `$.error` 存在 |
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 ```powershell
 mvn -B -q -Dtest=NutritionServiceTest test
 ```
 
-- [ ] **Step 3: 写 `NutritionService`**
+- [x] **Step 3: 写 `NutritionService`**
 
   形状与 `WorkoutService` 对齐（record 化的 DTO 嵌在服务里、构造器注入仓储、`@Transactional` 的 `recordMeal`）。要点：
   - `MealInput(LocalDate mealDate, String slot, LocalDateTime eatenAt, String note, List<ItemInput> items)`；`ItemInput(Long foodId, double amount, String unitName)`
@@ -257,9 +259,9 @@ mvn -B -q -Dtest=NutritionServiceTest test
   - 每插入一行就 `changeLog.recordInsert("meal"|"meal_item", id, snapshot, "user", null)`；快照里 `meal_date`/`eaten_at` 用 `.toString()`
   - 校验：`mealDate != null`、`slot` ∈ 四值、`items` 非空、每条 `foodId != null` 且食物存在、`amount > 0`
 
-- [ ] **Step 4: 写 `NutritionController`**（POST + 两个 GET 的骨架可以在 Task 4/5 补齐，但**建议一次把三个端点写完再分别补测试**——`ApiErrors` 已经能把 `IllegalArgumentException` 翻成 400，不用额外处理）
+- [x] **Step 4: 写 `NutritionController`**（POST + 两个 GET 的骨架可以在 Task 4/5 补齐，但**建议一次把三个端点写完再分别补测试**——`ApiErrors` 已经能把 `IllegalArgumentException` 翻成 400，不用额外处理）
 
-- [ ] **Step 5: 跑测试确认通过 → 提交**
+- [x] **Step 5: 跑测试确认通过 → 提交**
 
 ```bash
 git commit -m "feat(nutrition): 记一餐（事务 + 后端算克数 + 逐行审计）"
@@ -273,7 +275,7 @@ git commit -m "feat(nutrition): 记一餐（事务 + 后端算克数 + 逐行审
 - Modify: `service/NutritionService.java`、`web/NutritionController.java`
 - Test: `service/NutritionServiceTest.java`、`web/NutritionControllerTest.java`
 
-- [ ] **Step 1: 补测试**
+- [x] **Step 1: 补测试**
 
 | 测试 | 断言 |
 |---|---|
@@ -284,7 +286,7 @@ git commit -m "feat(nutrition): 记一餐（事务 + 后端算克数 + 逐行审
 | `daily_totals_ignore_other_days` | 相邻两天各记一餐 → 各自只算自己那天 |
 | `a_bad_date_is_a_400` | `?date=2026/10/19` → 400（`ApiErrors` 已覆盖 `MethodArgumentTypeMismatchException`） |
 
-- [ ] **Step 2: 实现 → 跑测试 → 提交**
+- [x] **Step 2: 实现 → 跑测试 → 提交**
 
 ```bash
 git commit -m "feat(nutrition): 读一餐与当天合计"
@@ -301,7 +303,7 @@ git commit -m "feat(nutrition): 读一餐与当天合计"
 
 **为什么一次把 `portions` 也带出来**：前端要**预览**热量就得知道「1 碗等于多少克」，而这一份数据在 `food_portion` 里。让前端再发一次请求既慢又容易和 POST 时后端算的克数不一致。**注意：前端算出来的只是预览，入库的克数与合计一律由后端算。**
 
-- [ ] **Step 1: 补测试**
+- [x] **Step 1: 补测试**
 
 | 测试 | 断言 |
 |---|---|
@@ -311,7 +313,7 @@ git commit -m "feat(nutrition): 读一餐与当天合计"
 | `portions_ride_along_and_are_empty_for_a_food_without_units` | 有单位的食物带上 `portions`；没有的给 `[]`，不是 `null` |
 | `every_food_carries_the_per100_values` | 六个字段都在（前端预览要用；少一个界面会显示 `NaN`） |
 
-- [ ] **Step 2: 实现 → 跑测试 → 提交**
+- [x] **Step 2: 实现 → 跑测试 → 提交**
 
 ```bash
 git commit -m "feat(nutrition): 食物搜索（带份量单位表）"
@@ -331,11 +333,11 @@ git commit -m "feat(nutrition): 食物搜索（带份量单位表）"
 2. **条目里不存绝对热量**：界面上的 kcal 是**预览**；保存后显示的是**后端返回的合计**。
 3. **公式只能有一处**：前端预览用 `views/nutrition-form.ts` 里的纯函数，并配一条**契约测试**——拿一段**真机** `/api/meals/{id}` 的响应，断言「前端按 `per100 + grams` 算出来的每项热量」与「后端算出来的」一致（这是把两份实现钉在一起的那种测试；不一致时它红）。
 
-- [ ] **Step 1: 写 `api/nutrition.ts`**
+- [x] **Step 1: 写 `api/nutrition.ts`**
 
   形状照抄 `api/training.ts`：类型（`FoodSummary`/`Portion`/`Nutrition`/`MealInput`/`MealDetail`/`DailyNutrition`）+ `searchFoods()` / `recordMeal()` / `mealDetail()` / `mealsOn()` / `dailyNutrition()`。错误分流沿用 `callApi`，**不要重复实现**。
 
-- [ ] **Step 2: 写 `views/nutrition-form.ts`**（纯函数，可单测）
+- [x] **Step 2: 写 `views/nutrition-form.ts`**（纯函数，可单测）
 
 ```ts
 /** 份量 → 克数。`unitName` 为 null 表示 amount 本身就是克。**与后端 PortionConverter 同口径**。 */
@@ -350,7 +352,7 @@ export function toMealInput(args: {...}): MealInput
 
   **空值口径**：`amount` 空串 → `null`（不是 0）；`unitName` 空 → `null`（表示「按克算」）——`Number('') === 0` 那条老账，计划 3 已吃过一次。
 
-- [ ] **Step 3: 写 `DietView.vue`**
+- [x] **Step 3: 写 `DietView.vue`**
 
   流程：选日期 + 餐次 → 搜食物（防抖 300ms，照 `TrainingView`）→ 选食物 → 选份量单位（下拉，含「克」）或直接填克数 → 「加一条目」→ 条目表（每行显示 `amount × 单位 → 克` 与**预览** kcal；可删行）→ 「保存这一餐」→ 显示**后端返回的**合计。
 
@@ -358,9 +360,9 @@ export function toMealInput(args: {...}): MealInput
   - 每 100 克是**食物属性**，你填的是**这一次的份量**；
   - 保存后显示的数字是**后端算的**，与上面的预览可能差最后一两位小数。
 
-- [ ] **Step 4: 给 `TodayView` 加「今天吃了多少」**（调 `/api/nutrition/daily`，展示 kcal + 三大营养素；**空的一天显示 0**）＋补 `TodayView.spec.ts` 的断言。
+- [x] **Step 4: 给 `TodayView` 加「今天吃了多少」**（调 `/api/nutrition/daily`，展示 kcal + 三大营养素；**空的一天显示 0**）＋补 `TodayView.spec.ts` 的断言。
 
-- [ ] **Step 5: 测试与构建**
+- [x] **Step 5: 测试与构建**
 
 ```powershell
 cd frontend
@@ -368,7 +370,7 @@ pnpm test
 pnpm build
 ```
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git commit -m "feat(frontend): 饮食记录页与今日摄入"
@@ -380,7 +382,7 @@ git commit -m "feat(frontend): 饮食记录页与今日摄入"
 
 **Files:** Modify: `docs/superpowers/plans/2026-10-14-change-phase1-overview.md`
 
-- [ ] **Step 1: 干净库全链路（照计划 3 Task 7 的做法，用 Python 直打 HTTP + 只读 SQLite）**
+- [x] **Step 1: 干净库全链路（照计划 3 Task 7 的做法，用 Python 直打 HTTP + 只读 SQLite）**
 
 | # | 请求 | 期望 |
 |---|---|---|
@@ -395,11 +397,11 @@ git commit -m "feat(frontend): 饮食记录页与今日摄入"
 
   > 每一步的真实输出都要抄进文档。
 
-- [ ] **Step 2: 记进总览**：补「计划 4a：饮食记录（本地）」一节——三条口径（后端算克数、实时算热量、不存绝对热量）、seed 的数值口径与待抽查项、8 条真实结果、测试条数。
+- [x] **Step 2: 记进总览**：补「计划 4a：饮食记录（本地）」一节——三条口径（后端算克数、实时算热量、不存绝对热量）、seed 的数值口径与待抽查项、8 条真实结果、测试条数。
 
-- [ ] **Step 3: `mvn -B clean test` 与 `pnpm test` 全绿并报告条数**（不要用「看着像绿的」代替报告数字）
+- [x] **Step 3: `mvn -B clean test` 与 `pnpm test` 全绿并报告条数**（不要用「看着像绿的」代替报告数字）
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git commit -m "docs: 总览补计划 4a 的端到端实测结果"
@@ -409,18 +411,18 @@ git commit -m "docs: 总览补计划 4a 的端到端实测结果"
 
 ## 完成标准
 
-- [ ] `cd backend && mvn -B clean test` 全绿，**报告实际条数**（本计划开始时 214）
-- [ ] `cd frontend && pnpm test` 全绿（起点 125），`pnpm build` 退 0
-- [ ] **无新迁移**：迁移仍是 V1–V8、连续无缺口；`ChangeLogService.ALLOWED_TABLES` 一个字符都没改
-- [ ] **记一餐是三层一个事务**；每行都进 `change_log`（`origin='user'`）；快照里的日期是**字符串**
-- [ ] **克数由后端算**：库里 `meal_item.grams` 来自 `PortionConverter`，不是前端传的
-- [ ] **grams 存的是未定标的值**（约定二）；定标只在显示层
-- [ ] **绝对热量不落库**：`meal_item` 上没有 kcal 列，也没有任何地方回存合计
-- [ ] **空的一天 → 全 0**（不是 404）；不存在的餐 → **404**（`ApiErrors` 给它 `{error}`）；参数写错 → **400**
-- [ ] seed 的数值口径在文件头、类注释与总览里都写明了是**近似值、未经逐条核对**
-- [ ] 前端**没有**新增 `fetch`（全走 `callApi`）；预览公式有**契约测试**钉住它和后端一致
-- [ ] 总览里补上计划 4a 的真实结果
-- [ ] `git status --short` 无输出（`.commandcode/` 除外）
+- [x] `cd backend && mvn -B clean test` 全绿，**报告实际条数**（本计划开始时 214）
+- [x] `cd frontend && pnpm test` 全绿（起点 125），`pnpm build` 退 0
+- [x] **无新迁移**：迁移仍是 V1–V8、连续无缺口；`ChangeLogService.ALLOWED_TABLES` 一个字符都没改
+- [x] **记一餐是三层一个事务**；每行都进 `change_log`（`origin='user'`）；快照里的日期是**字符串**
+- [x] **克数由后端算**：库里 `meal_item.grams` 来自 `PortionConverter`，不是前端传的
+- [x] **grams 存的是未定标的值**（约定二）；定标只在显示层
+- [x] **绝对热量不落库**：`meal_item` 上没有 kcal 列，也没有任何地方回存合计
+- [x] **空的一天 → 全 0**（不是 404）；不存在的餐 → **404**（`ApiErrors` 给它 `{error}`）；参数写错 → **400**
+- [x] seed 的数值口径在文件头、类注释与总览里都写明了是**近似值、未经逐条核对**
+- [x] 前端**没有**新增 `fetch`（全走 `callApi`）；预览公式有**契约测试**钉住它和后端一致
+- [x] 总览里补上计划 4a 的真实结果
+- [x] `git status --short` 无输出（`.commandcode/` 除外）
 
 ## 风险与未知
 

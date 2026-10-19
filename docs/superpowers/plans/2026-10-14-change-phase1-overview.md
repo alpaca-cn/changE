@@ -142,7 +142,7 @@ CSP 随之收紧成 `connect-src 'self'`。复测后状态栏右侧是 `缓存�
 ## 计划 4a：饮食记录（完全本地的那一半）
 
 > 完整计划：`docs/superpowers/plans/2026-10-19-change-plan4a-nutrition-local.md`
-> 状态：**计划已写，尚未实现**（2026-10-19）
+> 状态：**已完成**（2026-10-19；提交 `3dab582` / `bbdf5d1` / `260eef4` / `10fd0d0` / `5679fe1` / `9595949`）
 
 上表里的**计划 4 是「饮食记录与拍照识别」**，它含两条体量差很大的路径，所以拆开：
 
@@ -163,9 +163,39 @@ CSP 随之收紧成 `connect-src 'self'`。复测后状态栏右侧是 `缓存�
 
 **一条要在实现时保持诚实的事**：种子食物库用 **30 条常见中式食物**的**近似**每百克数值（**中国食物成分表的转录版有版权、不可分发**，设计文档明确要求分发版排除它）。数值由智能体填写、**未经逐条核对**——这一点要同时写在 seed 文件头、Runner 的类注释与总览里，任何地方都不许把它说成「权威值」。
 
+**干净库端到端实跑**（2026-10-19，`java -jar` + Python 直打 HTTP 与只读 SQLite，`CHANGE_DATA_DIR` 指向临时目录）：
+
+启动日志：Flyway **V1–V8** → `动作库导入：新增 876 …` → `动作中文名：写入 876 …` → **`食物库：写入 35 条（35 个份量单位）/ 共 35 条 seed`**（同一行末尾写着「数值为近似值，未经逐条核对」）→ `CHANGE_PORT=…`。应用启动 **6.468 秒**。
+
+| # | 请求 | 实测结果 |
+|---|---|---|
+| 1 | `GET /api/foods?q=豆腐` | **200**，2 条；首条 `豆腐（北）`，`per100.kcal=98.0`，`portions=[{"unitName":"块","grams":100.0}]` |
+| 2 | `POST /api/meals`（1 碗白米饭 + 150 克鸡胸肉） | **200** `{"mealId":1,"items":2,"nutrition":{"kcal":421.5,"protein":50.4,"carb":38.85,"fat":5.85,"fiber":0.45,"sodium":114.0}}` |
+| 3 | 直接读库 `meal_item` | `[(food_id=1, amount=1.0, unit='碗', grams=150.0), (food_id=9, amount=150.0, unit=NULL, grams=150.0)]` —— 米饭那 150 克**来自 `food_portion`（1 碗 = 150 克），不是前端传来的**；鸡胸 150 克是按克录的 |
+| 4 | `GET /api/meals/1` | **200**，`items=2`、`orderIndex=[0,1]`、各项 `kcal=[174.0, 247.5]`、顶层 `421.5`（= 两项之和） |
+| 5 | `GET /api/nutrition/daily?date=2026-10-19` | **200**，合计与第 4 条一致、`meals=1`、`items=2` |
+| 6 | `SELECT COUNT(*) FROM change_log WHERE origin='user'` | **3**（`meal` 1 + `meal_item` 2） |
+| 7 | `GET /api/nutrition/daily?date=2026-08-20`（别的日期） | **200**，六项全 0、`meals=0`、`items=0`（**不是 404、不是 500**） |
+| 8 | **再启动一次** | 日志 `食物库：库里已有 35 条，跳过 seed 安装（删掉的食物不会被复活）`；`food` 行数仍是 **35** |
+
+**测试数字（2026-10-19 实测）**：
+
+| 命令 | 计划 4a 之前 | 现在 |
+|---|---|---|
+| `cd backend && mvn -B clean test` | 214 | **274 passed（1 skipped）** |
+| `cd frontend && pnpm test` | 125（13 files） | **176 passed（16 files）** |
+| `cd frontend && pnpm build` | 退 0 | 退 0（`built in 855ms`） |
+
+**变异实测**（每个新守卫都改坏再还原）：`eaten_at` 去掉 `@JdbcTypeCode` → 1 条红；seed 改成逐条 upsert 式的「每次都装」→ 2 条红；去掉 `@Transactional` → 回滚那条红；grams 不按单位换算 → 6 条红；`mealsOn` 不按日期过滤 → 跨两天那条红；空的一天改成抛异常 → 2 条红；食物搜索去掉排序 / 去掉封顶 → 各 1 条红；前端舍入从两位改成一位 → **3 条红**（每项、合计、与 `Round.to2` 的口径那条）。
+
+**两条实施修正**（详见计划文档的「实施修正」一节）：① seed 的安装策略从「逐条 upsert」改成「食物库为空时才装一次」——否则用户删掉一条不吃的食物后，**重启会被加回来**；② `new ObjectMapper().enable(FAIL_ON_UNKNOWN_PROPERTIES)` 那行**今天是冗余的**（裸 ObjectMapper 本来就默认严格，被 Spring Boot 关掉的是容器里那个），变异不红，已在代码里如实标注。
+
+**仍未做**：**4b**（拍照 / 外卖截图 / 说话 → AI 草稿）需要多模态模型与 API key 的处理；**真机 GUI 逐条核对**仍未做——headless e2e 覆盖了整条 HTTP 链路与克数/合计的真实数字，但「打开窗口点一遍、把界面上的字读出来」仍需人工（`cd backend; mvn -B -q -DskipTests package`，然后 `cd frontend; pnpm tauri dev`）。
+
 ## 前端计划：今日与训练记录页
 
-> **命名**：前端的工作按**主题**命名、不占计划编号（同「计划 1 与计划 2 之间：Tauri 外壳与 Vue 前端脚手架」那一节）。上表里的**计划 4（饮食记录与拍照识别）与本节无关**——它的本地半份（4a）见上一节，已写好计划、尚未实现。
+
+> **命名**：前端的工作按**主题**命名、不占计划编号（同「计划 1 与计划 2 之间：Tauri 外壳与 Vue 前端脚手架」那一节）。上表里的**计划 4（饮食记录与拍照识别）与本节无关**——它的本地半份（4a）见上一节，**已完成**；4b（AI 草稿）未开工。
 
 > 完整计划：`docs/superpowers/plans/2026-10-19-change-frontend-training-pages.md`
 > 状态：**Task 1–5 已完成**（2026-10-19 提交 `4efdde6` / `43a2b98` / `08eb227` / `bd58e4c` / `523cbf6`）；Task 6 见下「真机验收」与「仍未做」
