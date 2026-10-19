@@ -53,13 +53,32 @@
 
 ---
 
+## 一处已解决的规格冲突（Task 2 实施者报出来的）
+
+这份计划初稿里有两条互相矛盾的断言：
+
+- Task 2 Step 3 说「合并产物 **876 条**、键集合与 `name-zh.json` 完全相同」
+- Task 2 Step 2 说「英文原文为空的 5 条**不该出现在产物里**」
+
+两者不能同时成立。**已定为 871 条**（876 − 5），理由：
+
+1. 那 5 条的英文原文是**空数组**，没有任何可翻的内容；在产物里写 `[]` 等于宣称「这条已经被翻译成零段」，语义是错的；
+2. Task 5 的写入服务本来就有 `skippedEmptySource` 这一档计数——它假定的就是「这 5 条不进产物」；
+3. 「完成标准」写的是「876 条里 **871 条**有中文做法」，也指向 871。
+
+所以产物 871 条、**覆盖率 871/871**，并且测试要**显式断言那 5 条不在产物里**（否则「少了 5 条」和「漏翻了 5 条」分不开）。
+
+> 数据集顺序里那 5 条是下标 358 / 501 / 568 / 665 / 667（`Iron Cross`、`One-Arm Kettlebell Swings`、`Push Press`、`Side Bridge`、`Side Jackknife`），落在第 9/13/15/17 批。
+
+---
+
 ## 全局约定
 
 | 项 | 约定 |
 |---|---|
 | 迁移 | 只增不改。本计划新增 **V9**（`exercise.instructions_zh`） |
 | 翻译产物 | 放在 `backend/src/main/resources/seed/instructions-zh/`，每批一个 `part-NN.json`，**全部入库**（它们是可审计的中间产物，也是续跑的依据） |
-| 合并产物 | `seed/instructions-zh.json`（876 条）——**由脚本从 part 文件合并，不手编** |
+| 合并产物 | `seed/instructions-zh.json`（**871 条**——876 减去 5 条原文为空的）——**由脚本从 part 文件合并，不手编** |
 | 翻译风格 | 见 Task 3 的「翻译约定」一节 |
 | 幂等 | 启动时写库的那一步必须可重跑：已有 `instructions_zh` 的行跳过 |
 | 提交信息 | 中文，说清「做了什么 + 为什么」 |
@@ -179,7 +198,7 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 2. 检测**重复键**（同一动作出现在两批里）→ 报错退出
 3. 检测**段数与英文原文不一致** → 报错并列出是哪几条
 4. 输出 `seed/instructions-zh.json`（`{"<nameEn>": ["段1","段2",...]}`，键按数据集顺序）
-5. 打印：总条数、总段落数、与英文原文的覆盖率（应为 876/876）
+5. 打印：总条数、总段落数、**覆盖率（应为 871/871）**、跳过条数。英文原文为空的 5 条没有可翻的内容、**不该出现在产物里**——所以产物是 **871 条**而不是 876。
 
 **英文原文从哪拿**：**仓库里已经 vendor 好了**——`backend/src/main/resources/seed/free-exercise-db/exercises.json`（计划 2 · Task 3 放的，1,005,327 字节、876 条）。**不要**去读 `E:\devtools\cache\fedb\` 那个临时缓存（它随时可能被清掉，而且不该出现在任何脚本里）。
 
@@ -189,7 +208,7 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 
 `InstructionsZhFixturesTest` 至少断言：
 
-1. 合并产物存在、876 条、键集合与 `name-zh.json` **完全相同**
+1. 合并产物存在、**871 条**、键集合 == `name-zh.json` 的键**去掉那 5 条原文为空的**（并显式断言这 5 条**不在**产物里）
 2. 每条的段数 == 英文原文的段数
 3. 没有任何一条是空串数组
 4. 全是中文（`chars().anyMatch(汉字)`），不是把英文抄回来
@@ -261,7 +280,7 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 
 Run: `python scripts/merge-instructions-zh.py`
 
-Expected: `876/876 覆盖`、`段数全部一致`、无重复键。
+Expected: **`871/871` 覆盖**、`段数全部一致`、无重复键、跳过 5 条。
 
 **任何一条不满足就停下来修那一批**，不要用「跳过」的方式让脚本通过。
 
@@ -458,7 +477,7 @@ java -jar target/change-backend-0.1.0-SNAPSHOT.jar
 
 - [ ] `cd backend && mvn -B clean test` 全绿，**报告实际条数**（基线 315）
 - [ ] `cd frontend && pnpm test` 全绿（基线 216）；`pnpm build` 退 0
-- [ ] **876 条里 871 条有中文做法**（5 条原文为空）；`instructions-zh.json` 覆盖 876/876 的键
+- [ ] **876 条里 871 条有中文做法**（5 条原文为空）；`instructions-zh.json` 覆盖 **871/871**（不是 876——那 5 条不该在产物里）
 - [ ] **每条的段数与英文原文一致**（由合并脚本与 `InstructionsZhFixturesTest` 双重守）
 - [ ] `GET /api/exercises/{id}` 返回 `instructions` / `instructionsZh` / `muscles`，有 404
 - [ ] 前端面板三种状态都覆盖：有中文 / 只有英文 / 都没有
@@ -470,7 +489,7 @@ java -jar target/change-backend-0.1.0-SNAPSHOT.jar
 
 | 风险 | 为什么担心 | 怎么应对 |
 |---|---|---|
-| **翻译量是 22 批** | 876 条 × 平均 5 段。一批写错要重做 | 先做 Task 3 的 40 条试点，**风格确认后**再批量；分批落盘可续跑 |
+| **翻译量是 22 批** | 876 条（实际可翻 **871**）× 平均 **4.27** 段。一批写错要重做 | 先做 Task 3 的 40 条试点，**风格确认后**再批量；分批落盘可续跑 |
 | **段数对不上** | 少一段 = 丢一步做法，页面上看不出来 | 合并脚本按英文原文核段数；`InstructionsZhFixturesTest` 再核一遍 |
 | 译文夹带 | 模型容易「顺手补充安全提示」 | 翻译约定里明写「不增不减」；抽查时专门看这一条 |
 | 336 KB 的 seed 进 jar | jar 会变大 | 可忽略（当前 83 MB，涨幅 0.4%）；真要压可以合并后 gzip，但先不做 |
