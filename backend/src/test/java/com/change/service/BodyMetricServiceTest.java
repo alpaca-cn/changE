@@ -166,6 +166,23 @@ class BodyMetricServiceTest {
         assertThat(afterJson).contains("\"metric_type\":\"waist\"");
         assertThat(afterJson).contains("\"value\":80.0");
         assertThat(afterJson).contains("\"unit\":\"cm\"");
+        // note 是这条记录里**唯一携带上下文**的列（「早上空腹」「饭后两小时」）——
+        // 少了它，审计只能回答「改了什么数」，回答不了「为什么是这个数」。
+        assertThat(afterJson).contains("\"note\":\"腰\"");
+    }
+
+    @Test
+    void an_absent_note_is_missing_from_the_snapshot_rather_than_null() {
+        // 两个不同的东西：键不存在 = 当时没写备注；"note":null = 备注被清空了。
+        // 后者会让读日志的人以为「有人把备注删了」，而实际从来没写过。
+        long id = bodyMetrics.record(new MetricInput("2026-10-19", "weight", 72.5, null, null)).id();
+
+        String afterJson = jdbc.queryForObject(
+                "SELECT after_json FROM change_log WHERE target_table = 'body_metric' "
+                        + "AND target_id = ?", String.class, id);
+
+        assertThat(afterJson).contains("\"unit\":\"kg\"");
+        assertThat(afterJson).doesNotContain("\"note\"");
     }
 
     // ---- 时间线 ----

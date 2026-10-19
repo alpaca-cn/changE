@@ -271,6 +271,16 @@ public class BodyMetricService {
      *
      * <p>用 {@link LinkedHashMap} 而不是 {@code Map.of}：日志里列的顺序不承载信息，
      * 但顺序不确定的 JSON 每次读都长得不一样，排查时得多扫两遍。
+     *
+     * <p><b>note 只在非 null 时放进来</b>，两个理由缺一不可：
+     * <ol>
+     *   <li>{@code Map.of} 不接受 null 值——但这正是本方法用 {@code LinkedHashMap} 的原因之一；</li>
+     *   <li>更重要的是：{@code note} 是这条记录里**唯一携带上下文**的列（「早上空腹」
+     *       「饭后两小时」「换了台秤」）。审计的目的是回答「这次改动动了什么」，
+     *       少了它就只能答一半——而数值本身在 {@code value} 里已经有了。</li>
+     * </ol>
+     * 非 null 才放，是为了让「没写备注」在 JSON 里表现为**键不存在**而不是 {@code null}：
+     * 后者会被读日志的人当成「备注被清空了」。
      */
     private static Map<String, Object> snapshot(BodyMetric m) {
         Map<String, Object> map = new LinkedHashMap<>();
@@ -278,6 +288,9 @@ public class BodyMetricService {
         map.put("metric_type", m.metricType);
         map.put("value", m.value);
         map.put("unit", m.unit);
+        if (m.note != null) {
+            map.put("note", m.note);
+        }
         return map;
     }
 
