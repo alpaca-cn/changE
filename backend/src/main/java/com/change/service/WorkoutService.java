@@ -1,5 +1,6 @@
 package com.change.service;
 
+import com.change.cache.CacheService;
 import com.change.domain.Exercise;
 import com.change.domain.SessionExercise;
 import com.change.domain.WorkoutSession;
@@ -78,14 +79,17 @@ public class WorkoutService {
     private final WorkoutSetRepo sets;
     private final ExerciseRepo exercises;
     private final ChangeLogService changeLog;
+    private final CacheService cache;
 
     public WorkoutService(WorkoutSessionRepo sessions, SessionExerciseRepo sessionExercises,
-                          WorkoutSetRepo sets, ExerciseRepo exercises, ChangeLogService changeLog) {
+                          WorkoutSetRepo sets, ExerciseRepo exercises, ChangeLogService changeLog,
+                          CacheService cache) {
         this.sessions = sessions;
         this.sessionExercises = sessionExercises;
         this.sets = sets;
         this.exercises = exercises;
         this.changeLog = changeLog;
+        this.cache = cache;
     }
 
     /** 记一次完整训练。 */
@@ -124,6 +128,19 @@ public class WorkoutService {
                 setCount++;
             }
         }
+
+        // 缓存失效：写训练会让进步曲线变旧，按前缀清掉（计划 6a Task 4）。
+        //
+        // 落点是**本方法内最后一步、return 之前**。@Transactional 的提交发生在方法返回时，
+        // 所以「提交 → 失效」的先后成立。顺序的理由：事务回滚了却失效了缓存，只是白清一次
+        // （无害）；反过来（先失效、后回滚）会让缓存里留着该失效的值（有害）。
+        //
+        // 前缀引用 ProgressService 的同一个常量，而不是再写一遍 "progress:"：
+        // 两处字符串一旦漂移，失效会静默地什么都没清掉，而测试也可能因为各测各的而看不出来。
+        //
+        // CacheService 约定任何方法都不向上抛异常，所以这里不需要 try/catch。
+        cache.invalidatePrefix(ProgressService.CACHE_PREFIX);
+
         return new Result(session.id, exerciseCount, setCount);
     }
 
