@@ -291,6 +291,154 @@ fn parse_health_json(body: &[u8]) -> Result<Health, HealthError> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// 通用代理：前端所有后端访问都经这里（见模块注释与计划 4 的第一节）。
+// ---------------------------------------------------------------------------
+
+/// 通用代理的超时。
+///
+/// **不能用 [`HEALTH_TIMEOUT`]**（2 秒）：写一次训练要落库，2 秒太紧。
+/// 10 秒仍远小于用户会以为「卡死」的时间，也与前端一次操作的等待上限相称。
+pub const API_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 一条**已完成**的 HTTP 响应。
+///
+/// `status` 是服务端的真实状态码。**400 / 404 也是 `Ok`**——前端要根据状态码
+/// 分流（400 显示服务端的校验文案、404 显示「找不到」、204 显示「没做过」），
+/// 把状态码压成一句错误消息，这三条就再也分不开了。
+///
+/// `Err` 只表示**传输层**失败：连不上 / 超时 / 响应读不懂。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ApiResponse {
+    pub status: u16,
+    /// 原始响应文本。204 时是空串。Rust 侧不解析业务 JSON——那是前端的事。
+    pub body: String,
+}
+
+/// 拼一条请求。`path` 会先被 [`validate_path`] 校验。
+///
+/// 单独成函数是为了让「请求长什么样」能被纯函数测试直接钉住（尤其是
+/// `Content-Length` 与那几行头），不用真的开 socket。
+pub fn build_request(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<String, String> {
+    if !matches!(method, "GET" | "POST") {
+        return Err(format!("只允许 GET / POST，收到：{method:?}"));
+    }
+    validate_path(path)?;
+
+    // 单行拼，不要用 `\` 续行：续行里的缩进会**静默**变成请求行/头的一部分
+    // （`health_request` 那里也踩过同一件事，有测试逐行检查行首行尾空格）。
+    let mut req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: application/json\r\nConnection: close\r\n"
+    );
+    if let Some(b) = body {
+        // Content-Length 是**字节数**。中文 JSON 按字符数算会偏小，
+        // 后端读不满声明的长度就会截断/挂住——而症状看起来像「注释丢了」。
+        req.push_str(&format!(
+            "Content-Type: application/json\r\nContent-Length: {}\r\n",
+            b.len()
+        ));
+    }
+    req.push_str("\r\n");
+    if let Some(b) = body {
+        req.push_str(b);
+    }
+    Ok(req)
+}
+
+/// `path` 必须是一个本机 API 路径，且不含任何能**注入请求行或请求头**的字符。
+///
+/// 这不是防「我们自己人」——是让「用字符串拼 HTTP 请求」这件事有一个明确的
+/// 守门点：path 里一旦混进 `\r\n`，后面那截就会变成一条伪造的请求头。
+fn validate_path(path: &str) -> Result<(), String> {
+    if !path.starts_with("/api/") {
+        return Err(format!("路径必须以 /api/ 开头，收到：{path:?}"));
+    }
+    if path.contains('\r') || path.contains('\n') || path.contains(' ') {
+        return Err(format!("路径不得包含空格或换行，收到：{path:?}"));
+    }
+    Ok(())
+}
+
+/// 让外壳代发一条到后端的请求。**这是通用代理的唯一入口。**
+pub fn api_request(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<ApiResponse, String> {
+    let addr = format!("127.0.0.1:{port}");
+    let read_err = |e: std::io::Error| {
+        HealthError::Read {
+            addr: addr.clone(),
+            source: e,
+        }
+        .into_message()
+    };
+    let connect_err = |e: std::io::Error| {
+        HealthError::Connect {
+            addr: addr.clone(),
+            source: e,
+        }
+        .into_message()
+    };
+
+    // 先拼请求：path/method 不合法时**在开连接之前**就返回，别白连一次
+    let request = build_request(port, method, path, body)?;
+
+    let mut stream = std::net::TcpStream::connect(&addr).map_err(connect_err)?;
+    stream.set_read_timeout(Some(API_TIMEOUT)).map_err(read_err)?;
+    stream.set_write_timeout(Some(API_TIMEOUT)).map_err(read_err)?;
+
+    {
+        use std::io::Write;
+        stream.write_all(request.as_bytes()).map_err(read_err)?;
+        stream.flush().map_err(read_err)?;
+    }
+
+    let raw = read_to_end(&mut stream, MAX_RESPONSE_BYTES).map_err(read_err)?;
+    parse_api_response(&raw).map_err(HealthError::into_message)
+}
+
+/// **纯函数**：一整条响应字节 → [`ApiResponse`]。复用既有的那套工具
+/// （分头/正文、状态行、chunked 解码），只是**契约不同**：
+///
+/// - 任何状态码都是 `Ok`（含 400/404）——前端按状态码分流。
+/// - **不做任何正文校验**：204 与 5xx 都可能没有正文。
+///
+/// 正因契约不同，这里没有强行跟 `parse_health_response` 合并：那边的正文必须
+/// 永远是一个合法的 `Health` JSON（缺字段就是错误），这边对正文一无所知。
+pub fn parse_api_response(raw: &[u8]) -> Result<ApiResponse, HealthError> {
+    let (status_line, headers, body) = split_response(raw)?;
+    let code = parse_status_code(status_line)?;
+    let body = if is_chunked(headers) {
+        chunked_decode(body)?
+    } else {
+        body.to_vec()
+    };
+
+    // **这里刻意没有「正文是空的」检查**——与 `parse_health_response` 不同。
+    //   * health 的正文必须是合法 JSON，空正文对它是真错误；
+    //   * 代理对正文一无所知，而 **204 与 5xx 都可能没有正文**：
+    //     「这个动作没做过」就是 `204 + 空正文`，把它判成错误会让一个**正常**状态
+    //     变成一个吓人的失败。
+    //
+    // 所以 204 与空正文都自然地流成 `{status, body: ""}`，由前端按状态码分流。
+    // 这一条由 `returns_an_empty_body_for_204` 与新加的守卫测试共同钉住：
+    // 哪天有人照抄 health 那条检查，它们会立刻变红。
+    let text = String::from_utf8(body).map_err(|_| HealthError::Malformed {
+        detail: "正文不是合法的 UTF-8".to_string(),
+    })?;
+    Ok(ApiResponse {
+        status: code,
+        body: text,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -913,5 +1061,257 @@ mod tests {
         assert!(worded("operation timed out").contains("没有回话"));
         assert!(worded("would block").contains("没有回话"));
         assert!(!worded("connection reset by peer").contains("没有回话"));
+    }
+
+    // -----------------------------------------------------------------------
+    // 通用代理（api_request）
+    // -----------------------------------------------------------------------
+    //
+    // 下面三条夹具是**真机抓下来的原始字节**，不是构造的：2026-10-19 用 Python
+    // `socket` 直接打 `127.0.0.1:<随机端口>`（后端是计划 3 的 jar，库里已有 1 次训练）。
+    // 抓三条是因为它们各自钉住一个不同的形态：
+    //   * 200 且 chunked（前端读数据的常态）
+    //   * 400 且 chunked（**非 2xx 也是 Ok**，前端要读里面那句 `error`）
+    //   * 204 且**没有正文、没有 Content-Type**（「从没做过这个动作」）
+    // 共同的形态特征：状态行尾部有空格、无 reason phrase（Tomcat 10.1.55）。
+
+    /// 真机 `GET /api/sessions/recent`（200，chunked）。
+    ///
+    /// 头与块长度按实测形态；正文用 `format!` 算长度前缀——**不写字面量**，
+    /// 中文 JSON 的长度按字节算，手写会随文案漂移而悄悄失效。
+    fn recent_200_chunked() -> String {
+        let json = r#"[{"id":1,"sessionDate":"2026-10-19","title":"胸 + 三头","perceivedState":"睡得好"}]"#;
+        format!(
+            "HTTP/1.1 200 \r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\
+             Date: Mon, 19 Oct 2026 03:24:57 GMT\r\nConnection: close\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n",
+            json.len(),
+            json
+        )
+    }
+
+    /// 真机 `POST /api/sessions`（400，chunked，body 是后端的校验文案）。
+    fn bad_request_400() -> String {
+        let json = r#"{"error":"一次训练至少要有 1 个动作"}"#;
+        format!(
+            "HTTP/1.1 400 \r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\
+             Date: Mon, 19 Oct 2026 03:24:57 GMT\r\nConnection: close\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n",
+            json.len(),
+            json
+        )
+    }
+
+    /// 真机 `GET /api/exercises/{id}/last-performance`（204）：**没有 Content-Type，
+    /// 也没有正文**——这正是 `parse_api_response` 不能照抄 health 那条
+    /// 「正文是空的」检查的原因。
+    const REAL_204: &str = "HTTP/1.1 204 \r\nDate: Mon, 19 Oct 2026 03:24:57 GMT\r\nConnection: close\r\n\r\n";
+
+    // ---- build_request ----
+
+    #[test]
+    fn builds_a_get_request_without_a_body() {
+        let req = build_request(53100, "GET", "/api/sessions/recent", None).unwrap();
+        assert!(req.starts_with("GET /api/sessions/recent HTTP/1.1\r\n"), "实际 {req:?}");
+        assert!(req.contains("Host: 127.0.0.1:53100\r\n"), "实际 {req:?}");
+        assert!(req.contains("Connection: close\r\n"), "实际 {req:?}");
+        // 没有 body 就不该有这两个头
+        assert!(!req.contains("Content-Length"), "实际 {req:?}");
+        assert!(!req.contains("Content-Type"), "实际 {req:?}");
+        assert!(req.ends_with("\r\n\r\n"), "实际 {req:?}");
+    }
+
+    #[test]
+    fn builds_a_post_request_with_a_json_body_and_content_length() {
+        // 正文里放中文：Content-Length 必须是**字节数**。按字符数算会偏小，
+        // 后端读不满声明的长度就截断——症状看起来像「注释丢了」而不是报错。
+        let body = r#"{"title":"胸 + 三头","note":"腿部动作"}"#;
+        let req = build_request(8080, "POST", "/api/sessions", Some(body)).unwrap();
+
+        assert!(req.starts_with("POST /api/sessions HTTP/1.1\r\n"), "实际 {req:?}");
+        assert!(req.contains("Content-Type: application/json\r\n"), "实际 {req:?}");
+        assert!(
+            req.contains(&format!("Content-Length: {}\r\n", body.len())),
+            "Content-Length 该是字节数 {}，实际 {req:?}",
+            body.len()
+        );
+        // 中文占了不止一个字符：字节数必须严格大于字符数，否则说明算错了
+        assert!(body.len() > body.chars().count());
+        // 空行之后就是 body 原文
+        assert!(req.ends_with(body), "实际 {req:?}");
+        assert!(req.contains("\r\n\r\n"));
+    }
+
+    #[test]
+    fn the_request_has_no_stray_whitespace_on_any_line() {
+        // 与 health_request 那条同一个理由：`format!` 续行里的缩进是**看不见的**，
+        // 行首一旦混进空格，请求就变成 ` Host: ...` 这种畸形头。
+        let req = build_request(1, "POST", "/api/sessions", Some("{}")).unwrap();
+        for line in req.split("\r\n") {
+            assert_eq!(line, line.trim_end(), "请求里不该有行尾空格：{line:?}");
+            assert_eq!(line, line.trim_start(), "请求里不该有行首空格：{line:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_a_method_outside_get_and_post() {
+        for m in ["DELETE", "PUT", "PATCH", "get", ""] {
+            assert!(
+                build_request(1, m, "/api/sessions", None).is_err(),
+                "{m:?} 不该被接受"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_path_that_is_not_an_api_path() {
+        for p in ["/health", "api/sessions", "", "/", "/API/sessions"] {
+            assert!(
+                build_request(1, "GET", p, None).is_err(),
+                "{p:?} 不该被接受"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_path_with_crlf_or_space() {
+        // **请求行/头注入**：path 里混进 \r\n，后面那截就会变成一条伪造的请求头。
+        // 这条是那个守门点的杀手——把 validate_path 删掉，它必须变红。
+        let injected = "/api/sessions\r\nX-Injected: 1";
+        let err = build_request(1, "GET", injected, None).unwrap_err();
+        assert!(err.contains("换行") || err.contains("空格"), "实际 {err}");
+        // 而且必须**返回 Err**：Err 意味着那段串根本没有进入请求，
+        // 也就无从谈起拼出一条伪造的头（一个「照样拼、只是事后报错」的实现会在这里红）。
+        assert!(build_request(1, "GET", injected, None).is_err());
+
+        assert!(build_request(1, "GET", "/api/a b", None).is_err());
+        assert!(build_request(1, "GET", "/api/a\nb", None).is_err());
+        assert!(build_request(1, "GET", "/api/a\rb", None).is_err());
+    }
+
+    #[test]
+    fn the_api_timeout_is_longer_than_the_health_timeout() {
+        // 写一次训练要落库；2 秒的健康检查超时拿来做这件事太紧。
+        assert!(API_TIMEOUT > HEALTH_TIMEOUT);
+        assert!(API_TIMEOUT >= std::time::Duration::from_secs(5));
+    }
+
+    // ---- parse_api_response ----
+
+    #[test]
+    fn parses_a_chunked_api_response() {
+        // 唯一能守住「后端会 chunked 回」的 API 侧用例：不做 chunked 解码，
+        // body 会带着长度前缀和结尾的 `0`，前端 JSON.parse 直接炸。
+        let r = parse_api_response(recent_200_chunked().as_bytes()).unwrap();
+        assert_eq!(r.status, 200);
+        assert_eq!(
+            r.body,
+            r#"[{"id":1,"sessionDate":"2026-10-19","title":"胸 + 三头","perceivedState":"睡得好"}]"#
+        );
+        // 真的能当成 JSON 读出来（这才是前端要做的事）
+        let v: serde_json::Value = serde_json::from_str(&r.body).unwrap();
+        assert_eq!(v[0]["sessionDate"], "2026-10-19");
+    }
+
+    #[test]
+    fn parses_a_plain_content_length_response() {
+        // HTTP/1.0 请求时后端回的是「读到 EOF 为止」的形态：没有 Transfer-Encoding。
+        let raw = "HTTP/1.1 200 \r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]";
+        let r = parse_api_response(raw.as_bytes()).unwrap();
+        assert_eq!(r.status, 200);
+        assert_eq!(r.body, "[]");
+    }
+
+    #[test]
+    fn returns_the_status_instead_of_failing_on_400() {
+        // **这是本任务语义上的重点**：400 不是「传输失败」，它是一个**客户端错误**，
+        // 前端要读 `error` 把它显示给用户。若这里返回 Err，那句文案就丢了。
+        let r = parse_api_response(bad_request_400().as_bytes()).unwrap();
+        assert_eq!(r.status, 400);
+        let v: serde_json::Value = serde_json::from_str(&r.body).unwrap();
+        assert_eq!(v["error"], "一次训练至少要有 1 个动作");
+    }
+
+    #[test]
+    fn returns_the_status_instead_of_failing_on_404() {
+        let json = r#"{"error":"找不到这次训练: 999999"}"#;
+        let raw = format!(
+            "HTTP/1.1 404 \r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\
+             Connection: close\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n",
+            json.len(),
+            json
+        );
+        let r = parse_api_response(raw.as_bytes()).unwrap();
+        assert_eq!(r.status, 404);
+        assert!(r.body.contains("999999"), "实际 {}", r.body);
+    }
+
+    #[test]
+    fn returns_an_empty_body_for_204() {
+        // 「从没做过这个动作」的应答。**不能**在「正文是空的」那一步报错——
+        // 照抄 parse_health_response 的检查就会变成这里红。
+        let r = parse_api_response(REAL_204.as_bytes()).unwrap();
+        assert_eq!(r.status, 204);
+        assert_eq!(r.body, "");
+    }
+
+    #[test]
+    fn a_204_body_is_empty_even_when_chunked() {
+        // 有些容器回 204 时也带 Transfer-Encoding（正文是零长度块）。
+        // 两条路径都要落到「空的 body」而不是「正文是空的」那个错误。
+        let raw = "HTTP/1.1 204 \r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n\r\n";
+        let r = parse_api_response(raw.as_bytes()).unwrap();
+        assert_eq!(r.status, 204);
+        assert_eq!(r.body, "");
+    }
+
+    #[test]
+    fn an_empty_body_on_a_non_204_is_still_ok() {
+        // 把上面两条的契约说全：**空正文本身不是错误**，与状态码无关。
+        // 这一条与 `returns_an_empty_body_for_204` 一起，是「照抄 health 那条
+        // 『正文是空的』检查」这个变异的杀手——那种改法会让这两条同时变红。
+        let raw = "HTTP/1.1 500 \r\nConnection: close\r\n\r\n";
+        let r = parse_api_response(raw.as_bytes()).unwrap();
+        assert_eq!(r.status, 500);
+        assert_eq!(r.body, "");
+    }
+
+    #[test]
+    fn a_malformed_response_is_an_error_not_a_success() {
+        assert!(matches!(
+            parse_api_response(b"not http at all").unwrap_err(),
+            HealthError::Malformed { .. }
+        ));
+        // 正文不是 UTF-8：如实报错，别 panic
+        let mut raw = b"HTTP/1.1 200 \r\nConnection: close\r\n\r\n".to_vec();
+        raw.extend_from_slice(&[0xff, 0xfe, 0xff]);
+        assert!(matches!(
+            parse_api_response(&raw).unwrap_err(),
+            HealthError::Malformed { .. }
+        ));
+    }
+
+    // ---- 传输层失败：Err（不是状态码） ----
+
+    #[test]
+    fn an_unreachable_port_is_an_error_not_a_status() {
+        // 「连不上」不是任何 HTTP 状态码能表达的东西，所以它必须是 Err。
+        // 先绑一个端口再放开，拿到一个确定没人监听的端口号（避免碰运气）。
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let err = api_request(port, "GET", "/api/health", None).unwrap_err();
+        assert!(err.contains("连不上"), "实际 {err}");
+        assert!(!err.contains("HTTP 200"));
+    }
+
+    #[test]
+    fn a_bad_method_is_rejected_before_opening_a_connection() {
+        // 校验发生在连 socket 之前：端口上有没有人监听与这条断言无关。
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let err = api_request(port, "DELETE", "/api/sessions", None).unwrap_err();
+        assert!(err.contains("GET / POST"), "实际 {err}");
     }
 }

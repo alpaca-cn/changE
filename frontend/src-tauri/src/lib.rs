@@ -52,6 +52,46 @@ fn get_health(backend: tauri::State<'_, Backend>) -> Result<backend::Health, Str
     }
 }
 
+/// 代前端发一条到后端的请求（**通用代理**）。
+///
+/// **为什么前端不发 HTTP**：页面源（dev 的 `http://127.0.0.1:1420`、打包后的
+/// `tauri://localhost`）与后端的**随机端口**不同源，响应里没有
+/// `Access-Control-Allow-Origin`，浏览器会把响应拦掉——前端只能看到
+/// `TypeError: Failed to fetch`。详见 `http.rs` 的模块注释。
+///
+/// **为什么返回 `Ok` 而不把 400/404 变成 `Err`**：前端要根据状态码分流——
+/// 400 显示服务端的校验文案（`{error}`）、404 显示「找不到」、204 显示
+/// 「这个动作没做过」。把状态码压成一句错误消息，这三条就再也分不开了。
+/// `Err` 只留给传输层失败（连不上 / 超时 / 响应读不懂）。
+///
+/// # 就绪守卫
+///
+/// 与 [`get_health`] 同一道：端口只在状态是 `Ready` 时才有意义。
+/// `Starting` 时去连 `127.0.0.1:0` 只会得到一个「连不上」的假错误，
+/// 把「后端还在起」误报成「后端坏了」。
+#[tauri::command]
+fn api_request(
+    backend: tauri::State<'_, Backend>,
+    method: String,
+    path: String,
+    body: Option<String>,
+) -> Result<http::ApiResponse, String> {
+    let (status, port, message) = {
+        let s = backend.state.lock().unwrap();
+        (s.status.clone(), s.port, s.message.clone())
+    };
+    match status {
+        BackendStatus::Ready => {
+            let port = port.ok_or_else(|| {
+                "后端状态是 ready，但没有端口——这是外壳内部的矛盾，请报告".to_string()
+            })?;
+            http::api_request(port, &method, &path, body.as_deref())
+        }
+        BackendStatus::Starting => Err("后端还在启动中，请稍候".to_string()),
+        BackendStatus::Failed => Err(format!("后端没有起来：{message}")),
+    }
+}
+
 /// 找后端 jar。优先环境变量，其次相对仓库的默认位置。
 ///
 /// 候选路径是**相对当前工作目录**的：开发时 `cargo tauri dev` 从 `src-tauri`
@@ -91,7 +131,9 @@ fn locate_jar() -> Result<PathBuf, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![get_backend_status, get_health])
+        // 单行：下面的 `every_command_is_registered_in_the_invoke_handler`
+        // 按「一行」读注册表（`lines().find(...)`）。改成多行会让它读不到命令名。
+        .invoke_handler(tauri::generate_handler![get_backend_status, get_health, api_request])
         .setup(|app| {
             // 注意：`resolve_java` 返回 `PathBuf`，**不是 `Option`**。
             // 它刻意不做存在性检查——真是 Java 找不到，`Command::spawn` 抛出的
@@ -153,8 +195,13 @@ mod tests {
     /// 不存在「读到了别的路径下另一个 lib.rs」的可能。
     /// 断言取的是宏调用那一行，而不是整个文件——避免把注释里提到命令名也算作注册
     /// （本文件的注释里就写了好几次 `get_health`）。
+    ///
+    /// **注册表必须是单行**：下面用 `lines().find(...)` 只取一行。加命令时若把它
+    /// 拆成多行，这条会读不到命令名而变红——那是刻意的（与其静默漏检，不如响亮地提醒）。
+    /// 原名 `both_commands_are_registered_in_the_invoke_handler`（那时只有两条命令），
+    /// 计划 4 加第三条时改名。
     #[test]
-    fn both_commands_are_registered_in_the_invoke_handler() {
+    fn every_command_is_registered_in_the_invoke_handler() {
         const SRC: &str = include_str!("lib.rs");
 
         let line = SRC
@@ -166,7 +213,7 @@ mod tests {
             "generate_handler! 那一行不该是注释：{line}"
         );
 
-        for cmd in ["get_backend_status", "get_health"] {
+        for cmd in ["get_backend_status", "get_health", "api_request"] {
             assert!(
                 line.contains(cmd),
                 "命令 {cmd:?} 没有注册进 invoke_handler——前端 invoke 它会直接 reject。\
@@ -174,7 +221,7 @@ mod tests {
             );
         }
 
-        // 反面：`get_health` 必须真的在**宏的参数表**里，而不是出现在行尾注释里
+        // 反面：命令必须真的在**宏的参数表**里，而不是出现在行尾注释里
         let args = line
             .split_once("generate_handler![")
             .and_then(|(_, rest)| rest.split_once(']'))
@@ -186,8 +233,8 @@ mod tests {
         );
         assert_eq!(
             args.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).count(),
-            2,
-            "命令清单恰好是两条；实际参数：{args}"
+            3,
+            "命令清单恰好是三条（get_backend_status / get_health / api_request）；实际参数：{args}"
         );
     }
 }
