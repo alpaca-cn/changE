@@ -26,6 +26,11 @@ export const SESSION_1 =
 export const EXERCISES_CHEST =
   '[{"id":364,"nameEn":"JM Press","nameZh":"JM 卧推","equipment":"barbell","isCompound":true,"category":"strength"},{"id":154,"nameEn":"Chest Push from 3 point stance","nameZh":"三点支撑推胸","equipment":"medicine ball","isCompound":true,"category":"plyometrics"},{"id":347,"nameEn":"Incline Push-Up","nameZh":"上斜俯卧撑","equipment":"body only","isCompound":true,"category":"strength"}]'
 
-/** `GET /api/exercises/16/last-performance` —— 上次 60×8 两组 + 一组没记。 */
-export const LAST_PERF_16 =
+/**
+ * `GET /api/exercises/16/last-performance` —— 上次 60×8 两组 + 一组没记。
+ *
+ * 被别的动作 id 复用时，只有**数值**是测试关心的（两份 60×8、一份空）；
+ * `sessionDate` / `sessionExerciseId` 是原样带过来的真实字段。
+ */
+export const LAST_PERF =
   '{"sessionDate":"2026-10-19","sessionExerciseId":1,"sets":[{"setType":"normal","weight":60.0,"repetitions":8,"durationSeconds":null,"perSide":false},{"setType":"normal","weight":60.0,"repetitions":8,"durationSeconds":null,"perSide":false},{"setType":"normal","weight":null,"repetitions":null,"durationSeconds":null,"perSide":false}]}'
