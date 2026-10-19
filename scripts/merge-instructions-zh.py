@@ -19,8 +19,10 @@
 3. **重复键**：同一个动作不能出现在两个 part 里（否则后一批会静默覆盖前一批）。
 4. **段数**：每条的段数必须与英文原文一致。少一段 = 丢一步做法，而页面上看不出来。
    英文原文那一段是空的时，中文也必须留空（不增不减）。
-5. **覆盖**：`1..876` 每一条都要被且只被一个批次的范围认领（不许有缝、不许重叠），
-   且所有有原文的动作都要在产物里。
+5. **覆盖**：被所有 part 的 `[from, to]` 并集认领的下标，必须构成 **从第 1 条开始、
+   中间没有洞**的连续前缀。前缀之外还没认领的只是「还没翻完」（退出码 2，正常中间状态）；
+   中间有洞、或者被多个批次重叠认领，是错误（退出码 1）。前缀一直延伸到第 876 条
+   才算翻完（退出码 0），此时所有有原文的动作都在产物里。
 
 英文原文读仓库里 vendor 好的那一份：
 
@@ -31,9 +33,11 @@
 
 退出码：
 
-    0  校验通过，产物已写入
-    1  校验失败（形状 / 批边界 / 重复键 / 段数 / 空段 / 范围缺口），**未写产物**
-    2  校验通过但还没翻完，**未写产物**——翻译进行中这是正常状态
+    0  全部校验通过，且 1..876 全部被认领（翻完了），产物已写入
+    1  校验失败，未写产物（part 形状 / 批边界 / 重复键 / 段数 / 空段 / 范围中间有洞 /
+       范围重叠；输出会指出哪一批、哪一条、差多少）
+    2  校验通过但还没翻完，未写产物——已认领的批次范围构成 1..k（k < 876）的连续前缀，
+       或还没有任何 part-NN.json（翻译进行中这是正常状态）
 """
 
 import json
@@ -272,28 +276,84 @@ def check_duplicate_keys(part, seen, errors):
             errors.append(("重复键", "%r 同时出现在 %s 与 %s" % (name, owner, part.name)))
 
 
+def describe_index(index, names):
+    """把数据集下标写成「第 N 条（'动作名'）」；超出范围时不要抛 IndexError。"""
+    if 1 <= index <= len(names):
+        return "第 %d 条（%r）" % (index, names[index - 1])
+    return "第 %d 条（超出数据集范围）" % index
+
+
+def format_ranges(indices):
+    """把离散下标压成连续区间：`第 3–4 条、第 9 条`。"""
+    ranges = []
+    for index in indices:
+        if ranges and index == ranges[-1][1] + 1:
+            ranges[-1][1] = index
+        else:
+            ranges.append([index, index])
+
+    shown = ["第 %d 条" % start if start == end else "第 %d–%d 条" % (start, end)
+             for start, end in ranges[:5]]
+    tail = "" if len(ranges) <= 5 else "，……还有 %d 段" % (len(ranges) - 5)
+    return "、".join(shown) + tail
+
+
+def format_names(indices, names, limit=5):
+    """列出下标对应的动作名（最多 `limit` 个）；超出数据集范围的下标跳过。"""
+    shown = [repr(names[index - 1]) for index in indices[:limit]
+             if 1 <= index <= len(names)]
+    if not shown:
+        return ""
+    tail = "" if len(indices) <= limit else "，……"
+    return "、".join(shown) + tail
+
+
 def check_range_coverage(parts, names, errors):
-    """1..876 每条都要被且只被一个批次的范围认领——批边界写错时这里是兜底。"""
+    """检查批次范围的认领：只接受从第 1 条开始、中间没有洞的连续前缀。
+
+    - 前缀之外还没认领：还没翻完，不是错误（由调用方按退出码 2 处理）。
+    - 被认领的范围中间有洞：说明有批次漏了，是错误。
+    - 同一条被多个批次认领：重叠，是错误。
+
+    返回已认领前缀的末尾下标（0 表示第 1 条就没被认领）；中间有洞或重叠时返回 0，
+    并把错误记进 `errors`。
+    """
     claims = {}
     for part in parts:
         for index in range(part.start, part.end + 1):
             claims.setdefault(index, []).append(part.name)
 
-    gaps = [index for index in range(1, len(names) + 1) if index not in claims]
     overlaps = [index for index in sorted(claims) if len(claims[index]) > 1]
-
-    if gaps:
-        shown = ["第 %d 条（%r）" % (index, names[index - 1]) for index in gaps[:10]]
-        tail = "" if len(gaps) <= 10 else "……还有 %d 条" % (len(gaps) - 10)
-        errors.append(("批次范围缺口", "%d 条没有任何批次认领：%s%s"
-                       % (len(gaps), "、".join(shown), tail)))
-    if overlaps:
-        shown = ["第 %d 条（%r）被 %s 同时认领"
-                 % (index, names[index - 1], " 与 ".join(claims[index]))
+    overlapped = bool(overlaps)
+    if overlapped:
+        shown = ["%s被 %s 同时认领"
+                 % (describe_index(index, names), " 与 ".join(claims[index]))
                  for index in overlaps[:10]]
-        tail = "" if len(overlaps) <= 10 else "……还有 %d 条" % (len(overlaps) - 10)
+        tail = "" if len(overlaps) <= 10 else "，……还有 %d 条" % (len(overlaps) - 10)
         errors.append(("批次范围重叠", "%d 条被多个批次认领：%s%s"
                        % (len(overlaps), "、".join(shown), tail)))
+
+    covered = set(claims)
+    if not covered:
+        return 0
+
+    prefix_end = 0
+    while prefix_end + 1 in covered:
+        prefix_end += 1
+
+    highest = max(covered)
+    holes = [index for index in range(prefix_end + 1, highest + 1)
+             if index not in covered]
+    if holes:
+        detail = format_names(holes, names)
+        suffix = "（%s）" % detail if detail else ""
+        errors.append(("批次范围缺口（中间有洞）",
+                       "%s没有任何批次认领%s——已认领的批次范围必须构成从第 1 条开始、"
+                       "中间没有洞的连续前缀；中间有洞说明有批次漏了"
+                       % (format_ranges(holes), suffix)))
+        return 0
+
+    return 0 if overlapped else prefix_end
 
 
 def report_failures(errors):
@@ -350,10 +410,20 @@ def main():
         check_no_empty_source_items(part, without_source_set, errors)
         check_paragraph_counts(part, paragraphs, errors)
         check_duplicate_keys(part, seen, errors)
-    check_range_coverage(parts, names, errors)
+    prefix_end = check_range_coverage(parts, names, errors)
 
     if errors:
         return report_failures(errors)
+
+    if prefix_end < len(names):
+        # 这不是错误：已认领的范围恰好是 1..prefix_end 的连续前缀，翻译还在进行中。
+        # 产物只在 1..876 全部被认领后才写。
+        print("还没翻完，未生成产物。")
+        print("已认领的批次范围构成 1..%d 的连续前缀，还差第 %d..%d 条（%d 条）。"
+              % (prefix_end, prefix_end + 1, len(names), len(names) - prefix_end))
+        print("数据集 %d 条：有英文原文 %d 条、原文为空 %d 条。"
+              % (len(names), len(translatable), len(without_source)))
+        return 2
 
     merged = {}
     for part in parts:
