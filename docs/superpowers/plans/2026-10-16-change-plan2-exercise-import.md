@@ -1556,6 +1556,13 @@ Run: `cd backend && mvn -B clean test`
 
 ## Task 7: 中文名的批量产出（可重入、断点续）
 
+> **实施修正（2026-10-18）**：Step 1 假设 `hasaneyldrm/exercises-dataset` 有中文**名字**。
+> 实际那份数据只有中文**做法说明**，没有名字——所以 Step 4 的「先交叉校验、剩下的再调模型」
+> 走不通，876 条**全部**是直接从英文名翻译得来（`seed/name-zh.json`，44,684 字节，
+> 876 个互不重复）。中文名由**智能体产出、未经人工逐条复核**，正式使用前建议抽查，
+> 尤其力量举术语（`Snatch`/`Clean`/`Jerk`）。
+
+
 **中文名必须自己产出**——三个数据集都只有英文名。设计文档「决定 6」定的方案是：智能体批量翻译 + 拿 `hasaneyldrm/exercises-dataset` 的中文说明按动作名匹配做交叉校验。
 
 **这一步刻意排在导入之后**：导入不依赖它（`name_zh` 可空），所以它失败不会挡住计划 3。
@@ -1564,13 +1571,13 @@ Run: `cd backend && mvn -B clean test`
 - Create: `backend/src/main/java/com/change/service/ExerciseNameZhService.java`
 - Test: `backend/src/test/java/com/change/service/ExerciseNameZhServiceTest.java`
 
-- [ ] **Step 1: 先做一件不加模型依赖的事——把 hasaneyldrm 的中文名抓下来**
+- [x] **Step 1: 先做一件不加模型依赖的事——把 hasaneyldrm 的中文名抓下来**
 
 `hasaneyldrm/exercises-dataset` 的 `instructions.zh` 里有中文动作名。走镜像抓（本机 GitHub 直连被掐）：
 
 先探测实际路径（仓库结构可能变），确认后再定抓取脚本。**这一步的产出是一份「英文名 → 中文名」的对照 JSON，放进 `seed/`，不入库（它只是校验素材）。**
 
-- [ ] **Step 2: 写失败的测试（不调模型）**
+- [x] **Step 2: 写失败的测试（不调模型）**
 
 要求：
 
@@ -1580,11 +1587,11 @@ Run: `cd backend && mvn -B clean test`
 4. **断点续**：只处理 `name_zh IS NULL` 的行——跑到一半崩掉，再跑接着来
 5. 中文名**不能与已有动作重复**（`name_zh` 上没唯一索引，但重复会让人选错；测试要挡住）
 
-- [ ] **Step 3: 实现「写中文名」这件纯机械的事**
+- [x] **Step 3: 实现「写中文名」这件纯机械的事**
 
 **这一步不调模型**——它只接受一份现成的映射。模型调用是 Step 4 的事，分开是为了让 Step 3 可测。
 
-- [ ] **Step 4: 产出映射（这一步会花模型调用）**
+- [x] **Step 4: 产出映射（这一步会花模型调用）**
 
 两条路，**先做更便宜的**：
 
@@ -1593,11 +1600,11 @@ Run: `cd backend && mvn -B clean test`
 
 **验收**：报告 876 条里各有多少来自交叉校验、多少来自模型、多少仍是 null。**允许有剩余 null**，但要给出数量与原因。
 
-- [ ] **Step 5: 跑测试 + 验收**
+- [x] **Step 5: 跑测试 + 验收**
 
 Run: `cd backend && mvn -B clean test`
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ---
 
@@ -1616,7 +1623,7 @@ Run: `cd backend && mvn -B clean test`
 >
 > ✅ **第 8、9 条已可用（2026-10-18 补齐入口）。** 新增 `ExerciseController`（`/api/exercises`）：`GET /status`、`POST /import`、`POST /unimport`。并且把「每次启动都导入」改成**只自动安装一次、撤销后不再自动装**：`ExerciseImportService.shouldInstallOnStartup()` = 库里没有导入的动作 **且** 从没撤销过（依据是 `unimport()` 写下的那条汇总 delete 日志，**不需要新表**）。**重启实测**：导入 → `POST /unimport` → 重启 → 启动日志 `动作库：已安装（或已被撤销），跳过启动导入`、`imported=0`；只有显式 `POST /import` 才装回来（并连中文名一起写）。另：清单第 6 条的 `origin='IMPORT'` 应为小写 `'import'`。详见总览文档「计划 2」一节。
 
-- [ ] **Step 1: 干净库上跑一遍全链路**
+- [x] **Step 1: 干净库上跑一遍全链路**
 
 ```powershell
 cd E:\idea\program\change\backend
@@ -1643,27 +1650,33 @@ java -jar target/change-backend-0.1.0-SNAPSHOT.jar
 | 8 | 触发 `unimport()` 之后再查 | `exercise` 只剩手工动作，肌群标注全没 |
 | 9 | 再导入一次 | 恢复 876 / 2587 |
 
-- [ ] **Step 2: 把结果记进总览**
+- [x] **Step 2: 把结果记进总览**
 
 在 `docs/superpowers/plans/2026-10-14-change-phase1-overview.md` 里补一节，写清实际数字、`region_ids` 的口径、以及「撤销导入」是一个专用操作而不是日志回放。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ---
 
 ## 完成标准
 
-- [ ] `cd backend && mvn -B clean test` 全绿，**报告实际条数**（计划 1 结束时是 125，本计划会显著增加）
-- [ ] 干净库上导入产出 **876 个动作 / 2587 条肌群标注 / 17 块肌群**
-- [ ] **重跑导入行数不变**（幂等实测）
-- [ ] **9 条重叠动作各只有一条标注且 `role='primary'`**（实测抽查至少一条）
-- [ ] `unimport()` 之后手工录入的动作一条不少；再导入能恢复
-- [ ] `exercise_muscle` 在 `ChangeLogService` 的 `ALLOWED_TABLES` 里
-- [ ] `ExerciseRepo` 的搜索**排除**已归档动作（含测试）
-- [ ] `region_ids` 的每个值都在 `MuscleRegion` 里声明过（含测试）
-- [ ] `exercises.json` 的 sha256 与 1,005,327 字节在加载时被校验
-- [ ] `LICENSE`（Unlicense）随包存在
-- [ ] `git status --short` 无输出
+> **补记（2026-10-19）**：下面 11 条全部满足，依据见
+> `2026-10-14-change-phase1-overview.md` 的「计划 2」一节（记了干净库上的实测数字）
+> 与磁盘上的文件。勾选是事后补的——实施时没有逐条勾复选框，这是流程疏漏。
+> 当前测试基线是 `mvn -B clean test` → **274 条**（本计划结束时是 184 条）。
+
+
+- [x] `cd backend && mvn -B clean test` 全绿，**报告实际条数**（计划 1 结束时是 125，本计划会显著增加）
+- [x] 干净库上导入产出 **876 个动作 / 2587 条肌群标注 / 17 块肌群**
+- [x] **重跑导入行数不变**（幂等实测）
+- [x] **9 条重叠动作各只有一条标注且 `role='primary'`**（实测抽查至少一条）
+- [x] `unimport()` 之后手工录入的动作一条不少；再导入能恢复
+- [x] `exercise_muscle` 在 `ChangeLogService` 的 `ALLOWED_TABLES` 里
+- [x] `ExerciseRepo` 的搜索**排除**已归档动作（含测试）
+- [x] `region_ids` 的每个值都在 `MuscleRegion` 里声明过（含测试）
+- [x] `exercises.json` 的 sha256 与 1,005,327 字节在加载时被校验
+- [x] `LICENSE.md`（Unlicense，1,211 字节）与 `schema.json`（2,765 字节）随包存在（`src/main/resources/seed/free-exercise-db/`；原条目写的是 `LICENSE`，真实文件名带 `.md`——仓库根目录没有 `LICENSE`）
+- [x] `git status --short` 无输出
 
 ## 风险与未知
 

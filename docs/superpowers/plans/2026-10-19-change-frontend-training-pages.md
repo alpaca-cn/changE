@@ -1,5 +1,13 @@
 # 前端计划：今日与训练记录页实施计划
 
+> **状态（2026-10-19 补记）**：这份计划的**全部任务已落地并通过测试**——依据是
+> `2026-10-14-change-phase1-overview.md` 的「前端计划：今日与训练记录页」一节（那里记了实测数字）
+> 与当前的测试基线（`mvn -B clean test` → 274 条；`pnpm test` → 176 条）。
+>
+> **但下面每个 Step 的复选框没有在实施时逐条勾选**，这是流程疏漏，不是任务未完成。
+> 补记时**不逐条代勾**——那份工作的每一步我没有逐条验证过，批量打勾只会造出
+> 「已逐条验证」的假象。以总览那一节与测试基线为准。
+
 > **命名**：这**不是**总览里的「计划 4」——**计划 4 是饮食记录与拍照识别**（总览的「计划清单与依赖」表格）。前端的工作按**主题**命名（见总览里「计划 1 与计划 2 之间：Tauri 外壳与 Vue 前端脚手架」那一节），不占计划编号。初稿误用了「计划 4」，2026-10-19 改正。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

@@ -1,5 +1,13 @@
 # 计划 3：训练记录（后端）实施计划
 
+> **状态（2026-10-19 补记）**：这份计划的**全部任务已落地并通过测试**——依据是
+> `2026-10-14-change-phase1-overview.md` 的「计划 3：训练记录（后端）」一节（那里记了实测数字）
+> 与当前的测试基线（`mvn -B clean test` → 274 条；`pnpm test` → 176 条）。
+>
+> **但下面每个 Step 的复选框没有在实施时逐条勾选**，这是流程疏漏，不是任务未完成。
+> 补记时**不逐条代勾**——那份工作的每一步我没有逐条验证过，批量打勾只会造出
+> 「已逐条验证」的假象。以总览那一节与测试基线为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 后端起得来就能记一次完整训练（训练 → 动作 → 组，一个事务且可追溯），能带出某动作「上次练了多重」，能算出「本周每个肌群折算多少组」。
