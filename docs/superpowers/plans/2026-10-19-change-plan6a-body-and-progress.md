@@ -111,7 +111,7 @@ public record Result(long sessionId, int exercises, int sets) {}
 - Create: `backend/src/main/java/com/change/web/BodyMetricController.java`
 - Test: `backend/src/test/java/com/change/service/BodyMetricServiceTest.java`
 
-- [ ] **Step 1: 先读现有的同类实现，照抄风格**
+- [x] **Step 1: 先读现有的同类实现，照抄风格**
 
 **不要凭空写。** 先读这三个文件，把 DTO 放哪、怎么校验、错误怎么抛、`@RestController` 的路径风格全部对齐：
 
@@ -123,7 +123,7 @@ backend/src/main/java/com/change/web/ApiErrors.java
 
 `NutritionController` 的 `POST /api/meals` 是最接近的参照（一个写端点 + 事务 + 逐行审计）。
 
-- [ ] **Step 2: 定 `metric_type` 的词汇（这是本任务唯一需要判断的地方）**
+- [x] **Step 2: 定 `metric_type` 的词汇（这是本任务唯一需要判断的地方）**
 
 `body_metric.metric_type` **没有 CHECK 约束**，只有一句注释。现在有两条路：
 
@@ -190,7 +190,7 @@ public enum MetricType {
 }
 ```
 
-- [ ] **Step 3: 写失败的测试**
+- [x] **Step 3: 写失败的测试**
 
 `BodyMetricServiceTest` 至少覆盖：
 
@@ -203,13 +203,13 @@ public enum MetricType {
 7. 时间线查询：`?type=weight` 只返回 weight 类型，按 `measured_on` 升序
 8. **没有数据时返回空列表，不是 404**
 
-- [ ] **Step 4: 跑测试，确认失败**
+- [x] **Step 4: 跑测试，确认失败**
 
 Run: `cd backend && mvn -B -q -Dtest=BodyMetricServiceTest test`
 
 Expected: 编译失败（`cannot find symbol: class BodyMetricService`）。**贴原始输出。**
 
-- [ ] **Step 5: 写实现**
+- [x] **Step 5: 写实现**
 
 要点：
 
@@ -252,13 +252,13 @@ changeLog.recordInsert("body_metric", id,
 
 > **`after` 的键必须与 `body_metric` 的真实列名一致**（`measured_on` / `metric_type` / `value` / `unit` / `note`）——`write` 会拿 `writableColumns` 逐个校验，写错键名会抛 `IllegalArgumentException`。
 
-- [ ] **Step 6: 跑测试**
+- [x] **Step 6: 跑测试**
 
 Run: `cd backend && mvn -B clean test`
 
 Expected: 全绿，新增条数 = 你写的条数。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 （提交信息说明：为什么 `metric_type` 用 Java 枚举而不是 DB CHECK；为什么同日重复不去重。）
 
@@ -268,7 +268,7 @@ Expected: 全绿，新增条数 = 你写的条数。
 
 **这一步只做前端要用的那层契约确认**——把 Task 1 的三个端点用真实 HTTP 打一遍，确认形状与错误码。
 
-- [ ] **Step 1: 起后端，用真实请求核对**
+- [x] **Step 1: 起后端，用真实请求核对**
 
 ```powershell
 cd backend
@@ -293,7 +293,7 @@ java -jar target/change-backend-0.1.0-SNAPSHOT.jar
 
 > **⚠️ 注意陷阱 7（计划 4a 的教训）**：新库启动时会跑动作库导入与食物 seed，所以 `change_log` 里会有 3,000+ 条 `origin='import'`、`food` 里有 35 条。**断言「整张表为空」是错的**；凡是清理与断言都要收口到 `body_metric` 这一张表。
 
-- [ ] **Step 2: 关掉后端**
+- [x] **Step 2: 关掉后端**
 
 `Stop-Process` 或 Ctrl+C。**确认没有残留的 java 进程。**
 
@@ -306,7 +306,7 @@ java -jar target/change-backend-0.1.0-SNAPSHOT.jar
 - Create: `backend/src/main/java/com/change/web/ProgressController.java`
 - Test: `backend/src/test/java/com/change/service/ProgressServiceTest.java`
 
-- [ ] **Step 1: 定三条序列的口径（写进注释，因为这是会被反复问的事）**
+- [x] **Step 1: 定三条序列的口径（写进注释，因为这是会被反复问的事）**
 
 设计文档：「按动作看力量走势（**估算 1RM / 最大重量 / 总容量**）」。
 
@@ -318,7 +318,7 @@ java -jar target/change-backend-0.1.0-SNAPSHOT.jar
 
 **每条序列都只含「有数据的那天」**——中间没练的日子不补 0。补 0 会让曲线在休息日往下掉，看起来像退步。
 
-- [ ] **Step 2: 写失败的测试**
+- [x] **Step 2: 写失败的测试**
 
 `ProgressServiceTest` 至少覆盖：
 
@@ -331,13 +331,13 @@ java -jar target/change-backend-0.1.0-SNAPSHOT.jar
 7. `per_side = 1` 的组：**重量按记录值算，不乘 2**（左右各记一组是用户的输入方式；乘 2 会静默把吨位翻倍。**如果你认为该乘，报告出来，不要自己改**）
 8. 日期过滤：给了 `from` / `to` 时只返回区间内的点
 
-- [ ] **Step 3: 跑测试，确认失败**
+- [x] **Step 3: 跑测试，确认失败**
 
 Run: `cd backend && mvn -B -q -Dtest=ProgressServiceTest test`
 
 Expected: 编译失败。**贴原始输出。**
 
-- [ ] **Step 4: 写实现**
+- [x] **Step 4: 写实现**
 
 `GET /api/progress/{exerciseId}?from=&to=`：
 
@@ -378,11 +378,11 @@ ORDER BY ws.session_date
 4. 动作不存在 → 抛 `ResponseStatusException(NOT_FOUND, "找不到这个动作: " + id)`，让 `ApiErrors` 翻成 `{error}`。
 5. **不要**缓存（缓存是 Task 4）。
 
-- [ ] **Step 5: 跑测试**
+- [x] **Step 5: 跑测试**
 
 Run: `cd backend && mvn -B clean test`
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ---
 
@@ -395,7 +395,7 @@ Run: `cd backend && mvn -B clean test`
 - Modify: `backend/src/main/java/com/change/service/WorkoutService.java`（`recordSession` 末尾加失效）
 - Test: `backend/src/test/java/com/change/service/ProgressCacheTest.java`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 至少覆盖：
 
@@ -407,9 +407,9 @@ Run: `cd backend && mvn -B clean test`
 
 > 第 5 条是最容易漏的。**key 必须能唯一确定响应**。
 
-- [ ] **Step 2: 跑测试，确认失败**
+- [x] **Step 2: 跑测试，确认失败**
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 1. **key 形状**：`progress:v1:{exerciseId}:{from|_}:{to|_}`。**`v1` 是版本位**——将来改了序列口径，把它改成 `v2` 就能让所有旧缓存自然失效，不需要写「清缓存」的逻辑。
 2. **TTL**：`Duration.ofMinutes(10)`。理由：这是本机单用户，数据只在你录入时变，而录入后会被显式失效；TTL 只是兜底（比如某个写路径忘了失效）。
@@ -418,11 +418,11 @@ Run: `cd backend && mvn -B clean test`
    - 顺序的理由：事务回滚了却失效了缓存，只是白清一次（无害）；反过来（先失效、后回滚）会让缓存里留着该失效的值（有害）。所以「事务提交 → 失效」是正确顺序；同方法内最后一步也满足这一点（提交发生在方法返回时，而那时缓存已清）。
 4. **`CacheService` 的任何方法都不向上抛异常**——所以这里不需要 try/catch（读接口注释确认）。
 
-- [ ] **Step 4: 跑测试**
+- [x] **Step 4: 跑测试**
 
 Run: `cd backend && mvn -B clean test`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 （提交信息说明：为什么 key 带版本位、为什么 TTL 是兜底、为什么失效放在事务之后。）
 
@@ -435,7 +435,7 @@ Run: `cd backend && mvn -B clean test`
 - Modify: `frontend/src/views/BodyDataView.vue`（现在是 394 字符的占位）
 - Test: `frontend/src/api/body.spec.ts`、`frontend/src/views/BodyDataView.spec.ts`
 
-- [ ] **Step 1: 先读现有的前端约定**
+- [x] **Step 1: 先读现有的前端约定**
 
 **不要凭空写。** 读这三个，把客户端怎么调 `api_request`、错误怎么分流、页面怎么用 token、测试怎么 mock `invoke` 全部对齐：
 
@@ -445,7 +445,7 @@ frontend/src/views/TrainingView.vue
 frontend/src/views/DietView.vue
 ```
 
-- [ ] **Step 2: 写失败的测试**
+- [x] **Step 2: 写失败的测试**
 
 `body.ts` 的客户端测试：
 
@@ -463,11 +463,11 @@ frontend/src/views/DietView.vue
 4. 提交非法值（比如负数）时显示**后端给的**错误文案
 5. 类型下拉框的选项来自 `types()`，按枚举顺序
 
-- [ ] **Step 3: 跑测试，确认失败**
+- [x] **Step 3: 跑测试，确认失败**
 
 Run: `cd frontend && pnpm test src/api/body.spec.ts src/views/BodyDataView.spec.ts`
 
-- [ ] **Step 4: 写实现**
+- [x] **Step 4: 写实现**
 
 界面要求（对齐设计文档「九、界面与视觉方向」）：
 
@@ -479,7 +479,7 @@ Run: `cd frontend && pnpm test src/api/body.spec.ts src/views/BodyDataView.spec.
 - 录入区：类型下拉 + 日期（默认今天）+ 数值 + 备注
 - **留白放宽**，用空白而不是卡片边框分组
 
-- [ ] **Step 5: 跑测试 + 构建**
+- [x] **Step 5: 跑测试 + 构建**
 
 Run:
 ```powershell
@@ -490,7 +490,7 @@ pnpm build
 
 Expected: 测试全绿；`pnpm build` **退 0**（`vue-tsc` 会抓 `pnpm test` 抓不到的类型错，比如陷阱 10 的 `as unknown as`）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ---
 
@@ -501,7 +501,7 @@ Expected: 测试全绿；`pnpm build` **退 0**（`vue-tsc` 会抓 `pnpm test` �
 - Modify: `frontend/src/views/ProgressView.vue`（现在是 380 字符的占位）
 - Test: `frontend/src/api/progress.spec.ts`、`frontend/src/views/ProgressView.spec.ts`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 客户端：
 
@@ -517,9 +517,9 @@ Expected: 测试全绿；`pnpm build` **退 0**（`vue-tsc` 会抓 `pnpm test` �
 4. 动作选择器复用「训练记录页」那套（`/api/exercises`），**但可以只显示名字**——不必带肌群
 5. 图表的横轴是日期、按升序
 
-- [ ] **Step 2: 跑测试，确认失败**
+- [x] **Step 2: 跑测试，确认失败**
 
-- [ ] **Step 3: 写实现**
+- [x] **Step 3: 写实现**
 
 图表选型：**用内联 SVG 手绘折线**，不引图表库。
 
@@ -534,7 +534,7 @@ Expected: 测试全绿；`pnpm build` **退 0**（`vue-tsc` 会抓 `pnpm test` �
 - 用 `--accent` 画线，`--line` 画网格
 - 没有任何点时画一条基线 + 文案，**不要画空图**
 
-- [ ] **Step 4: 跑测试 + 构建**
+- [x] **Step 4: 跑测试 + 构建**
 
 Run:
 ```powershell
@@ -543,13 +543,13 @@ pnpm test
 pnpm build
 ```
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ---
 
 ## Task 7: 端到端验收
 
-- [ ] **Step 1: 干净库上跑一遍全链路**
+- [x] **Step 1: 干净库上跑一遍全链路**
 
 ```powershell
 cd backend
@@ -577,28 +577,28 @@ java -jar target/change-backend-0.1.0-SNAPSHOT.jar
 | 10 | 一个没练过的动作 | `points: []`，**不是 404** |
 | 11 | 关掉后端 | 无残留 java 进程 |
 
-- [ ] **Step 2: 把结果记进总览**
+- [x] **Step 2: 把结果记进总览**
 
 在 `docs/superpowers/plans/2026-10-14-change-phase1-overview.md` 的「计划 4a」之后插入一节「## 计划 6a：身体数据与进步曲线」，写清实际数字与两条口径决定（`metric_type` 用 Java 枚举、`per_side` 不乘 2）。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ---
 
 ## 完成标准
 
-- [ ] `cd backend && mvn -B clean test` 全绿，**报告实际条数**（基线 274）
-- [ ] `cd frontend && pnpm test` 全绿（基线 176）；`pnpm build` 退 0
-- [ ] `POST /api/body-metrics` 不给 `unit` 时按类型填默认单位
-- [ ] 非法 `metricType` → 400 且消息**含合法值列表**
-- [ ] 同一天同一类型录两次 → **两条都留下**
-- [ ] `GET /api/body-metrics?type=不存在` → `[]`（不是 400）
-- [ ] `GET /api/progress/{id}` 返回三条序列，只含 `completed=1` 且 weight/reps 都非空的组
-- [ ] **没练过的动作 → `points: []`；不存在的动作 → 404**（两者区分开）
-- [ ] 写训练后立刻查 progress 能拿到新值（**失效实测**）
-- [ ] Redis 关掉时两个端点照常工作
-- [ ] 前端两页的颜色**全部**来自 `theme.css` 的 token（`grep -c 'var(--'` 大于 0，且没有 `#` 十六进制字面量）
-- [ ] `git status --short` 无输出
+- [x] `cd backend && mvn -B clean test` 全绿，**报告实际条数**（基线 274）
+- [x] `cd frontend && pnpm test` 全绿（基线 176）；`pnpm build` 退 0
+- [x] `POST /api/body-metrics` 不给 `unit` 时按类型填默认单位
+- [x] 非法 `metricType` → 400 且消息**含合法值列表**
+- [x] 同一天同一类型录两次 → **两条都留下**
+- [x] `GET /api/body-metrics?type=不存在` → `[]`（不是 400）
+- [x] `GET /api/progress/{id}` 返回三条序列，只含 `completed=1` 且 weight/reps 都非空的组
+- [x] **没练过的动作 → `points: []`；不存在的动作 → 404**（两者区分开）
+- [x] 写训练后立刻查 progress 能拿到新值（**失效实测**）
+- [x] Redis 关掉时两个端点照常工作
+- [x] 前端两页的颜色**全部**来自 `theme.css` 的 token（`grep -c 'var(--'` 大于 0，且没有 `#` 十六进制字面量）
+- [x] `git status --short` 无输出
 
 ## 风险与未知
 

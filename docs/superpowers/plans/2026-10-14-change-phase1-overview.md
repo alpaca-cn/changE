@@ -246,6 +246,63 @@ CSP 随之收紧成 `connect-src 'self'`。复测后状态栏右侧是 `缓存�
 
 1. **真机 GUI 逐条核对（Task 6 Step 2 的 8 条）没做**——本会话没有可视窗口，而前端访问后端全靠 `invoke`，纯浏览器里跑不起来（没有 Tauri 运行时）。**能自动化的那一半已经做了**（上面那条 headless 代理 e2e，覆盖的正是「代理接错了就整条链路瘫掉」的那部分）；剩下的跳路由 / 渲染 / 点按钮属于 jsdom 组件测试的范围，而**「打开一个真窗口、把界面上的字读出来」仍然待人工执行**：`cd backend; mvn -B -q -DskipTests package`，然后 `cd frontend; pnpm tauri dev`。
 
+## 计划 6a：身体数据与进步曲线
+
+> 完整计划：`docs/superpowers/plans/2026-10-19-change-plan6a-body-and-progress.md`
+> 状态：**7 个任务全部完成**（2026-10-19，分支 `feature/plan6a-body-progress`）
+> 拆分说明：设计文档的「计划 6」含三件事，按项目已有的拆分先例拆成 **6a（身体数据 + 进步曲线）** 与 **6b（人体图 2D）**——后者要先解决 SVG 素材与 27 个 region 的映射那件纯手工活，不该让两个纯数据的页面等它。
+
+**做完之后有了什么**：
+
+- `POST/GET /api/body-metrics` + `GET /api/body-metrics/types`：体重 / 体脂 / 7 处围度的录入与时间线
+- `GET /api/progress/{exerciseId}`：一个动作按训练日的**三条序列**（估算 1RM / 最大重量 / 总吨位）
+- 进步曲线走 `CacheService` 缓存（设计文档点名的场景），写训练后按 `progress:` 前缀失效
+- 前端两页：「身体数据」（九型当前值卡片 + 倒序时间线 + 录入）与「进步曲线」（三条内联 SVG 折线）
+
+**实测数字**（不是估计）：
+
+| 项 | 值 |
+|---|---|
+| 后端测试 | `mvn -B clean test` → **315 条**，0 失败 1 skipped（本计划新增：BodyMetric 19 / Progress 12 / ProgressCache 7 / ProgressController 3 / CacheService +1） |
+| 前端测试 | `pnpm test` → **216 条 / 20 文件**；`pnpm build` → 退 0 |
+| 缓存键 | `progress:v1:{exerciseId}:{from\|_}:{to\|_}`，TTL 10 分钟（兜底，主失效是写后清前缀） |
+| 审计 | 写身体数据留一条 `change_log`（`body_metric` 本就在 `ALLOWED_TABLES` 里），快照含 `note` |
+
+**干净库端到端实跑**（2026-10-19，`java -jar`，`CHANGE_DATA_DIR` 指向临时目录）：**11 条全部满足**。
+
+启动日志依次出现 `动作库导入：新增 876` → `动作中文名：写入 876` → `食物库：写入 35 条` → `CHANGE_PORT`（`Started` 6.6 秒，到 `CHANGE_PORT` 12.6 秒）。随后：
+
+| # | 实测 |
+|---|---|
+| 2 | 新库 `GET /api/body-metrics?type=weight` → `200 []` |
+| 3 | `POST` 体重 72.5 → `{"id":1}` |
+| 4 | `POST` 腰围 80 **不给 unit** → 库里 `unit='cm'` |
+| 5 | `POST` 非法类型 → `400 {"error":"metricType 不合法：gremlin（合法值 [weight, body_fat, waist, chest, hip, arm, thigh, calf, shoulder]）"}` |
+| 6 | 录两次训练（`#364 JM 卧推`，10-14 60×8 / 10-17 65×6）→ 各自成功 |
+| 7 | `GET /api/progress/364` → 两天，`e1rm` 76.0 → 78.0、`maxWeight` 60 → 65、`totalVolume` 480 → 390 |
+| 8 | 再录 10-19 的 80×3 → 立刻查到第三天，`e1rm=88.0` |
+| 9 | `GET /api/progress/99999999` → `404 {"error":"找不到这个动作: 99999999"}` |
+| 10 | 没练过的 `#815 T 杠划船（带握把）` → `200 points:[]`（**不是 404**） |
+| 11 | 关掉后 `change-backend` 的 java 进程 **0 个**、端口已释放 |
+
+> ⚠️ **第 8 条在本次实跑里是恒真的**：Redis 关着 → `CacheService` 是 `NoOpCacheService` → 没有缓存，读当然永远新鲜。**真正的失效证明在 `ProgressCacheTest`**（用测试自己的内存版 cache，断言 `invalidatePrefix("progress:")` 真的被调用、且缓存真被清空；删掉那行失效调用会让它变红）。在这里标注，是因为「有缓存时也新鲜」和「没缓存所以新鲜」是两件事。
+
+**两条口径决定**（写进计划并配了测试）：
+
+1. **`metric_type` 用 Java 枚举、不加 DB CHECK**：它是**开放词汇**（设计文档的列注释 `weight / body_fat / waist / arm / ...` 里那个 `...` 是有意的）。钉死 CHECK 会让每次加「小腿围」「肩宽」都要写迁移。
+2. **`per_side = 1` 的组重量不乘 2**：左右各记一组是用户的输入方式；乘 2 会**静默**把吨位翻倍。
+
+**实施修正 13 条**见计划文档那一节。其中三条是**计划在落地时被现实修正**，不是实施者做错：
+
+- 第 6 条：`RedisCacheService` 用裸 `ObjectMapper`，对 `LocalDate` 抛异常，而 `put` 的序列化失败**被设计成吞掉** → **缓存看着完全正常、永远存不进去、`get` 永远 miss**。计划没预见到。
+- 第 7 条：类型下拉「选项来自 `types()`」是个**死锁**——`types()` 只含记过的类型，全新库是 `[]`，照字面做第一条体重永远录不进去。
+- 第 10 条：我以为「把真实 JSON 贴进前端测试」能杀掉「后端改名」这个变异。**实测杀不掉**——静态快照原理上不随生产者变化。真正守住跨语言契约的是后端那条 `ProgressControllerTest`（键集合 + 原始正文 + `"e1rm":null` 必须存在）。
+
+**仍未做 / 需要人工**：
+
+1. **真机 GUI 逐条核对**：`cd backend; mvn -B -q -DskipTests package` → `cd frontend; pnpm tauri dev`，然后看两页的实际渲染（时间线、三条折线、空态文案）。能自动化的那一半已经做了（上面 11 条 + 216 条前端测试），但「打开真窗口把界面上的字读出来」仍需人工。
+2. **前端 `METRIC_TYPES` / `METRIC_DEFAULT_UNITS` 是后端 `MetricType` 的第二份手写副本**：当前逐字一致（已用脚本核对 9 个 id、同序、同默认单位），但**没有任何东西阻止它们漂移**。正解是后端暴露一个「已知类型清单」端点；触发条件是「第一次真的要加第 10 个类型时」。
+
 ## 已完成的前置验证
 
 `spike/` 目录已实测通过（2026-10-14），本计划不再重复：
