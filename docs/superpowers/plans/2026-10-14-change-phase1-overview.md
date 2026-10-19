@@ -139,6 +139,54 @@ CSP 随之收紧成 `connect-src 'self'`。复测后状态栏右侧是 `缓存�
 
 **仍未做**：前端「今日 / 训练记录」两页——另起一份计划（`TodayView.vue` / `TrainingView.vue` 仍是占位页）。后端**没有**训练的删除/修改端点（设计的安全线是「只增改不删」）。
 
+## 计划 4：前端「今日」与「训练记录」
+
+> 完整计划：`docs/superpowers/plans/2026-10-19-change-frontend-training-pages.md`
+> 状态：**Task 1–5 已完成**（2026-10-19 提交 `4efdde6` / `43a2b98` / `08eb227` / `bd58e4c` / `523cbf6`）；Task 6 见下「真机验收」与「仍未做」
+
+**跨源怎么定的（计划 4 的第一节，必须先定）**：沿用计划 1 Task 8 的结论——**前端不发任何 HTTP**。把外壳那条「只会 GET /api/health」的代发扩展成**通用代理命令** `api_request(method, path, body?)`（`src-tauri/src/http.rs` 的 `build_request` / `validate_path` / `parse_api_response`），前端只 `invoke`。**后端零改动、CSP 仍是 `connect-src 'self'`、capabilities 未动。**
+
+三条实现上的取舍（都有测试钉住）：
+
+| 取舍 | 理由 |
+|---|---|
+| 任何状态码都是 `Ok`，只有传输失败才是 `Err` | 前端要按状态码分流：400 显示服务端那句中文校验文案、404 显示「找不到」、204 显示「这个动作没做过」。压成一句错误消息，这三条就再也分不开 |
+| `parse_api_response` **不做**「正文是空的」检查 | 与 `parse_health_response` 的契约**不同**：204 与 5xx 都可能没有正文，而「没做过这个动作」就是 `204 + 空正文`，判成错误会把一个正常状态变成吓人的失败 |
+| `API_TIMEOUT = 10s`（不是健康检查的 2s） | 写一次训练要落库，2 秒太紧 |
+| `path` 拦掉 `\r` `\n` 空格 | 请求行/头注入的守门点（`validate_path`） |
+
+**容量口径在界面上的落地**：17 块肌群**全部渲染**（含 0 组的）——`VolumePanel` 的变异实测：给列表加 `.filter(x => x.sets > 0)`，恰好 3 条变红。状态用 `--ok/--warn/--danger/--muted-strong` 四个新语义色，且**颜色之外还有文字**（「偏少」「本周 0 组」「未设目标」），色盲用户也读得出。
+
+**测试数字（2026-10-19 实测）**：
+
+| 命令 | 计划 4 之前 | 现在 |
+|---|---|---|
+| `cd frontend && pnpm test` | 50 passed（8 files） | **125 passed（13 files）** |
+| `cd frontend && pnpm build` | 退 0 | 退 0（`built in 725ms`） |
+| `cd frontend/src-tauri && cargo test` | 76 passed + 4 integration，2 ignored | **93 passed + 4 integration，3 ignored**（新增的 `api_request` 纯函数测试 + 1 条真机 e2e） |
+
+变异实测（新增的守卫逐个改坏再还原）：通用代理 3 处 → 恰好 5 条红；容量面板隐藏 0 组 → 3 条红；`toNumber('')` 返回 `0` 与「预填就打勾」→ 恰好 6 条红。全部还原后全绿。
+
+**真机链路验收（headless，2026-10-19）**：`cargo test end_to_end_proxy -- --ignored --nocapture` 真的拉起后端 jar，用**外壳自己的传输代码**（`http::api_request`）走一遍。真实输出：
+
+- `spawn → 就绪用了 5.63 秒`
+- `GET /api/volume/weekly` → **200**，耗时 **223 ms**，`muscles` 17 条、`muscles[0].nameZh == "胸部"`
+- `GET /api/exercises?q=%E5%8D%A7%E6%8E%A8&limit=1` → **200**，命中 `JM Press`（**查询串与百分号编码原样穿过代理**）
+- `GET /api/exercises/999999/last-performance` → **204**，正文是空串（不是 `'0'`、不是 `'[]'`）
+- `POST /api/sessions`（非法体）→ **400** `{"error":"一次训练至少要有 1 个动作"}`（**body 与 `Content-Length` 真的被后端读并解析了**）
+- `GET /api/sessions/999999` → **404**，而且**是 `Ok` 不是 `Err`**
+
+**真机发现的一个缺口（未修，登记在案）**：上面那条 404 的正文是 Spring 的默认错误体——
+`{"timestamp":…,"status":404,"error":"Not Found","path":"/api/sessions/999999"}`。
+`TrainingController` 抛的 `ResponseStatusException(404, "找不到这次训练: n")` 里**那句中文原因根本没有出现**（Spring 默认 `server.error.include-message=never`）。所以前端能拿到的只有英文的 `Not Found`。
+**两处一起改才有效**：① 后端 `application.yml` 加 `server.error.include-message: always`；② 前端 `callApi` 在 `error` 之外也读 `message`。
+计划 4 明写「不动后端」，所以本轮**只记录不改**；`TrainingView.spec.ts` 里那条测试用**真机原文**断言了真实（不理想的）行为，谁补齐它就会红。
+
+**仍未做 / 需要人工**：
+
+1. **真机 GUI 逐条核对（计划 4 Task 6 Step 2 的 8 条）没做**——本会话没有可视窗口，而前端访问后端全靠 `invoke`，纯浏览器里跑不起来（没有 Tauri 运行时）。**能自动化的那一半已经做了**（上面那条 headless 代理 e2e，覆盖的正是「代理接错了就整条链路瘫掉」的那部分）；剩下的跳路由 / 渲染 / 点按钮属于 jsdom 组件测试的范围，而**「打开一个真窗口、把界面上的字读出来」仍然待人工执行**：`cd backend; mvn -B -q -DskipTests package`，然后 `cd frontend; pnpm tauri dev`。
+2. 上面那条 404 文案缺口（两处一起改）。
+
 ## 已完成的前置验证
 
 `spike/` 目录已实测通过（2026-10-14），本计划不再重复：

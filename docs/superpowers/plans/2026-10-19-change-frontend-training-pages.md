@@ -787,3 +787,43 @@ git commit -m "docs: 总览补计划 4 前端的实测结果"
 - **不做离线缓存 / 乐观更新**——本地服务，先要正确
 - **不做昼夜主题、不做图表库**——设计文档封板「只做深色主题」；容量用文字 + 颜色，不引图表依赖
 - **不动后端**：不加 CORS、不加端点、不改迁移
+
+---
+
+## 实施修正（2026-10-19，实现过程中发现，逐条对照上文）
+
+计划自己也会失真——这一节记下**实际做的时候**与上面写的不一样的地方，以及原因。
+
+1. **404 的中文原因到不了前端（真机发现，未修）。** 上面 Task 5 的测试里写的是
+   「404 → 文本含『找不到这次训练』」。真机实测（headless 代理 e2e，见 backend.rs）拿到的
+   404 正文是 Spring 的**默认错误体**：`{"timestamp":…,"status":404,"error":"Not Found","path":…}`
+   ——`TrainingController` 那句中文 reason **根本不出现**（Spring 默认
+   `server.error.include-message=never`）。
+   **要两处一起改**：① 后端 `server.error.include-message: always`；② 前端 `callApi`
+   在 `error` 之外也读 `message`。本计划明写「不动后端」，所以**只记录不改**；
+   `TrainingView.spec.ts` 那条测试改成用**真机原文**断言真实行为（含 `Not Found`），
+   谁补齐上面两处它就会红——那是它该做的事。
+2. **0 组肌群的样本选错了。** 上面 Task 4 写「其中 `abdominals` 是 0 组/`UNTRAINED`」。
+   按真机夹具（地板卧推的**次要**肌群是腹直肌与肱三头肌），`abdominals` 实际是
+   **1.0/BELOW**。0 组的样本改用 **`lats`（背阔肌，0.0/UNTRAINED）**，
+   没配目标的样本仍是 `neck`（null/NOT_CONFIGURED）。夹具本身是从真后端抓的，不是手写。
+3. **`parse_api_response` 的 204 提前返回是死代码（E 型）。** 初版写的是先判
+   `if code == 204 { return 空 }`。实测发现：没有那段，204 也一样得到空 body
+   （空正文本来就是合法的 UTF-8），所以**没有任何测试能杀掉它**——典型
+   「死代码冒充保护」。改成：**不做任何正文校验**（与 `parse_health_response` 的契约不同），
+   并补一条「非 204 的空正文也必须 `Ok`」的测试。这样那两条 204 测试才真正是
+   「有人照抄 health 那条空正文检查」的杀手（变异实测：加回检查 → 3 条红）。
+4. **注册表测试改名，并要求注册表保持单行。** `both_commands_are_registered_in_the_invoke_handler`
+   → `every_command_is_registered_in_the_invoke_handler`（现在是三条命令）。它是按
+   `lines().find(...)` 读**一行**的，所以 `generate_handler![...]` 必须写在一行里——
+   拆成多行会让它读不到命令名而变红。已在 `lib.rs` 的注册表上方注明。
+5. **Task 6 Step 2「真机开窗口读界面上的字」没执行。** 本会话没有可视窗口，而前端访问后端
+   全靠 `invoke`，纯浏览器里跑不起来。**能自动化的那一半做了**：新增 `#[ignore]` 的
+   `end_to_end_proxy_reads_and_reports_statuses_from_the_real_backend`，真的拉起 jar、
+   用外壳自己的传输代码核对 200/204/400/404 与查询串穿透——这正是「代理接错了整条链路就瘫」
+   的那部分。**GUI 的 8 条仍待人工**（`pnpm tauri dev`）。
+6. **写入路径的 e2e 只覆盖到 400。** `Backend::spawn` 不设 `CHANGE_DATA_DIR`，会落到使用者
+   **真实的库**；成功的写入会把一次训练留在别人的数据里，所以那条 e2e 里刻意不写成功。
+   写入路径中属于外壳的部分（POST + `Content-Length` + body）由 400 覆盖——Spring 必须真的
+   把请求体读进来解析过才回得出那句校验文案。成功写入多出来的是后端事务行为，由计划 3 覆盖。
+
