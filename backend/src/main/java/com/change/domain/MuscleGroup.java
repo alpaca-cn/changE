@@ -9,7 +9,7 @@ import jakarta.persistence.Table;
 
 /**
  * 一块肌群。种子数据见 {@link com.change.seed.MuscleGroupSeed}，
- * 库里的 17 行来自迁移 {@code V8__muscle_group_seed.sql}（由那份种子代码生成）。
+ * 库里的 17 行来自迁移 {@code V7__muscle_group_seed.sql}（由那份种子代码生成）。
  *
  * <p>{@code regionIds} 是**逗号分隔的字符串**而不是数组：SQLite 没有数组类型，
  * 而这张表的读取路径是「一次取 17 行、在内存里按需拆」——为它单独建一张
