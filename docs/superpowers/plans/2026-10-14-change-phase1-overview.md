@@ -105,6 +105,40 @@ CSP 随之收紧成 `connect-src 'self'`。复测后状态栏右侧是 `缓存�
 2. **`unimport()` 的入口已定，而且撤销后重启不会复活**（2026-10-18）：入口是 HTTP 端点 `POST /api/exercises/unimport`（配套 `GET /api/exercises/status`、`POST /api/exercises/import`）。同时改了启动策略——动作库**只自动安装一次**：`ExerciseImportService.shouldInstallOnStartup()` 要求「库里没有导入的动作 **且** 从没撤销过」，后者读的是 `unimport()` 写下的那条汇总日志（**不需要新表**）。实测：导入 → `POST /unimport` → 重启 → 启动日志「动作库：已安装（或已被撤销），跳过启动导入」、`imported=0`；只有显式 `POST /import` 才装回来（并连中文名一起写）。注意 `unimport` 是**物理删除**导入的动作 + 留一条可追溯的汇总日志，和逐个动作的 `archived`（隐藏、但仍要能被旧记录解析）是两回事。
 3. **Task 8 核对清单第 6 条的措辞过时**：写的是 `origin='IMPORT'`，实际存的是小写 `'import'`（`change_log.origin` 的 CHECK 是小写）。第 1–7 条现已可在真实应用上核对（见上面的端到端实跑）；第 8、9 条（触发 `unimport()`）见上一条。
 
+## 计划 3：训练记录（后端）
+
+> 完整计划：`docs/superpowers/plans/2026-10-18-change-plan3-training.md`
+> 状态：**Task 1–7 全部完成**（2026-10-18 提交 `faf2e0b` / `e06876b` / `dc86e41` / `1e8229c` / `135bd3b` / `7e119f3`；Task 7 端到端验收 2026-10-19）
+
+**三条读侧数字的口径**（记一次训练之外的三个数字都从这里来，都要「答得准」而不只是「算得出」）：
+
+1. **「上次重量」里的「上次」= 按训练日期，不是按记录 id。** SQL 的排序键是 `workout_session.session_date DESC, s.id DESC, se.order_index ASC`（`LastPerformanceService`）——取「**包含这个动作的、最近的那次训练**」的那个动作，再把它的组按 `set_index` 升序给出。从没做过 → **204**（不是 404：「没做过」不是错误）。日期在 `workout_session`、动作在 `session_exercise`，跨表排序派生方法名表达不了，所以这一条走 SQL，组本身仍走派生查询。
+2. **周容量 = 主肌群 +1 / 次肌群 +0.5，自然周（周一起算），只算 `completed = 1`。** 没打勾的组是「还没做/没记」，不是训练量。返回**固定 17 块**肌群（含 0 组的）——「腹/核心本周 0 组」这类提醒必须以 0 出现，不能从列表里悄悄消失。`neck` 的区间是 null → `NOT_CONFIGURED`，与「练了 0 组」的 `UNTRAINED` 是**两个事实**。
+3. **动作选择器默认排除 `stretching`。** `category` 给定时精确匹配；不给定时**只**滤掉拉伸——其余分类（`olympic weightlifting` 的抓举/挺举等）都保留。`limit` 默认 50、封顶 200。文本搜索复用 `ExerciseRepo` 既有的两个派生查询（计划 2 刚修过 `archived` 过滤，这里是它们的第一个真实调用方）。
+
+**干净库端到端实跑**（2026-10-19，`java -jar` + Python 直接打 HTTP 与只读 SQLite；`CHANGE_DATA_DIR` 指向临时目录；本次的「今天」= 2026-10-19，**周一**）：
+
+启动日志：Flyway 依次应用 **V1–V8**（`now at version v8`）→ `动作库导入：新增 876 个动作 / 跳过 0 个 / 写入 2587 条肌群标注` → `动作中文名：写入 876 …` → `CHANGE_PORT=53100`。应用启动 **4.642 秒**。
+
+| # | 请求 | 实测结果 |
+|---|---|---|
+| 1 | `POST /api/sessions`（动作 = id 16 `交替地板卧推`；3 组：2 组「60×8 已完成」+ 1 组未完成） | **200** `{"sessionId":1,"exercises":1,"sets":3}` |
+| 2 | `GET /api/sessions/recent` | **200** `[{"id":1,"sessionDate":"2026-10-19","title":"胸 + 三头","perceivedState":"睡得好"}]` |
+| 3 | `GET /api/sessions/1` | **200**，`exercises[0].sets` 长度 3、`setIndex` 为 0/1/2（升序）；`startedAt` = `"2026-10-19T19:30:00"`。`GET /api/sessions/999999` → **404** |
+| 4 | `GET /api/exercises/16/last-performance` | **200** `{"sessionDate":"2026-10-19","sessionExerciseId":1,"sets":[{"weight":60.0,"repetitions":8},…,{"weight":null,"repetitions":null}]}` |
+| 5 | `GET /api/volume/weekly?date=2026-10-19` | **200** `weekStart=2026-10-19`、`weekEnd=2026-10-25`、`muscles` 长度 **17**；`chest` = **2.0**（主 +1×2）、`triceps` = **1.0**（次 +0.5×2），两者 status 均 `BELOW`（区间 10–20 / 6–14）。**3 组里只有 2 组完成 → 容量是 2.0 而不是 3.0，「只算 completed」在真实数据上成立** |
+| 6 | `SELECT COUNT(*) FROM change_log WHERE origin='user'` | **5**（`workout_session` 1 + `session_exercise` 1 + `workout_set` 3）。`after_json` 里的日期/时间戳全是字符串：`{"session_date":"2026-10-19","started_at":"2026-10-19T19:30",…}` |
+| 7 | **再启动一次**（库已存在） | 日志 `动作库：已安装（或已被撤销），跳过启动导入` / `动作中文名：都已写好，跳过`；`GET /api/sessions/recent` 仍有那次（新端口 53118）。**没有重现导入** |
+| 8 | `GET /api/volume/weekly?date=2026-08-20`（别的周） | **200**，17 块全部 0 组、状态集合 `{NOT_CONFIGURED, UNTRAINED}`（**不是 500**）。`?date=2026/10/14` → **400** |
+
+**顺带核实的两个风险点**（都在风险表里点名过）：
+- `workout_session.started_at` 落库是 `'2026-10-19T19:30'` —— 可读的 ISO 串，**不是**纪元毫秒，`@JdbcTypeCode` 映射生效（`started_at` 列没有 CHECK，写错会是**静默**的，所以这条只能靠真库读出）。
+- `change_log` 快照里的日期/时间戳全是字符串（`ChangeLogService` 的 `ObjectMapper` 没注册 `JavaTimeModule`，放 `java.time` 对象会在**记日志**那一步抛异常，把整次记录弄失败）。
+
+**测试**：`mvn -B clean test` → **213 条、0 失败、1 skipped**（本计划开始时是 190 条）。**无新迁移**：迁移仍是 V1–V8、连续无缺口。
+
+**仍未做**：前端「今日 / 训练记录」两页——另起一份计划（`TodayView.vue` / `TrainingView.vue` 仍是占位页）。后端**没有**训练的删除/修改端点（设计的安全线是「只增改不删」）。
+
 ## 已完成的前置验证
 
 `spike/` 目录已实测通过（2026-10-14），本计划不再重复：
