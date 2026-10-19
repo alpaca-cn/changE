@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import TodayView from './TodayView.vue'
 import { RECENT, WEEKLY_17 } from '../api/__fixtures__/training-responses'
+import { DAILY, EMPTY_DAY } from '../api/__fixtures__/nutrition-responses'
 
 // 今日页不直接发请求：它调 `api/training.ts`，那边才 `invoke('api_request')`。
 // 所以这里 mock 的仍是 `invoke`，按 **path** 分派——笼统的 mockResolvedValue 会让
@@ -27,11 +28,12 @@ function dispatch(map: Record<string, Reply>) {
   })
 }
 
-/** 正常的两个端点。 */
+/** 正常的三个端点。 */
 function okMap(overrides: Record<string, Reply> = {}): Record<string, Reply> {
   return {
     '/api/volume/weekly': { status: 200, body: WEEKLY_17 },
     '/api/sessions/recent': { status: 200, body: RECENT },
+    '/api/nutrition/daily': { status: 200, body: DAILY },
     ...overrides,
   }
 }
@@ -155,6 +157,50 @@ describe('今日页 · 失败不能白屏', () => {
     // 两个请求各自 try/catch：容量挂了，最近训练照样显示。
     const { wrapper } = await mountToday(okMap({ '/api/volume/weekly': 'reject' }))
     expect(wrapper.find('.volume').text()).toContain('连不上')
+    expect(wrapper.find('.sessions').text()).toContain('胸 + 三头')
+  })
+})
+
+describe('今日页 · 今天吃了多少', () => {
+  it('shows_the_intake_from_the_backend', async () => {
+    const { wrapper } = await mountToday(okMap())
+    const intake = wrapper.find('.intake')
+
+    expect(intake.text()).toContain('421.5')
+    expect(intake.text()).toContain('千卡')
+    expect(intake.text()).toContain('50.4')
+    expect(intake.text()).toContain('1 餐')
+    expect(intake.text()).toContain('2 条目')
+  })
+
+  it('an_empty_day_shows_zeros_rather_than_nothing', async () => {
+    // 「今天还没吃」是刚装上时的常态：显示 0，不是空白，也不是错误。
+    const { wrapper } = await mountToday(okMap({ '/api/nutrition/daily': { status: 200, body: EMPTY_DAY } }))
+    const intake = wrapper.find('.intake')
+
+    expect(intake.text()).toContain('0 千卡')
+    expect(intake.text()).toContain('0 餐')
+    expect(intake.find('.err').exists()).toBe(false)
+  })
+
+  it('does_not_ask_for_a_specific_date', async () => {
+    // 「今天」由后端决定：前端自己算日期会在跨零点/跨时区时和后端不一致。
+    const { wrapper } = await mountToday(okMap())
+    await flushPromises()
+    expect(wrapper.find('.intake').exists()).toBe(true)
+    // 断言请求路径里没有 date 参数
+    const call = invokeMock.mock.calls.find(
+      (c) => (c[1] as { path: string }).path.startsWith('/api/nutrition/daily'),
+    )
+    expect((call![1] as { path: string }).path).toBe('/api/nutrition/daily')
+  })
+
+  it('an_intake_failure_is_isolated_from_the_training_panels', async () => {
+    const { wrapper } = await mountToday(okMap({ '/api/nutrition/daily': 'reject' }))
+
+    expect(wrapper.find('.intake').text()).toContain('连不上')
+    // 训练那两块照常
+    expect(wrapper.find('.volume').text()).toContain('胸部')
     expect(wrapper.find('.sessions').text()).toContain('胸 + 三头')
   })
 })
