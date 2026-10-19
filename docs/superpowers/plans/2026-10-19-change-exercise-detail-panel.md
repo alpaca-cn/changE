@@ -181,7 +181,9 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 4. 输出 `seed/instructions-zh.json`（`{"<nameEn>": ["段1","段2",...]}`，键按数据集顺序）
 5. 打印：总条数、总段落数、与英文原文的覆盖率（应为 876/876）
 
-**英文原文从哪拿**：`E:\devtools\cache\fedb\exercises.json`（若已不在，按计划 2 的镜像地址重新下载；`fastly.jsdelivr.net`）。
+**英文原文从哪拿**：**仓库里已经 vendor 好了**——`backend/src/main/resources/seed/free-exercise-db/exercises.json`（计划 2 · Task 3 放的，1,005,327 字节、876 条）。**不要**去读 `E:\devtools\cache\fedb\` 那个临时缓存（它随时可能被清掉，而且不该出现在任何脚本里）。
+
+同理，`schema.json` 与 `LICENSE.md` 也在那个目录下。
 
 - [ ] **Step 3: 写校验测试**
 
