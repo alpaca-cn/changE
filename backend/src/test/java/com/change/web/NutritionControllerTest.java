@@ -218,6 +218,33 @@ class NutritionControllerTest {
                 .andExpect(jsonPath("$.error").exists());
     }
 
+    // ---- 食物搜索（Task 5）----
+
+    @Test
+    void lists_foods_through_the_api() throws Exception {
+        newFood("ZZ Ctrl 选择器", null, 0);
+
+        mvc.perform(get("/api/foods").param("q", "ZZ Ctrl 选择器"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].nameZh").value("ZZ Ctrl 选择器"))
+                // 每 100 克的值必须跟着回来：前端预览要用，少一个界面会显示 NaN
+                .andExpect(jsonPath("$[0].per100.kcal").value(100.0))
+                .andExpect(jsonPath("$[0].per100.sodium").value(300.0))
+                .andExpect(jsonPath("$[0].portions").isArray());
+    }
+
+    @Test
+    void a_food_carries_its_portions_so_the_client_can_preview() throws Exception {
+        // 「1 碗 = 150 克」这一条是**预览**用的：入库的克数仍由后端算，
+        // 但界面要在录入时就把大概热量显示出来。
+        newFood("ZZ Ctrl 预览", "碗", 150);
+
+        mvc.perform(get("/api/foods").param("q", "ZZ Ctrl 预览"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].portions[0].unitName").value("碗"))
+                .andExpect(jsonPath("$[0].portions[0].grams").value(150.0));
+    }
+
     private void assertCount(String table, int expected) {
         Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class);
         org.assertj.core.api.Assertions.assertThat(n)

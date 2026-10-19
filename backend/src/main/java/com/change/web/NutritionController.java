@@ -1,5 +1,6 @@
 package com.change.web;
 
+import com.change.service.FoodQueryService;
 import com.change.service.NutritionService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -31,9 +32,22 @@ import java.util.List;
 public class NutritionController {
 
     private final NutritionService nutrition;
+    private final FoodQueryService foodQuery;
 
-    public NutritionController(NutritionService nutrition) {
+    public NutritionController(NutritionService nutrition, FoodQueryService foodQuery) {
         this.nutrition = nutrition;
+        this.foodQuery = foodQuery;
+    }
+
+    /**
+     * 搜食物（选择器）。返回的每一条都带每 100 克营养值与份量单位——
+     * 前端靠这两样在录入时**预览**热量；真正入库的克数仍由后端算。
+     */
+    @GetMapping("/foods")
+    public List<FoodQueryService.FoodSummary> foods(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Integer limit) {
+        return foodQuery.search(q, limit);
     }
 
     /** 记一餐。请求体见 {@link NutritionService.MealInput}——**注意没有 grams 字段**。 */

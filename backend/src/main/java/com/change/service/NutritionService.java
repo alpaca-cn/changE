@@ -216,8 +216,15 @@ public class NutritionService {
                 .toList();
     }
 
-    /** 食物的每 100 克基准值。变量名带 per100 前缀是 {@code calc} 包的约定。 */
-    static Nutrition per100(Food food) {
+    /**
+     * 食物的每 100 克基准值。变量名带 per100 前缀是 {@code calc} 包的约定。
+     *
+     * <p>{@code public} 是给 {@link FoodQueryService} 用的：**只有这一处**知道
+     * 「{@code food} 的六列 ↔ {@code Nutrition} 的六个分量」这个对应关系。
+     * 让它多一份拷贝就等于多一个「某列接错了而没人发现」的机会——六个 double 参数
+     * 挨在一起，写反两个位置不会有任何编译错误。
+     */
+    public static Nutrition per100(Food food) {
         return new Nutrition(food.kcalPer100, food.proteinPer100, food.carbPer100,
                 food.fatPer100, food.fiberPer100, food.sodiumPer100);
     }
