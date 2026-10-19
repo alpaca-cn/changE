@@ -1,0 +1,44 @@
+{
+  "_note": "⚠️ 这里每 100 克的六项数值都是**近似值**，取自常见公开资料的量级，由智能体填写、**未经逐条核对**。中国食物成分表的转录版有版权、不可再分发（设计文档明确要求分发版排除它），所以本项目随包只带这一份手工近似值。设计文档对精度的定位是「不需要太精准，大致热量即可；精度不是目标，可修正是」——请把手上的数字当量级看，需要精确时直接改这张表（食物库不做管理界面，改数据即可）。每条的 portions 是常用份量（碗/个/根），单位名与克数都可以改。source 一律是 manual：任何一条都**不许**写成 cn-food-table，那会谎称数据来自不可分发的成分表。",
+  "foods": [
+    { "nameZh": "白米饭",     "nameEn": "cooked white rice",  "per100": { "kcal": 116, "protein": 2.6,  "carb": 25.9, "fat": 0.3,   "fiber": 0.3,  "sodium": 2 },   "portions": [ { "unitName": "碗", "grams": 150 } ] },
+    { "nameZh": "馒头",       "nameEn": "steamed bun",        "per100": { "kcal": 223, "protein": 7.0,  "carb": 47.0, "fat": 1.1,   "fiber": 1.3,  "sodium": 165 }, "portions": [ { "unitName": "个", "grams": 100 } ] },
+    { "nameZh": "面条（煮）", "nameEn": "cooked noodles",     "per100": { "kcal": 110, "protein": 4.5,  "carb": 23.0, "fat": 0.3,   "fiber": 0.7,  "sodium": 2 },   "portions": [ { "unitName": "碗", "grams": 200 } ] },
+    { "nameZh": "全麦面包",   "nameEn": "whole wheat bread",  "per100": { "kcal": 247, "protein": 13.0, "carb": 41.0, "fat": 3.4,   "fiber": 7.0,  "sodium": 400 }, "portions": [ { "unitName": "片", "grams": 40 } ] },
+    { "nameZh": "小米粥",     "nameEn": "millet porridge",    "per100": { "kcal": 46,  "protein": 1.4,  "carb": 8.4,  "fat": 0.7,   "fiber": 0.4,  "sodium": 2 },   "portions": [ { "unitName": "碗", "grams": 250 } ] },
+    { "nameZh": "红薯（蒸）", "nameEn": "steamed sweet potato","per100": { "kcal": 86,  "protein": 1.6,  "carb": 20.1, "fat": 0.1,   "fiber": 3.0,  "sodium": 28 },  "portions": [ { "unitName": "个", "grams": 150 } ] },
+    { "nameZh": "蛋炒饭",     "nameEn": "egg fried rice",     "per100": { "kcal": 163, "protein": 5.0,  "carb": 22.0, "fat": 5.6,   "fiber": 0.6,  "sodium": 380 }, "portions": [ { "unitName": "碗", "grams": 250 } ] },
+    { "nameZh": "油条",       "nameEn": "fried dough stick",  "per100": { "kcal": 388, "protein": 6.9,  "carb": 51.0, "fat": 17.6,  "fiber": 0.9,  "sodium": 585 }, "portions": [ { "unitName": "根", "grams": 70 } ] },
+
+    { "nameZh": "鸡胸肉（熟）","nameEn": "cooked chicken breast","per100": { "kcal": 165, "protein": 31.0, "carb": 0,    "fat": 3.6,   "fiber": 0,    "sodium": 74 },  "portions": [ { "unitName": "块", "grams": 120 } ] },
+    { "nameZh": "鸡腿肉（去皮）","nameEn": "chicken thigh, skinless","per100": { "kcal": 209, "protein": 26.0, "carb": 0, "fat": 11.0, "fiber": 0, "sodium": 87 }, "portions": [ { "unitName": "个", "grams": 120 } ] },
+    { "nameZh": "鸡蛋",       "nameEn": "whole egg",          "per100": { "kcal": 144, "protein": 13.3, "carb": 2.8,  "fat": 8.8,   "fiber": 0,    "sodium": 131 }, "portions": [ { "unitName": "个", "grams": 50 } ] },
+    { "nameZh": "全脂牛奶",   "nameEn": "whole milk",         "per100": { "kcal": 65,  "protein": 3.3,  "carb": 4.9,  "fat": 3.6,   "fiber": 0,    "sodium": 43 },  "portions": [ { "unitName": "杯", "grams": 250 } ] },
+    { "nameZh": "酸奶（全脂）","nameEn": "whole milk yogurt", "per100": { "kcal": 72,  "protein": 2.5,  "carb": 9.3,  "fat": 2.7,   "fiber": 0,    "sodium": 39 },  "portions": [ { "unitName": "杯", "grams": 150 } ] },
+    { "nameZh": "豆腐（北）", "nameEn": "firm tofu",          "per100": { "kcal": 98,  "protein": 12.2, "carb": 3.8,  "fat": 4.8,   "fiber": 0.5,  "sodium": 7.2 }, "portions": [ { "unitName": "块", "grams": 100 } ] },
+    { "nameZh": "牛肉（瘦，熟）","nameEn": "cooked lean beef","per100": { "kcal": 250, "protein": 26.0, "carb": 0,    "fat": 15.0,  "fiber": 0,    "sodium": 72 },  "portions": [ { "unitName": "份", "grams": 100 } ] },
+    { "nameZh": "猪里脊（熟）","nameEn": "cooked pork loin",  "per100": { "kcal": 155, "protein": 27.0, "carb": 0,    "fat": 4.8,   "fiber": 0,    "sodium": 57 },  "portions": [ { "unitName": "份", "grams": 100 } ] },
+    { "nameZh": "草鱼（熟）", "nameEn": "cooked grass carp",  "per100": { "kcal": 113, "protein": 16.6, "carb": 0,    "fat": 5.2,   "fiber": 0,    "sodium": 46 },  "portions": [ { "unitName": "份", "grams": 100 } ] },
+    { "nameZh": "带鱼",       "nameEn": "hairtail fish",      "per100": { "kcal": 127, "protein": 17.7, "carb": 3.1,  "fat": 4.9,   "fiber": 0,    "sodium": 150 }, "portions": [ { "unitName": "段", "grams": 100 } ] },
+    { "nameZh": "虾（熟）",   "nameEn": "cooked shrimp",      "per100": { "kcal": 99,  "protein": 24.0, "carb": 0.2,  "fat": 0.3,   "fiber": 0,    "sodium": 111 }, "portions": [ { "unitName": "只", "grams": 10 } ] },
+    { "nameZh": "花生（炒）", "nameEn": "roasted peanuts",    "per100": { "kcal": 589, "protein": 24.0, "carb": 21.0, "fat": 48.0,  "fiber": 6.3,  "sodium": 34 },  "portions": [ { "unitName": "把", "grams": 30 } ] },
+
+    { "nameZh": "西兰花",     "nameEn": "broccoli",           "per100": { "kcal": 34,  "protein": 2.8,  "carb": 6.6,  "fat": 0.4,   "fiber": 2.6,  "sodium": 33 },  "portions": [ { "unitName": "份", "grams": 150 } ] },
+    { "nameZh": "番茄",       "nameEn": "tomato",             "per100": { "kcal": 18,  "protein": 0.9,  "carb": 3.9,  "fat": 0.2,   "fiber": 1.2,  "sodium": 5 },   "portions": [ { "unitName": "个", "grams": 150 } ] },
+    { "nameZh": "黄瓜",       "nameEn": "cucumber",           "per100": { "kcal": 16,  "protein": 0.8,  "carb": 3.6,  "fat": 0.2,   "fiber": 0.5,  "sodium": 5 },   "portions": [ { "unitName": "根", "grams": 200 } ] },
+    { "nameZh": "菠菜",       "nameEn": "spinach",            "per100": { "kcal": 23,  "protein": 2.9,  "carb": 3.6,  "fat": 0.4,   "fiber": 2.2,  "sodium": 85 },  "portions": [ { "unitName": "份", "grams": 150 } ] },
+    { "nameZh": "白菜",       "nameEn": "napa cabbage",       "per100": { "kcal": 13,  "protein": 1.5,  "carb": 2.2,  "fat": 0.1,   "fiber": 0.8,  "sodium": 57 },  "portions": [ { "unitName": "份", "grams": 150 } ] },
+    { "nameZh": "土豆（蒸）", "nameEn": "steamed potato",     "per100": { "kcal": 77,  "protein": 2.0,  "carb": 17.0, "fat": 0.1,   "fiber": 2.2,  "sodium": 5 },   "portions": [ { "unitName": "个", "grams": 150 } ] },
+
+    { "nameZh": "苹果",       "nameEn": "apple",              "per100": { "kcal": 52,  "protein": 0.3,  "carb": 13.8, "fat": 0.2,   "fiber": 2.4,  "sodium": 1.6 }, "portions": [ { "unitName": "个", "grams": 200 } ] },
+    { "nameZh": "香蕉",       "nameEn": "banana",             "per100": { "kcal": 89,  "protein": 1.1,  "carb": 22.8, "fat": 0.3,   "fiber": 2.6,  "sodium": 0.8 }, "portions": [ { "unitName": "根", "grams": 120 } ] },
+    { "nameZh": "橙子",       "nameEn": "orange",             "per100": { "kcal": 47,  "protein": 0.9,  "carb": 11.8, "fat": 0.1,   "fiber": 2.4,  "sodium": 1.2 }, "portions": [ { "unitName": "个", "grams": 180 } ] },
+
+    { "nameZh": "番茄炒蛋",   "nameEn": "tomato scrambled eggs","per100": { "kcal": 90, "protein": 5.2, "carb": 4.5,  "fat": 5.8,   "fiber": 1.0,  "sodium": 300 }, "portions": [ { "unitName": "份", "grams": 200 } ] },
+    { "nameZh": "宫保鸡丁",   "nameEn": "kung pao chicken",   "per100": { "kcal": 180, "protein": 12.0, "carb": 9.0,  "fat": 10.0,  "fiber": 1.5,  "sodium": 600 }, "portions": [ { "unitName": "份", "grams": 200 } ] },
+    { "nameZh": "麻婆豆腐",   "nameEn": "mapo tofu",          "per100": { "kcal": 120, "protein": 8.0,  "carb": 5.0,  "fat": 8.0,   "fiber": 1.0,  "sodium": 650 }, "portions": [ { "unitName": "份", "grams": 200 } ] },
+    { "nameZh": "青椒肉丝",   "nameEn": "pepper pork shreds", "per100": { "kcal": 150, "protein": 11.0, "carb": 6.0,  "fat": 9.0,   "fiber": 1.5,  "sodium": 550 }, "portions": [ { "unitName": "份", "grams": 200 } ] },
+    { "nameZh": "红烧肉",     "nameEn": "braised pork belly", "per100": { "kcal": 460, "protein": 12.0, "carb": 3.0,  "fat": 45.0,  "fiber": 0,    "sodium": 600 }, "portions": [ { "unitName": "份", "grams": 100 } ] },
+    { "nameZh": "紫菜蛋花汤", "nameEn": "seaweed egg soup",   "per100": { "kcal": 30,  "protein": 2.5,  "carb": 2.0,  "fat": 1.5,   "fiber": 0.5,  "sodium": 500 }, "portions": [ { "unitName": "碗", "grams": 250 } ] }
+  ]
+}
