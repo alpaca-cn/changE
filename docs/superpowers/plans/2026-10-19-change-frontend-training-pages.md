@@ -1,4 +1,6 @@
-# 计划 4：前端「今日」与「训练记录」实施计划
+# 前端计划：今日与训练记录页实施计划
+
+> **命名**：这**不是**总览里的「计划 4」——**计划 4 是饮食记录与拍照识别**（总览的「计划清单与依赖」表格）。前端的工作按**主题**命名（见总览里「计划 1 与计划 2 之间：Tauri 外壳与 Vue 前端脚手架」那一节），不占计划编号。初稿误用了「计划 4」，2026-10-19 改正。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -739,13 +741,13 @@ cd ..\frontend; pnpm tauri dev
 
 - [ ] **Step 3: 把结果记进总览**
 
-在「计划 3」一节后补「计划 4：前端今日 / 训练记录页」：跨源怎么定的、真机 8 条的真实结果、两个数字（测试条数、构建时间）。
+在「计划 3」一节后补「前端计划：今日与训练记录页」：跨源怎么定的、真机 8 条的真实结果、两个数字（测试条数、构建时间）。
 
 - [ ] **Step 4: 提交**
 
 ```bash
 git add docs/superpowers/plans/2026-10-14-change-phase1-overview.md
-git commit -m "docs: 总览补计划 4 前端的实测结果"
+git commit -m "docs: 总览补前端计划的实测结果"
 ```
 
 ---
@@ -755,13 +757,13 @@ git commit -m "docs: 总览补计划 4 前端的实测结果"
 - [ ] `cd frontend && pnpm test` 全绿，**报告实际条数**（≥ 50 + 新增）
 - [ ] `cd frontend && pnpm build` 退 0
 - [ ] `cd frontend/src-tauri && cargo test` 全绿，**报告实际条数**（注册表那条已同步成 3 条命令）
-- [ ] 未新增后端端点、未改后端任何文件；**迁移仍是 V1–V8**
+- [ ] 未新增后端端点；**迁移仍是 V1–V8**。后端只改了**一处**（`ApiErrors` 加 `ResponseStatusException` 的 handler）——这是「不动后端」那条的**唯一例外**，见「实施修正」1
 - [ ] 未给后端加 CORS；CSP 仍是 `connect-src 'self'`；capabilities 未改
 - [ ] 前端**没有**任何 `fetch`——所有后端访问都经 `invoke('api_request')`
 - [ ] 今日页的「本周容量」在最近训练**之前**，且 **17 块肌群含 0 组的全部渲染**
 - [ ] 训练记录页：预填的是**上次**的值、预填后**不勾**、`''` 变成 `null` 而不是 `0`
 - [ ] 真机 8 条逐条核对，**把界面上的字读出来**（不是只看测试绿）
-- [ ] 总览里补上计划 4 的真实结果
+- [ ] 总览里补上前端计划的真实结果
 - [ ] `git status --short` 无输出（`.commandcode/` 除外）
 
 ## 风险与未知
@@ -794,15 +796,21 @@ git commit -m "docs: 总览补计划 4 前端的实测结果"
 
 计划自己也会失真——这一节记下**实际做的时候**与上面写的不一样的地方，以及原因。
 
-1. **404 的中文原因到不了前端（真机发现，未修）。** 上面 Task 5 的测试里写的是
+1. **404 的中文原因到不了前端（真机发现 → 已修）。** 上面 Task 5 的测试里写的是
    「404 → 文本含『找不到这次训练』」。真机实测（headless 代理 e2e，见 backend.rs）拿到的
    404 正文是 Spring 的**默认错误体**：`{"timestamp":…,"status":404,"error":"Not Found","path":…}`
    ——`TrainingController` 那句中文 reason **根本不出现**（Spring 默认
-   `server.error.include-message=never`）。
-   **要两处一起改**：① 后端 `server.error.include-message: always`；② 前端 `callApi`
-   在 `error` 之外也读 `message`。本计划明写「不动后端」，所以**只记录不改**；
-   `TrainingView.spec.ts` 那条测试改成用**真机原文**断言真实行为（含 `Not Found`），
-   谁补齐上面两处它就会红——那是它该做的事。
+   `server.error.include-message=never`），前端界面上只有英文的 `Not Found`。
+
+   **修法（与本节初稿写的不同）**：初稿写「① 后端 `include-message: always`；② 前端 `callApi`
+   也读 `message`」。实际**没有**走那条——它会让 404 的正文长成 Spring 自己的字段布局，与 400 的
+   `{error}` 不一致，前端得同时认两种形状。改成给 `ApiErrors` 补第三个 handler：把
+   `ResponseStatusException` 收进**同一套** `{error}` 形状、并**保留原状态码**（404 还得是 404）。
+   **前端一行没改**（它读的 `error` 键从此有值了）。真机复测：
+   400 正文 = `{"error":"一次训练至少要有 1 个动作"}`、404 正文 = `{"error":"找不到这次训练: 999999"}`。
+
+   ⚠️ **这是本计划「不动后端」那条完成标准的唯一例外**。理由：真机跑出来的用户可见缺陷，
+   修法只有一处、且让错误契约变得更一致。后端测试 213 → 214。
 2. **0 组肌群的样本选错了。** 上面 Task 4 写「其中 `abdominals` 是 0 组/`UNTRAINED`」。
    按真机夹具（地板卧推的**次要**肌群是腹直肌与肱三头肌），`abdominals` 实际是
    **1.0/BELOW**。0 组的样本改用 **`lats`（背阔肌，0.0/UNTRAINED）**，

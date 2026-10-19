@@ -139,12 +139,14 @@ CSP 随之收紧成 `connect-src 'self'`。复测后状态栏右侧是 `缓存�
 
 **仍未做**：前端「今日 / 训练记录」两页——另起一份计划（`TodayView.vue` / `TrainingView.vue` 仍是占位页）。后端**没有**训练的删除/修改端点（设计的安全线是「只增改不删」）。
 
-## 计划 4：前端「今日」与「训练记录」
+## 前端计划：今日与训练记录页
+
+> **命名**：前端的工作按**主题**命名、不占计划编号（同「计划 1 与计划 2 之间：Tauri 外壳与 Vue 前端脚手架」那一节）。上表里的 **计划 4（饮食记录与拍照识别）仍然是未开工状态**，与本节无关。
 
 > 完整计划：`docs/superpowers/plans/2026-10-19-change-frontend-training-pages.md`
 > 状态：**Task 1–5 已完成**（2026-10-19 提交 `4efdde6` / `43a2b98` / `08eb227` / `bd58e4c` / `523cbf6`）；Task 6 见下「真机验收」与「仍未做」
 
-**跨源怎么定的（计划 4 的第一节，必须先定）**：沿用计划 1 Task 8 的结论——**前端不发任何 HTTP**。把外壳那条「只会 GET /api/health」的代发扩展成**通用代理命令** `api_request(method, path, body?)`（`src-tauri/src/http.rs` 的 `build_request` / `validate_path` / `parse_api_response`），前端只 `invoke`。**后端零改动、CSP 仍是 `connect-src 'self'`、capabilities 未动。**
+**跨源怎么定的（这份计划的第一节，必须先定）**：沿用计划 1 Task 8 的结论——**前端不发任何 HTTP**。把外壳那条「只会 GET /api/health」的代发扩展成**通用代理命令** `api_request(method, path, body?)`（`src-tauri/src/http.rs` 的 `build_request` / `validate_path` / `parse_api_response`），前端只 `invoke`。**后端零改动、CSP 仍是 `connect-src 'self'`、capabilities 未动。**
 
 三条实现上的取舍（都有测试钉住）：
 
@@ -159,7 +161,7 @@ CSP 随之收紧成 `connect-src 'self'`。复测后状态栏右侧是 `缓存�
 
 **测试数字（2026-10-19 实测）**：
 
-| 命令 | 计划 4 之前 | 现在 |
+| 命令 | 这份计划之前 | 现在 |
 |---|---|---|
 | `cd frontend && pnpm test` | 50 passed（8 files） | **125 passed（13 files）** |
 | `cd frontend && pnpm build` | 退 0 | 退 0（`built in 725ms`） |
@@ -176,16 +178,19 @@ CSP 随之收紧成 `connect-src 'self'`。复测后状态栏右侧是 `缓存�
 - `POST /api/sessions`（非法体）→ **400** `{"error":"一次训练至少要有 1 个动作"}`（**body 与 `Content-Length` 真的被后端读并解析了**）
 - `GET /api/sessions/999999` → **404**，而且**是 `Ok` 不是 `Err`**
 
-**真机发现的一个缺口（未修，登记在案）**：上面那条 404 的正文是 Spring 的默认错误体——
+**真机发现的缺口 → 已修（2026-10-19）**：404 的正文原来是 Spring 的默认错误体——
 `{"timestamp":…,"status":404,"error":"Not Found","path":"/api/sessions/999999"}`。
-`TrainingController` 抛的 `ResponseStatusException(404, "找不到这次训练: n")` 里**那句中文原因根本没有出现**（Spring 默认 `server.error.include-message=never`）。所以前端能拿到的只有英文的 `Not Found`。
-**两处一起改才有效**：① 后端 `application.yml` 加 `server.error.include-message: always`；② 前端 `callApi` 在 `error` 之外也读 `message`。
-计划 4 明写「不动后端」，所以本轮**只记录不改**；`TrainingView.spec.ts` 里那条测试用**真机原文**断言了真实（不理想的）行为，谁补齐它就会红。
+`TrainingController` 抛的 `ResponseStatusException(404, "找不到这次训练: n")` 里**那句中文原因根本没有出现**（Spring 默认 `server.error.include-message=never`），所以前端界面上只有英文的 `Not Found`。
+
+**修法**：**没有**选 `server.error.include-message=always`——那会让 404 的正文长成 Spring 自己的字段布局，与 400 的 `{error}` 不一致，前端还得同时认两种形状。改成给 `ApiErrors` 补第三个 handler，把 `ResponseStatusException` 收进**同一套** `{error}` 形状、并**保留原状态码**（404 还得是 404）。**前端读 `error` 的代码一行都没改。**
+
+改完真机复测（同一条代理 e2e）：`400 正文 = {"error":"一次训练至少要有 1 个动作"}`、`404 正文 = {"error":"找不到这次训练: 999999"}`。后端测试 213 → **214**（新增一条同时断言「正文是我们那句话 + 状态码仍是 404 + Spring 默认体的 `timestamp`/`path` 不该出现」）。
+
+> 这一条**违反了这份计划自己写的「不动后端」**。理由：它是真机跑出来的、用户可见的缺陷，而修法只有一处，且让错误契约变得**更一致**（400 与 404 同形状、前端零改动）。已记进计划文档的「实施修正」。
 
 **仍未做 / 需要人工**：
 
-1. **真机 GUI 逐条核对（计划 4 Task 6 Step 2 的 8 条）没做**——本会话没有可视窗口，而前端访问后端全靠 `invoke`，纯浏览器里跑不起来（没有 Tauri 运行时）。**能自动化的那一半已经做了**（上面那条 headless 代理 e2e，覆盖的正是「代理接错了就整条链路瘫掉」的那部分）；剩下的跳路由 / 渲染 / 点按钮属于 jsdom 组件测试的范围，而**「打开一个真窗口、把界面上的字读出来」仍然待人工执行**：`cd backend; mvn -B -q -DskipTests package`，然后 `cd frontend; pnpm tauri dev`。
-2. 上面那条 404 文案缺口（两处一起改）。
+1. **真机 GUI 逐条核对（Task 6 Step 2 的 8 条）没做**——本会话没有可视窗口，而前端访问后端全靠 `invoke`，纯浏览器里跑不起来（没有 Tauri 运行时）。**能自动化的那一半已经做了**（上面那条 headless 代理 e2e，覆盖的正是「代理接错了就整条链路瘫掉」的那部分）；剩下的跳路由 / 渲染 / 点按钮属于 jsdom 组件测试的范围，而**「打开一个真窗口、把界面上的字读出来」仍然待人工执行**：`cd backend; mvn -B -q -DskipTests package`，然后 `cd frontend; pnpm tauri dev`。
 
 ## 已完成的前置验证
 
