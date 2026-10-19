@@ -1079,4 +1079,98 @@ mod tests {
         b.shutdown();
         println!("[e2e-health] shutdown() 已调用");
     }
+
+    /// 真的拉起后端 jar，用**外壳的通用代理**（`crate::http::api_request`）走一遍，
+    /// 核对 200 / 204 / 400 三种形态在**真实链路**上成立。
+    ///
+    /// # 为什么必须有这一条（而不是只靠 `http.rs` 的纯函数测试）
+    ///
+    /// `http.rs` 的测试喂的是**抓下来的字节**——它们证明「给对了字节就能解析对」，
+    /// 但证明不了「我们拼出去的请求，真实后端愿意按我们期望的方式回答」。
+    /// 这一条补的就是那一截：真 socket、真 Tomcat、真 chunked、真 JSON。
+    ///
+    /// # 为什么只读不写
+    ///
+    /// `Backend::spawn` 不设 `CHANGE_DATA_DIR`，所以后端会用**使用者真实的库**。
+    /// 这一条里刻意**不做成功的写入**：它会把一次训练留在别人的数据里。
+    /// 写入路径中属于外壳的那部分（POST + `Content-Length` + body）由下面那个
+    /// **400** 覆盖——Spring 必须真的把请求体读进来解析过，才可能回
+    /// 「一次训练至少要有 1 个动作」；一次成功的写入多出来的是后端自己的事务行为，
+    /// 那由计划 3 的端到端验收覆盖。
+    ///
+    /// `#[ignore]`：它要 79 MB 的 jar 与一个 JDK。
+    /// 跑它：`cargo test end_to_end_proxy -- --ignored --nocapture`
+    #[test]
+    #[ignore = "需要 backend/target 下的 jar 与一个 JDK；用 cargo test -- --ignored 跑"]
+    fn end_to_end_proxy_reads_and_reports_statuses_from_the_real_backend() {
+        let jar = find_backend_jar().unwrap_or_else(|e| panic!("{e}"));
+        let java = java_for_e2e();
+        println!("[e2e-proxy] java = {}", java.display());
+        println!("[e2e-proxy] jar  = {}", jar.display());
+
+        let b = Backend::spawn(java, jar, vec![]).expect("后端进程应当能起");
+        let (st, took) = poll_until_settled(&b, Duration::from_secs(30), Duration::from_millis(50));
+        println!("[e2e-proxy] spawn → 就绪用了 {:.2} 秒", took.as_secs_f64());
+        assert!(matches!(st.status, BackendStatus::Ready), "后端没能就绪：{st:?}");
+        let port = st.port.expect("Ready 状态必须带端口");
+
+        // (1) 200 + chunked + 中文 JSON：读路径
+        let start = Instant::now();
+        let weekly = crate::http::api_request(port, "GET", "/api/volume/weekly", None)
+            .unwrap_or_else(|e| panic!("GET /api/volume/weekly 失败：{e}"));
+        println!("[e2e-proxy] weekly 用了 {:?}，status={}", start.elapsed(), weekly.status);
+        assert_eq!(weekly.status, 200);
+        let v: serde_json::Value = serde_json::from_str(&weekly.body).expect("正文该是 JSON");
+        assert_eq!(
+            v["muscles"].as_array().expect("muscles 该是数组").len(),
+            17,
+            "17 块肌群"
+        );
+        assert_eq!(v["muscles"][0]["nameZh"], "胸部");
+
+        // (2) **查询串**要能原样穿过代理（中文已百分号编码，不含空格所以过得了
+        //     `validate_path`）。这一条是「选择器」那条路的真实证据。
+        let search = crate::http::api_request(
+            port,
+            "GET",
+            "/api/exercises?q=%E5%8D%A7%E6%8E%A8&limit=1",
+            None,
+        )
+        .unwrap_or_else(|e| panic!("GET /api/exercises 失败：{e}"));
+        assert_eq!(search.status, 200);
+        let rows: serde_json::Value = serde_json::from_str(&search.body).unwrap();
+        println!("[e2e-proxy] 搜索命中的第一条 = {}", rows[0]["nameEn"]);
+        assert!(rows.as_array().unwrap().len() <= 1, "limit=1 应当生效");
+
+        // (3) 204：一个不存在的动作 → 没有正文，且**不是**错误
+        let never = crate::http::api_request(port, "GET", "/api/exercises/999999/last-performance", None)
+            .unwrap_or_else(|e| panic!("last-performance 失败：{e}"));
+        assert_eq!(never.status, 204);
+        assert_eq!(never.body, "", "204 的正文必须是空的（不是 '0' 也不是 '[]'）");
+
+        // (4) 400：非法请求体 → 状态码与后端的校验文案都要原样带回来
+        let bad = crate::http::api_request(
+            port,
+            "POST",
+            "/api/sessions",
+            Some(r#"{"sessionDate":"2026-10-19","exercises":[]}"#),
+        )
+        .unwrap_or_else(|e| panic!("POST /api/sessions 失败：{e}"));
+        println!("[e2e-proxy] 400 正文 = {}", bad.body);
+        assert_eq!(bad.status, 400);
+        assert!(
+            bad.body.contains("error") && bad.body.contains("动作"),
+            "400 的正文该带着后端那句校验文案，实际 {}",
+            bad.body
+        );
+
+        // (5) 一个不存在的路径 → 404 也是 Ok（不是 Err）
+        let missing = crate::http::api_request(port, "GET", "/api/sessions/999999", None)
+            .unwrap_or_else(|e| panic!("不存在的训练应当回 404 而不是传输失败：{e}"));
+        assert_eq!(missing.status, 404);
+        println!("[e2e-proxy] 404 正文 = {}", missing.body);
+
+        b.shutdown();
+        println!("[e2e-proxy] shutdown() 已调用");
+    }
 }

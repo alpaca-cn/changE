@@ -343,15 +343,36 @@ describe('训练记录页 · 历史', () => {
     expect(detail.text()).toContain('3 组')
   })
 
-  it('a_failed_detail_load_shows_the_reason', async () => {
+  it('a_404_from_the_backend_still_produces_a_readable_error', async () => {
+    // **真机发现的缺口（2026-10-19）**，这条测试把**真实**行为钉下来，不假装更好：
+    //
+    // `TrainingController` 的 404 是 `ResponseStatusException`，Spring 默认的错误正文
+    // 里 `error` 是英文的 `"Not Found"`，而**那句中文原因（「找不到这次训练: 1」）
+    // 根本不出现**——除非后端开 `server.error.include-message=always`，并且前端
+    // 在 `callApi` 里也读 `message` 字段（现在只读 `error`）。
+    //
+    // 下面这段正文是**原样**来自真机 404 响应（见 backend.rs 的
+    // `end_to_end_proxy_reads_and_reports_statuses_from_the_real_backend` 打印的那一行）。
+    //
+    // 所以这里断言的是「详情打不开 + 界面上有一句可读的话」，**不是**那句中文原因。
+    // 哪天有人把上面两处补齐，这条会红——那正是它该做的事（提醒你更新它）。
     const wrapper = await mountTraining(
-      baseRules([['/api/sessions/1', { status: 404, body: { error: '找不到这次训练: 1' } }]]),
+      baseRules([
+        [
+          '/api/sessions/1',
+          {
+            status: 404,
+            body:
+              '{"timestamp":"2026-10-19T03:46:01.796+00:00","status":404,"error":"Not Found","path":"/api/sessions/999999"}',
+          },
+        ],
+      ]),
     )
 
     await wrapper.find('.sessions .session').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.detail').exists()).toBe(false)
-    expect(wrapper.text()).toContain('找不到这次训练')
+    expect(wrapper.text()).toContain('Not Found')
   })
 })
