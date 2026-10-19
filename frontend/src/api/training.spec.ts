@@ -18,6 +18,7 @@ import {
   sessionDetail,
   weeklyVolume,
 } from './training'
+import { WEEKLY_17 } from './__fixtures__/training-responses'
 
 const invokeMock = vi.mocked(invoke)
 
@@ -36,16 +37,13 @@ function lastCall() {
 }
 
 /**
- * **真机 JSON**（2026-10-19 从 `GET /api/volume/weekly?date=2026-10-19` 抓下来，原样复制，
- * 一个字符都没改）——库里当时有 1 次训练：交替地板卧推 2 组 60×8 完成。
- *
- * 用它而不是手写 17 块：手写的会漏掉真实形态（比如 `sets` 是 `2.0` 而不是 `2`、
+ * **真机 JSON**（2026-10-19 抓下来的原样文本）——见 `__fixtures__/training-responses.ts`
+ * 的来源说明。用它而不是手写 17 块：手写的会漏掉真实形态（`sets` 是 `2.0` 而不是 `2`、
  * `neck` 的 `min/max` 是 `null`）。事实核对：`chest` 2.0（主 +1×2）、
- * `abdominals` **1.0**（地板卧推的次要肌群，+0.5×2）、`triceps` 1.0（次要）、
- * `shoulders` 1.0（次要）、`lats` 0.0 → `UNTRAINED`、`neck` → `NOT_CONFIGURED`。
+ * `abdominals` **1.0**（地板卧推的次要肌群，+0.5×2）、`lats` 0.0 → `UNTRAINED`、
+ * `neck` → `NOT_CONFIGURED`。
  */
-const REAL_WEEKLY =
-  '{"weekStart":"2026-10-19","weekEnd":"2026-10-25","muscles":[{"muscleGroupId":1,"nameZh":"胸部","nameEn":"chest","sets":2.0,"min":10,"max":20,"status":"BELOW"},{"muscleGroupId":2,"nameZh":"腹直肌","nameEn":"abdominals","sets":1.0,"min":8,"max":16,"status":"BELOW"},{"muscleGroupId":3,"nameZh":"背阔肌","nameEn":"lats","sets":0.0,"min":10,"max":20,"status":"UNTRAINED"},{"muscleGroupId":4,"nameZh":"中背部","nameEn":"middle back","sets":0.0,"min":8,"max":16,"status":"UNTRAINED"},{"muscleGroupId":5,"nameZh":"下背部","nameEn":"lower back","sets":0.0,"min":4,"max":10,"status":"UNTRAINED"},{"muscleGroupId":6,"nameZh":"斜方肌","nameEn":"traps","sets":0.0,"min":6,"max":14,"status":"UNTRAINED"},{"muscleGroupId":7,"nameZh":"肩部","nameEn":"shoulders","sets":1.0,"min":8,"max":18,"status":"BELOW"},{"muscleGroupId":8,"nameZh":"肱二头肌","nameEn":"biceps","sets":0.0,"min":6,"max":14,"status":"UNTRAINED"},{"muscleGroupId":9,"nameZh":"肱三头肌","nameEn":"triceps","sets":1.0,"min":6,"max":14,"status":"BELOW"},{"muscleGroupId":10,"nameZh":"前臂","nameEn":"forearms","sets":0.0,"min":4,"max":10,"status":"UNTRAINED"},{"muscleGroupId":11,"nameZh":"股四头肌","nameEn":"quadriceps","sets":0.0,"min":10,"max":20,"status":"UNTRAINED"},{"muscleGroupId":12,"nameZh":"腘绳肌","nameEn":"hamstrings","sets":0.0,"min":8,"max":16,"status":"UNTRAINED"},{"muscleGroupId":13,"nameZh":"臀肌","nameEn":"glutes","sets":0.0,"min":8,"max":16,"status":"UNTRAINED"},{"muscleGroupId":14,"nameZh":"小腿","nameEn":"calves","sets":0.0,"min":6,"max":14,"status":"UNTRAINED"},{"muscleGroupId":15,"nameZh":"内收肌","nameEn":"adductors","sets":0.0,"min":4,"max":10,"status":"UNTRAINED"},{"muscleGroupId":16,"nameZh":"外展肌","nameEn":"abductors","sets":0.0,"min":4,"max":10,"status":"UNTRAINED"},{"muscleGroupId":17,"nameZh":"颈部","nameEn":"neck","sets":0.0,"min":null,"max":null,"status":"NOT_CONFIGURED"}]}'
+const REAL_WEEKLY = WEEKLY_17
 
 beforeEach(() => {
   invokeMock.mockReset()
