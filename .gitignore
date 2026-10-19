@@ -67,3 +67,7 @@ _review/
 # 不是可复跑验证；**结论与实测数字已经全部落进计划文档的 Task 8 一节**，
 # 所以这里不留档不会丢信息。
 _healthcheck/
+
+
+# AI 编码工具的本地配置（opencode / commandcode）
+.commandcode/
