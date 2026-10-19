@@ -1,6 +1,8 @@
 package com.change.cache;
 
+import com.change.service.ProgressService;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.dao.QueryTimeoutException;
@@ -10,6 +12,8 @@ import org.springframework.data.redis.core.ValueOperations;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -136,6 +140,49 @@ class CacheServiceTest {
         CacheService c = new RedisCacheService(template, "h", 6379);
         assertThat(c.get("k", String.class)).contains("hello");
         assertThat(c.isAvailable()).isTrue();
+    }
+
+    @Test
+    void redis_round_trips_a_value_that_contains_a_local_date() {
+        // ⚠️ 这条守的是本任务最隐蔽的那类失效：RedisCacheService 原来用的是裸
+        // `new ObjectMapper()`（没注册 JavaTimeModule）。对它来说 `LocalDate` 是
+        // 「JSON 不知道怎么写的类型」，序列化直接抛 InvalidDefinitionException。
+        // 而 put 的序列化失败**被设计成吞掉**（只打 WARN、跳过本次 put、不计入熔断，
+        // 见 a_serialization_failure_does_not_trip_the_breaker）。两者叠起来的后果是：
+        //   缓存看起来完全正常、不报错、不熔断 —— 但永远存不进去，get 永远未命中，
+        //   而且没有任何人会发现。
+        // 进步曲线的 Point 里就有 LocalDate，正好踩中这个坑，所以这条测试必须存在。
+        var template = Mockito.mock(StringRedisTemplate.class);
+        var valueOps = valueOps();
+        Mockito.when(template.opsForValue()).thenReturn(valueOps);
+
+        CacheService c = new RedisCacheService(template, "h", 6379);
+
+        // 用**真正会被缓存的类型**（ProgressService.ExerciseProgress），而不是本地造一个
+        // 只含 LocalDate 的小类：这样序列化口径与生产完全一致，包含 null 的 e1rm 也一起过。
+        var progress = new ProgressService.ExerciseProgress(7L, "bench-press", "卧推", List.of(
+                new ProgressService.Point(LocalDate.of(2026, 10, 19), 103.33, 100.0, 1200.0),
+                new ProgressService.Point(LocalDate.of(2026, 10, 20), null, 95.0, 950.0)));
+
+        c.put("progress:v1:7:_:_", progress, Duration.ofMinutes(10));
+
+        var payload = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(valueOps).set(ArgumentMatchers.eq("progress:v1:7:_:_"),
+                payload.capture(), ArgumentMatchers.eq(Duration.ofMinutes(10)));
+
+        // 日期必须是 ISO 字符串，不是 [2026,10,19] 数组：与 Spring Boot 给 HTTP 用的
+        // 那个 mapper 保持一致（WRITE_DATES_AS_TIMESTAMPS 关掉），否则前端/日志里
+        // 会看到另一种形状，而反序列化仍能通过 —— 那种偏差不会有任何测试发现。
+        assertThat(payload.getValue())
+                .contains("\"date\":\"2026-10-19\"")
+                .doesNotContain("[2026,10,19]");
+
+        // 读回来：同一个 payload 必须反序列化成等值对象（record 的 equals 覆盖每个字段，
+        // 包括那个 null 的 e1rm）
+        Mockito.when(valueOps.get("progress:v1:7:_:_")).thenReturn(payload.getValue());
+        assertThat(c.get("progress:v1:7:_:_", ProgressService.ExerciseProgress.class))
+                .as("注册 JavaTimeModule 之后，含 LocalDate 的值必须能原样往返")
+                .contains(progress);
     }
 
     @Test

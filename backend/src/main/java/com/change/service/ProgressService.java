@@ -1,6 +1,7 @@
 package com.change.service;
 
 import com.change.calc.OneRepMax;
+import com.change.cache.CacheService;
 import com.change.domain.Exercise;
 import com.change.repo.ExerciseRepo;
 import org.springframework.http.HttpStatus;
@@ -8,12 +9,14 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalDouble;
 
 /**
@@ -64,9 +67,34 @@ import java.util.OptionalDouble;
  * 「这一组的重量要按两侧合计」。重量按记录值参与三条序列；乘 2 会静默把吨位翻倍，
  * 而且翻倍之后没有任何界面会显示「这是乘过的」。
  *
- * <h2>不缓存</h2>
+ * <p><b>不缓存</b>曾是这个类的约定（计划 6a Task 3）；Task 4 把它换成了下面的缓存。
+ * 三条序列的口径一行没动——缓存只包在 {@link #compute} 外面。
  *
- * <p>缓存是计划 6a Task 4 的事，本类刻意只读库。
+ * <h2>缓存（计划 6a Task 4）</h2>
+ *
+ * <p>设计文档点名的场景：「进步曲线的 1RM 序列按动作聚合历史，随数据量增长变慢」。
+ * 走 {@link CacheService}，键形如 {@code progress:v1:{exerciseId}:{from|_}:{to|_}}。
+ *
+ * <p><b>为什么键必须含全部三个维度。</b>键唯一确定响应，是缓存的第一条正确性要求：
+ * <ul>
+ *   <li>漏了 {@code exerciseId}：查动作 B 会拿回 A 的曲线；</li>
+ *   <li>漏了 {@code from}/{@code to}：带日期过滤的请求会拿回不带过滤的整条曲线——
+ *       这是最容易漏的一条，因为两者的**形状完全一样**，不会报错，只是数据多了一截。</li>
+ * </ul>
+ * 日期用的是解析后的 {@link LocalDate} 而不是原始字符串：形状校验先做，
+ * 非法输入在碰缓存之前就抛出去，不会留下永远用不上的键；空白/省略都归一成 {@code _}。
+ *
+ * <p><b>为什么带 {@code v1}。</b>它是序列口径的版本位：将来改了三条序列的算法
+ * （或者 DTO 形状），把 {@code v1} 改成 {@code v2} 就让所有旧缓存**自然失效**，
+ * 不需要写「上线时清一次缓存」的运维步骤——那种步骤总会有人忘。
+ *
+ * <p><b>TTL 只是兜底。</b>本机单用户，数据只在录入时变，而录入后会显式
+ * {@code invalidatePrefix("progress:")}（见 {@link WorkoutService#recordSession}）。
+ * 10 分钟的意义是「某个写路径忘了失效时，最坏旧 10 分钟」，不是主失效手段。
+ *
+ * <p><b>缓存不可用不是错误。</b>{@link CacheService} 的约定是任何方法都不向上抛异常：
+ * 未命中/降级就是一个空 {@link java.util.Optional}，所以这里没有 try/catch，
+ * 正常走「算一遍」的路径。缓存坏了只会慢，不会让端点 500。
  */
 @Service
 public class ProgressService {
@@ -114,16 +142,41 @@ public class ProgressService {
             ORDER BY ws.session_date
             """;
 
+    /**
+     * 缓存键前缀。写训练后按这个前缀失效（{@code WorkoutService} 引用同一个常量，
+     * 而不是各写一份字符串：两处一旦漂移，失效就会静默地什么都没清掉）。
+     */
+    static final String CACHE_PREFIX = "progress:";
+
+    /**
+     * 键的版本位。改序列口径时把它改成 {@code v2}，旧缓存全部自然失效。
+     * 刻意不写「上线时手工清缓存」那种流程——它依赖人记得做。
+     */
+    static final String CACHE_VERSION = "v1";
+
+    /**
+     * TTL 是兜底，不是主失效手段：写训练后 {@code invalidatePrefix("progress:")} 才是。
+     * 10 分钟对应「某个写路径忘了失效」时最坏能旧多久。
+     */
+    static final Duration CACHE_TTL = Duration.ofMinutes(10);
+
     private final JdbcTemplate jdbc;
     private final ExerciseRepo exercises;
+    private final CacheService cache;
 
-    public ProgressService(JdbcTemplate jdbc, ExerciseRepo exercises) {
+    public ProgressService(JdbcTemplate jdbc, ExerciseRepo exercises, CacheService cache) {
         this.jdbc = jdbc;
         this.exercises = exercises;
+        this.cache = cache;
     }
 
     /**
      * 一个动作的进步曲线。
+     *
+     * <p>动作是否存在每次都查（单行主键查找，代价可忽略）：这样「动作被删掉」立刻是 404，
+     * 不会被一条旧缓存挡住。真正重的那部分（按训练日聚合全部组）才进缓存。
+     *
+     * <p>日期先解析再算键：非法 from/to 在碰缓存之前就抛 400，不会留下永远用不上的键。
      *
      * @param exerciseId 动作 id；不存在时抛 {@link ResponseStatusException}（404）
      * @param from       起始训练日（含）；null/空白表示不限
@@ -136,8 +189,39 @@ public class ProgressService {
 
         LocalDate fromDate = parseOptionalDate(from, "from");
         LocalDate toDate = parseOptionalDate(to, "to");
-        // 绑定成字符串而不是 LocalDate：SQLite 的 session_date 是 TEXT，驱动对 java.time
-        // 的绑定行为随版本变化，而 YYYY-MM-DD 的文本比较与日期比较同序（见 PROGRESS_SQL）。
+        String key = progressKey(exerciseId, fromDate, toDate);
+
+        // 未命中与「缓存不可用」在这里是同一件事：空 Optional，正常走下面的计算。
+        // CacheService 约定不向上抛异常，所以不需要 try/catch。
+        Optional<ExerciseProgress> cached = cache.get(key, ExerciseProgress.class);
+        if (cached.isPresent()) {
+            return cached.get();
+        }
+
+        ExerciseProgress computed = compute(exercise, fromDate, toDate);
+        cache.put(key, computed, CACHE_TTL);
+        return computed;
+    }
+
+    /**
+     * 键形状：{@code progress:v1:{exerciseId}:{from|_}:{to|_}}。
+     *
+     * <p>三个维度都必须进键，否则会串缓存：缺 exerciseId 会把 A 的曲线给 B；
+     * 缺 from/to 会让带过滤的请求拿回未过滤的整条曲线（形状一样，不报错，只是多了一截）。
+     */
+    static String progressKey(long exerciseId, LocalDate from, LocalDate to) {
+        return CACHE_PREFIX + CACHE_VERSION + ":" + exerciseId
+                + ":" + (from == null ? "_" : from)
+                + ":" + (to == null ? "_" : to);
+    }
+
+    /**
+     * 真正算一遍：三条序列的口径全在这里，缓存只是包在外面的一层。
+     *
+     * <p>日期绑定成字符串而不是 LocalDate：SQLite 的 session_date 是 TEXT，驱动对 java.time
+     * 的绑定行为随版本变化，而 YYYY-MM-DD 的文本比较与日期比较同序（见 PROGRESS_SQL）。
+     */
+    private ExerciseProgress compute(Exercise exercise, LocalDate fromDate, LocalDate toDate) {
         String fromParam = fromDate == null ? null : fromDate.toString();
         String toParam = toDate == null ? null : toDate.toString();
 
@@ -152,7 +236,7 @@ public class ProgressService {
             day.sets.add(new OneRepMax.Set(weight, repetitions));
             day.maxWeight = Math.max(day.maxWeight, weight);
             day.totalVolume += weight * repetitions;
-        }, exerciseId, fromParam, fromParam, toParam, toParam);
+        }, exercise.id, fromParam, fromParam, toParam, toParam);
 
         List<Point> points = new ArrayList<>(byDay.size());
         for (Map.Entry<LocalDate, DayAccumulator> entry : byDay.entrySet()) {

@@ -1,6 +1,8 @@
 package com.change.cache;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -61,7 +63,27 @@ public class RedisCacheService implements CacheService {
     static volatile java.util.concurrent.CyclicBarrier failureRendezvous = null;
 
     private final StringRedisTemplate redis;
-    private final ObjectMapper json = new ObjectMapper();
+
+    /**
+     * 缓存值专用的 mapper。
+     *
+     * <p><b>必须注册 {@link JavaTimeModule}。</b>计划 6a Task 4 要缓存的
+     * {@code ProgressService.ExerciseProgress} 里，{@code Point} 带
+     * {@code LocalDate date}；裸 {@code new ObjectMapper()} 对 {@code LocalDate}
+     * 会抛 {@code InvalidDefinitionException}。而 {@link #put} 的序列化失败**被设计成吞掉**
+     * （见下面的注释：只打 WARN、跳过本次 put、不计熔断），两者叠起来就是本任务实测出来的
+     * 那类最坏失效：<b>缓存看起来完全正常、不报错、不熔断，但永远存不进去，get 永远未命中</b>。
+     *
+     * <p><b>关掉 {@code WRITE_DATES_AS_TIMESTAMPS}。</b>否则 {@code LocalDate} 会写成
+     * {@code [2026,10,19]} 这样的数组。反序列化仍能通过，所以「能往返」本身发现不了偏差——
+     * 但它与 Spring Boot 给 HTTP 用的那个 mapper 口径不一致（那边是 ISO 字符串），
+     * 缓存里的内容与 API 响应会长成两种形状，排查时最容易误判。
+     * 这条由 {@code CacheServiceTest#redis_round_trips_a_value_that_contains_a_local_date} 钉住。
+     */
+    private final ObjectMapper json = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+
     private final String endpoint;
     private final Clock clock;
 
