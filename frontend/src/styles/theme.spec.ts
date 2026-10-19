@@ -56,9 +56,31 @@ describe('主题 token', () => {
     expect(css).not.toMatch(/\[data-theme\s*=\s*["']?light/)
   })
 
-  it('强调色只在 --accent 定义一次，组件不许各写各的红', () => {
-    // 设计文档说「唯一的暖红」。全文件里 #e0453a 只该出现一次（就是 --accent 那行）。
+  it('暖红 #e0453a 只出现在 --accent 与 --danger 两处，组件不许各写各的红', () => {
+    // 设计文档说「唯一的暖红」。计划 4 加了 `--danger`（练过量）——它与 `--accent`
+    // 同值，但是**另一个变量**（语义不同，将来可能分叉）。所以这条从「恰好 1 次」
+    // 放宽到「恰好 2 次」，并额外钉住那两个名字确实各自拿到了这个值——
+    // 否则有人可能在某个组件里又硬写了一遍色值，而这条只数次数是看不出来的。
     const hits = css.match(/#e0453a/gi) ?? []
-    expect(hits).toHaveLength(1)
+    expect(hits).toHaveLength(2)
+    expect(token('accent')).toBe('#e0453a')
+    expect(token('danger')).toBe('#e0453a')
+  })
+
+  it('语义色齐了四个（周容量的五种状态各有归属）', () => {
+    // IN_RANGE→--ok、BELOW→--warn、ABOVE→--danger、UNTRAINED→--muted-strong，
+    // NOT_CONFIGURED→--text-dim（已有）。少一个就会有状态渲染成「没有颜色」。
+    for (const name of ['ok', 'warn', 'danger', 'muted-strong']) {
+      expect(token(name), `--${name} 未定义`).toBeTruthy()
+    }
+  })
+
+  it('四个语义色互不相同，也不与层级色撞车', () => {
+    // 「练少了」与「练过量」用同一个颜色的话，容量面板比不显示更难看出问题。
+    const vals = ['ok', 'warn', 'danger', 'muted-strong'].map((n) => token(n))
+    expect(new Set(vals).size).toBe(4)
+    for (const reserved of ['text', 'bg', 'panel', 'line']) {
+      expect(vals, `语义色不该等于 --${reserved}`).not.toContain(token(reserved))
+    }
   })
 })
