@@ -204,4 +204,100 @@ class NutritionServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("amount");
     }
+
+    // ---- 读（Task 4）----
+
+    @Test
+    void the_meal_detail_reads_items_in_order_with_their_nutrition() {
+        long rice = newFood("ZZ 读一餐", "碗", 150);
+        NutritionService.Result r = nutrition.recordMeal(meal(List.of(
+                new NutritionService.ItemInput(rice, 1, "碗"),
+                new NutritionService.ItemInput(rice, 175, null))));
+
+        NutritionService.MealDetail d = nutrition.mealDetail(r.mealId()).orElseThrow();
+
+        assertThat(d.mealDate()).isEqualTo(LocalDate.of(2026, 10, 19));
+        assertThat(d.slot()).isEqualTo("lunch");
+        assertThat(d.eatenAt()).isEqualTo(LocalDateTime.of(2026, 10, 19, 12, 30));
+        assertThat(d.items()).extracting(NutritionService.ItemDetail::orderIndex).containsExactly(0, 1);
+        assertThat(d.items()).extracting(NutritionService.ItemDetail::grams).containsExactly(150.0, 175.0);
+        assertThat(d.items()).extracting(NutritionService.ItemDetail::unitName).containsExactly("碗", null);
+        // 食物名跟着回来（界面不用再查一次食物库）
+        assertThat(d.items()).extracting(NutritionService.ItemDetail::nameZh).containsOnly("ZZ 读一餐");
+        // 每一项的营养值是**实时算**的：150 克 → 150 kcal，175 克 → 175 kcal
+        assertThat(d.items().get(0).nutrition().kcal()).isEqualTo(150.0);
+        assertThat(d.items().get(1).nutrition().kcal()).isEqualTo(175.0);
+        assertThat(d.nutrition().kcal()).isEqualTo(325.0);
+    }
+
+    @Test
+    void an_unknown_meal_has_no_detail() {
+        assertThat(nutrition.mealDetail(-1L)).isEmpty();
+    }
+
+    @Test
+    void daily_totals_sum_all_meals_of_the_day() {
+        long rice = newFood("ZZ 当天合计", "碗", 150);
+        nutrition.recordMeal(meal(List.of(new NutritionService.ItemInput(rice, 1, "碗")))); // 150 kcal
+        nutrition.recordMeal(new NutritionService.MealInput(
+                LocalDate.of(2026, 10, 19), "dinner", null, null,
+                List.of(new NutritionService.ItemInput(rice, 2, "碗")))); // 300 kcal
+
+        NutritionService.DailyNutrition daily = nutrition.daily(LocalDate.of(2026, 10, 19));
+
+        assertThat(daily.date()).isEqualTo(LocalDate.of(2026, 10, 19));
+        assertThat(daily.meals()).isEqualTo(2);
+        assertThat(daily.items()).isEqualTo(2);
+        assertThat(daily.nutrition().kcal()).isEqualTo(450.0);
+        assertThat(daily.nutrition().protein()).isEqualTo(45.0);
+    }
+
+    @Test
+    void an_empty_day_is_all_zeros_not_a_404() {
+        // 「今天还没吃」是刚启用时的常态，不是错误。返回 404 会让人以为程序坏了。
+        NutritionService.DailyNutrition daily = nutrition.daily(LocalDate.of(2030, 1, 1));
+
+        assertThat(daily.meals()).isZero();
+        assertThat(daily.items()).isZero();
+        assertThat(daily.nutrition().kcal()).isZero();
+        assertThat(daily.nutrition().protein()).isZero();
+        assertThat(daily.nutrition().sodium()).isZero();
+    }
+
+    @Test
+    void daily_totals_ignore_other_days() {
+        long rice = newFood("ZZ 别的日子", "碗", 150);
+        nutrition.recordMeal(meal(List.of(new NutritionService.ItemInput(rice, 1, "碗")))); // 2026-10-19
+        nutrition.recordMeal(new NutritionService.MealInput(
+                LocalDate.of(2026, 10, 18), "lunch", null, null,
+                List.of(new NutritionService.ItemInput(rice, 3, "碗")))); // 前一天
+
+        assertThat(nutrition.daily(LocalDate.of(2026, 10, 19)).nutrition().kcal()).isEqualTo(150.0);
+        assertThat(nutrition.daily(LocalDate.of(2026, 10, 18)).nutrition().kcal()).isEqualTo(450.0);
+    }
+
+    @Test
+    void meals_on_a_day_come_back_in_insertion_order_with_their_items() {
+        long rice = newFood("ZZ 一天的餐", "碗", 150);
+        NutritionService.Result breakfast = nutrition.recordMeal(new NutritionService.MealInput(
+                LocalDate.of(2026, 10, 19), "breakfast", null, null,
+                List.of(new NutritionService.ItemInput(rice, 1, "碗"))));
+        NutritionService.Result lunch = nutrition.recordMeal(meal(List.of(
+                new NutritionService.ItemInput(rice, 1, "碗"),
+                new NutritionService.ItemInput(rice, 1, "碗"))));
+
+        List<NutritionService.MealDetail> day = nutrition.mealsOn(LocalDate.of(2026, 10, 19));
+
+        assertThat(day).extracting(NutritionService.MealDetail::id)
+                .containsExactly(breakfast.mealId(), lunch.mealId());
+        assertThat(day.get(0).items()).hasSize(1);
+        assertThat(day.get(1).items()).hasSize(2);
+        assertThat(day).extracting(NutritionService.MealDetail::slot)
+                .containsExactly("breakfast", "lunch");
+    }
+
+    @Test
+    void a_day_with_nothing_recorded_returns_an_empty_list() {
+        assertThat(nutrition.mealsOn(LocalDate.of(2030, 1, 1))).isEmpty();
+    }
 }

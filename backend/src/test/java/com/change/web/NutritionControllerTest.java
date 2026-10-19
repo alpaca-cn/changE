@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -136,6 +137,85 @@ class NutritionControllerTest {
                         "SELECT COUNT(*) FROM change_log WHERE target_table IN ('meal','meal_item')",
                         Integer.class))
                 .as("回滚后本域的审计行").isZero();
+    }
+
+    // ---- 读（Task 4）----
+
+    /** 记一餐并返回它的 id。 */
+    private int postMeal(long foodId, String slot, double amount, String unitName) throws Exception {
+        String unit = unitName == null ? "null" : "\"" + unitName + "\"";
+        String body = """
+                { "mealDate": "2026-10-19", "slot": "%s", "eatenAt": "2026-10-19T12:30",
+                  "items": [ { "foodId": %d, "amount": %s, "unitName": %s } ] }
+                """.formatted(slot, foodId, String.valueOf(amount), unit);
+        String created = mvc.perform(post("/api/meals").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return com.jayway.jsonpath.JsonPath.read(created, "$.mealId");
+    }
+
+    @Test
+    void reads_a_meal_back_through_the_api() throws Exception {
+        long rice = newFood("ZZ Ctrl 读一餐", "碗", 150);
+        int mealId = postMeal(rice, "lunch", 1, "碗");
+
+        mvc.perform(get("/api/meals/" + mealId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.slot").value("lunch"))
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].nameZh").value("ZZ Ctrl 读一餐"))
+                .andExpect(jsonPath("$.items[0].grams").value(150.0))
+                .andExpect(jsonPath("$.items[0].nutrition.kcal").value(150.0))
+                .andExpect(jsonPath("$.nutrition.kcal").value(150.0));
+    }
+
+    @Test
+    void an_unknown_meal_is_404_carrying_our_reason() throws Exception {
+        mvc.perform(get("/api/meals/999999"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("找不到这一餐: 999999"));
+    }
+
+    @Test
+    void reads_the_days_meals_and_totals_through_the_api() throws Exception {
+        long rice = newFood("ZZ Ctrl 当天", "碗", 150);
+        postMeal(rice, "breakfast", 1, "碗");   // 150 kcal
+        postMeal(rice, "lunch", 2, "碗");       // 300 kcal
+
+        mvc.perform(get("/api/meals").param("date", "2026-10-19"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                // 按录入顺序（breakfast 先记）
+                .andExpect(jsonPath("$[0].slot").value("breakfast"))
+                .andExpect(jsonPath("$[1].items.length()").value(1));
+
+        mvc.perform(get("/api/nutrition/daily").param("date", "2026-10-19"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.date").value("2026-10-19"))
+                .andExpect(jsonPath("$.meals").value(2))
+                .andExpect(jsonPath("$.items").value(2))
+                .andExpect(jsonPath("$.nutrition.kcal").value(450.0))
+                .andExpect(jsonPath("$.nutrition.protein").value(45.0));
+    }
+
+    @Test
+    void an_empty_day_is_200_with_all_zeros() throws Exception {
+        // **不是 404**：刚装上的人打开今日页，看到的是「今天 0 千卡」，不是「查不到」。
+        mvc.perform(get("/api/nutrition/daily").param("date", "2030-01-01"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.meals").value(0))
+                .andExpect(jsonPath("$.nutrition.kcal").value(0.0));
+
+        mvc.perform(get("/api/meals").param("date", "2030-01-01"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void a_bad_date_is_a_400() throws Exception {
+        mvc.perform(get("/api/nutrition/daily").param("date", "2026/10/19"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").exists());
     }
 
     private void assertCount(String table, int expected) {

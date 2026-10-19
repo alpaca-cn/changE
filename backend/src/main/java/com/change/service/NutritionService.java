@@ -19,6 +19,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * 写一餐、读一餐、算当天摄入。
@@ -62,6 +64,20 @@ public class NutritionService {
 
     /** 写入结果。{@code nutrition} 是**实时算出来**的合计，不落库。 */
     public record Result(long mealId, int items, Nutrition nutrition) {
+    }
+
+    /** 读回来的一个条目。带食物名与**实时算出**的这份份量的营养值。 */
+    public record ItemDetail(long mealItemId, long foodId, String nameZh, int orderIndex,
+                             double amount, String unitName, double grams, Nutrition nutrition) {
+    }
+
+    /** 读回来的一餐。{@code nutrition} 是它所有条目之和。 */
+    public record MealDetail(long id, LocalDate mealDate, String slot, LocalDateTime eatenAt,
+                             String note, List<ItemDetail> items, Nutrition nutrition) {
+    }
+
+    /** 某一天的合计。{@code date} 原样带回，省得调用方自己记「这是问的哪一天」。 */
+    public record DailyNutrition(LocalDate date, Nutrition nutrition, int meals, int items) {
     }
 
     private final MealRepo meals;
@@ -121,6 +137,76 @@ public class NutritionService {
             count++;
         }
         return new Result(meal.id, count, NutritionCalculator.sum(perItem));
+    }
+
+    /** 一餐的完整内容；找不到返回 {@link Optional#empty()}（调用方翻译成 404）。 */
+    public Optional<MealDetail> mealDetail(long mealId) {
+        return meals.findById(mealId)
+                .map(meal -> detail(meal, items.findByMealIdOrderByOrderIndexAsc(meal.id)));
+    }
+
+    /**
+     * 某一天的餐，按录入顺序。
+     *
+     * <p>条目**一次取回**再按 mealId 分组，而不是每餐查一次：一餐 5 个条目、
+     * 一天 4 餐就是 20 次往返，而它们本来是一条查询。
+     */
+    public List<MealDetail> mealsOn(LocalDate date) {
+        List<Meal> dayMeals = meals.findByMealDateOrderByIdAsc(date);
+        if (dayMeals.isEmpty()) {
+            return List.of();
+        }
+        List<Long> mealIds = dayMeals.stream().map(m -> m.id).toList();
+        Map<Long, List<MealItem>> itemsByMeal =
+                items.findByMealIdInOrderByMealIdAscOrderIndexAsc(mealIds).stream()
+                        .collect(Collectors.groupingBy(i -> i.mealId, LinkedHashMap::new, Collectors.toList()));
+
+        return dayMeals.stream()
+                .map(m -> detail(m, itemsByMeal.getOrDefault(m.id, List.of())))
+                .toList();
+    }
+
+    /**
+     * 某一天的合计（热量 + 三大营养素 + 纤维 + 钠）。
+     *
+     * <p><b>空的一天返回全 0，不是 404。</b>「今天还没吃」与「查不到今天」是两回事：
+     * 前者是刚启用时的常态，返回 404 会让用户以为程序坏了。
+     *
+     * <p>合计由 {@link NutritionCalculator#sum} 做（空列表 → 全 0），
+     * 不在这里手写累加——那样「六项分别加」这件事会有第二份实现。
+     */
+    public DailyNutrition daily(LocalDate date) {
+        List<MealDetail> dayMeals = mealsOn(date);
+        Nutrition total = NutritionCalculator.sum(dayMeals.stream().map(MealDetail::nutrition).toList());
+        int itemCount = dayMeals.stream().mapToInt(d -> d.items().size()).sum();
+        return new DailyNutrition(date, total, dayMeals.size(), itemCount);
+    }
+
+    /** 组装一餐的详情：食物名 + 每个条目的营养值 + 合计。 */
+    private MealDetail detail(Meal meal, List<MealItem> mealItems) {
+        Map<Long, Food> foodById = foods
+                .findAllById(mealItems.stream().map(i -> i.foodId).distinct().toList())
+                .stream()
+                .collect(Collectors.toMap(f -> f.id, f -> f));
+
+        List<ItemDetail> details = new ArrayList<>();
+        List<Nutrition> each = new ArrayList<>();
+        for (MealItem item : mealItems) {
+            Food food = foodById.get(item.foodId);
+            if (food == null) {
+                // 库里 meal_item.food_id 是指向 food(id) 的裸外键（没有 ON DELETE CASCADE），
+                // 且连接启用了 foreign_keys——所以这条**不可达**。真到了这里说明数据被绕过
+                // 外键改过了；静默按 0 算会让这一餐少算一份热量，宁可响亮地报出来。
+                throw new IllegalStateException(
+                        "数据不一致：meal_item " + item.id + " 指向了不存在的食物 " + item.foodId);
+            }
+            Nutrition n = NutritionCalculator.forGrams(per100(food), item.grams);
+            details.add(new ItemDetail(item.id, item.foodId, food.nameZh, item.orderIndex,
+                    item.amount, item.unitName, item.grams, n));
+            each.add(n);
+        }
+        return new MealDetail(meal.id, meal.mealDate, meal.slot, meal.eatenAt, meal.note,
+                List.copyOf(details), NutritionCalculator.sum(each));
     }
 
     /** 某食物的份量单位表，转成 {@code calc} 层认的形状。 */
