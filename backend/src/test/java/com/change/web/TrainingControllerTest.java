@@ -107,4 +107,33 @@ class TrainingControllerTest {
         mvc.perform(get("/api/sessions/999999"))
                 .andExpect(status().isNotFound());
     }
+
+    /**
+     * 404 的正文必须是**我们写的那句话**，而不是 Spring 的默认错误体。
+     *
+     * <p>这条是**真机端到端**跑出来的：前端在真机上打开一个不存在的训练时，界面上只有英文的
+     * `Not Found`。根因是 {@code ResponseStatusException} 默认由 Spring 渲染成
+     * {@code {"timestamp":…,"status":404,"error":"Not Found","path":…}}——reason 里那句中文
+     * **根本不出现**（默认 {@code server.error.include-message=never}）。
+     * {@code ApiErrors} 现在把它收进与 400 同一套 {@code {error}} 形状。
+     *
+     * <p><b>这条测试在 MockMvc 里到底杀得掉什么（变异实测后的诚实结论）</b>：
+     * 把 {@code ApiErrors} 那个 handler 的注解改成匹配不到的类型，这一条会红（报
+     * {@code No value at JSON path "$.error"}）——但**不是因为**正文变成了 Spring 的默认体，
+     * 而是因为 <b>MockMvc 不跑 {@code /error} 那一页</b>，没有 handler 时正文干脆是空的。
+     * 换句话说：`status 仍是 404` 与 `error 是那句中文` 两条在 MockMvc 里有牙齿，
+     * 而 `timestamp` / `path` **不该存在**那两条在这里是**恒真**的——真正给它们牙齿的是
+     * Rust 侧那条真机 e2e（`end_to_end_proxy_reads_and_reports_statuses_from_the_real_backend`
+     * 里的 `!body.contains("timestamp")`，它打的是真实服务器）。
+     * 留着它们是因为它们把契约写下来了，而且哪天有人改成真的走 `/error` 页就会响。
+     */
+    @Test
+    void a_missing_session_carries_our_reason_not_springs_default_error_body() throws Exception {
+        mvc.perform(get("/api/sessions/999999"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("找不到这次训练: 999999"))
+                // 恒真（MockMvc 不跑 /error 页）；真正的守卫在 Rust 侧的真机 e2e
+                .andExpect(jsonPath("$.timestamp").doesNotExist())
+                .andExpect(jsonPath("$.path").doesNotExist());
+    }
 }

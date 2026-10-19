@@ -1164,11 +1164,26 @@ mod tests {
             bad.body
         );
 
-        // (5) 一个不存在的路径 → 404 也是 Ok（不是 Err）
+        // (5) 一个不存在的路径 → 404 也是 Ok（不是 Err），且正文得是**我们自己那句话**
+        //
+        // 这一条是真机跑出来的缺口：原来这里只能拿到 Spring 的默认错误体
+        // `{"timestamp":…,"error":"Not Found","path":…}`——`TrainingController` reason 里那句
+        // 中文根本不出现，前端界面上只有英文的 `Not Found`。ApiErrors 补了
+        // ResponseStatusException 的 handler 之后，正文才变成 `{"error":"找不到这次训练: …"}`。
         let missing = crate::http::api_request(port, "GET", "/api/sessions/999999", None)
             .unwrap_or_else(|e| panic!("不存在的训练应当回 404 而不是传输失败：{e}"));
         assert_eq!(missing.status, 404);
         println!("[e2e-proxy] 404 正文 = {}", missing.body);
+        assert!(
+            missing.body.contains("找不到这次训练"),
+            "404 的正文该带我们自己那句话（不是 Spring 默认的 Not Found），实际 {}",
+            missing.body
+        );
+        assert!(
+            !missing.body.contains("timestamp"),
+            "404 的正文不该是 Spring 的默认错误体（那说明 ApiErrors 那个 handler 没生效），实际 {}",
+            missing.body
+        );
 
         b.shutdown();
         println!("[e2e-proxy] shutdown() 已调用");
