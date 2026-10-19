@@ -1,5 +1,6 @@
 package com.change.web;
 
+import com.change.service.ExerciseDetailService;
 import com.change.service.ExerciseImportService;
 import com.change.service.ExerciseNameZhService;
 import com.change.service.ExerciseQueryService;
@@ -52,17 +53,20 @@ public class ExerciseController {
     private final ExerciseNameZhService nameZhService;
     private final LastPerformanceService lastPerformanceService;
     private final ExerciseQueryService query;
+    private final ExerciseDetailService details;
     private final JdbcTemplate jdbc;
 
     public ExerciseController(ExerciseImportService importService,
                               ExerciseNameZhService nameZhService,
                               LastPerformanceService lastPerformanceService,
                               ExerciseQueryService query,
+                              ExerciseDetailService details,
                               JdbcTemplate jdbc) {
         this.importService = importService;
         this.nameZhService = nameZhService;
         this.lastPerformanceService = lastPerformanceService;
         this.query = query;
+        this.details = details;
         this.jdbc = jdbc;
     }
 
@@ -78,6 +82,20 @@ public class ExerciseController {
             @RequestParam(required = false) String category,
             @RequestParam(required = false) Integer limit) {
         return query.search(muscleGroupId, q, category, limit);
+    }
+
+    /**
+     * 动作详情：做法（中英文）与肌群，给「点一个动作看它怎么做」的面板用。
+     *
+     * <p>不存在时 404 + {@code {error}}（见 {@code ApiErrors}）；存在但没有任何做法/肌群时
+     * 仍是 200——「这个动作没有原文」是数据事实，不是请求错误。
+     *
+     * <p>返回值刻意只包含前端需要的九个键，不返回 {@code source_id} / {@code note} /
+     * {@code archived}：每多一个键都是要维护的契约。
+     */
+    @GetMapping("/{id}")
+    public ExerciseDetailService.ExerciseDetail detail(@PathVariable long id) {
+        return details.detail(id);
     }
 
     /** 只读状态。 */
