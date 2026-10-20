@@ -60,6 +60,15 @@ public class Exercise {
     @Column(name = "instructions")
     public String instructions;
 
+    /**
+     * 动作做法的中文译文，由 {@code seed/instructions-zh.json} 在启动时写入。
+     *
+     * <p>与上面的英文原文分列存放：原文是上游数据，覆盖后取不回来；译文是派生的，
+     * 可重生成，并且漏译或译错时还能回退到原文。可能为 null。
+     */
+    @Column(name = "instructions_zh")
+    public String instructionsZh;
+
     /** 归档而不是删除：旧训练记录仍要能解析出这个动作的名字。 */
     @Column(nullable = false)
     public boolean archived = false;

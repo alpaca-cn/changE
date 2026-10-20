@@ -146,6 +146,11 @@ class MigrationTest {
      * V8 的 checksum 从实跑后的库里读出后钉进来：
      *   8:exercise category and instructions。
      * V1–V7 的七个值一个都没变——V8 只加了一个新文件，没有回头改已发布的迁移。
+     *
+     * 「动作详情面板与中文做法」的 Task 1 新增 V9（exercise 加 instructions_zh 列），这条
+     * 再次如约变红，V9 的 checksum 从实跑后的库里读出后钉进来：
+     *   9:exercise instructions zh。
+     * V1–V8 的八个值一个都没变——V9 只加了一个新文件，没有回头改已发布的迁移。
      */
     @Test
     void published_migrations_are_byte_frozen() {
@@ -154,7 +159,8 @@ class MigrationTest {
                 String.class))
                 .containsExactly(
                         "1:1904735359", "2:1428719958", "3:1207314981", "4:1460974919",
-                        "5:-468526944", "6:1910071904", "7:-1279212921", "8:-1311493510");
+                        "5:-468526944", "6:1910071904", "7:-1279212921", "8:-1311493510",
+                        "9:2124729678");
     }
 
     private String readMigration(String fileName) {

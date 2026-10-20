@@ -1,6 +1,8 @@
 package com.change.web;
 
+import com.change.service.ExerciseDetailService;
 import com.change.service.ExerciseImportService;
+import com.change.service.ExerciseInstructionsZhService;
 import com.change.service.ExerciseNameZhService;
 import com.change.service.ExerciseQueryService;
 import com.change.service.LastPerformanceService;
@@ -50,19 +52,25 @@ public class ExerciseController {
 
     private final ExerciseImportService importService;
     private final ExerciseNameZhService nameZhService;
+    private final ExerciseInstructionsZhService instructionsZhService;
     private final LastPerformanceService lastPerformanceService;
     private final ExerciseQueryService query;
+    private final ExerciseDetailService details;
     private final JdbcTemplate jdbc;
 
     public ExerciseController(ExerciseImportService importService,
                               ExerciseNameZhService nameZhService,
+                              ExerciseInstructionsZhService instructionsZhService,
                               LastPerformanceService lastPerformanceService,
                               ExerciseQueryService query,
+                              ExerciseDetailService details,
                               JdbcTemplate jdbc) {
         this.importService = importService;
         this.nameZhService = nameZhService;
+        this.instructionsZhService = instructionsZhService;
         this.lastPerformanceService = lastPerformanceService;
         this.query = query;
+        this.details = details;
         this.jdbc = jdbc;
     }
 
@@ -80,6 +88,20 @@ public class ExerciseController {
         return query.search(muscleGroupId, q, category, limit);
     }
 
+    /**
+     * 动作详情：做法（中英文）与肌群，给「点一个动作看它怎么做」的面板用。
+     *
+     * <p>不存在时 404 + {@code {error}}（见 {@code ApiErrors}）；存在但没有任何做法/肌群时
+     * 仍是 200——「这个动作没有原文」是数据事实，不是请求错误。
+     *
+     * <p>返回值刻意只包含前端需要的九个键，不返回 {@code source_id} / {@code note} /
+     * {@code archived}：每多一个键都是要维护的契约。
+     */
+    @GetMapping("/{id}")
+    public ExerciseDetailService.ExerciseDetail detail(@PathVariable long id) {
+        return details.detail(id);
+    }
+
     /** 只读状态。 */
     @GetMapping("/status")
     public Map<String, Object> status() {
@@ -93,13 +115,20 @@ public class ExerciseController {
     }
 
     /**
-     * 安装（幂等），并把中文名一并写好——只导入动作不写名字的话，库会停在「有动作、没中文名」的
-     * 半成品状态（要等下一次重启才补）。响应是导入结果：inserted / skipped / musclesInserted。
+     * 安装（幂等），并把中文名与中文做法一并写好——只导入动作不写这两样的话，库会停在
+     * 「有动作、没中文名/没中文做法」的半成品状态（要等下一次重启才补）。重新导入是
+     * 「删了重建」，不在这里补，871 条中文做法会静默消失在 NULL 里。
+     *
+     * <p><b>顺序与启动时一致</b>（{@code @Order(1)} 导入 → {@code @Order(2)} 中文名 →
+     * {@code @Order(3)} 中文做法）：两者互不依赖，但中文名先、中文做法后是启动路径上的既有顺序。
+     *
+     * <p>响应是导入结果：inserted / skipped / musclesInserted。
      */
     @PostMapping("/import")
     public ExerciseImportService.Result importAll() {
         ExerciseImportService.Result result = importService.importAll();
         nameZhService.applyMappingFromClasspath();
+        instructionsZhService.applyMappingFromClasspath();
         return result;
     }
 
