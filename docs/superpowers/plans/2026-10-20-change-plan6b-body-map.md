@@ -132,7 +132,7 @@ frontend/src/
 - Create: `frontend/src/assets/body-map/LICENSE`
 - Create: `frontend/src/assets/body-map/NOTICE`
 
-- [ ] **Step 1: 下载并 vendor**
+- [x] **Step 1: 下载并 vendor**
 
 ```powershell
 $dst = 'frontend/src/assets/body-map'
@@ -145,21 +145,21 @@ Invoke-WebRequest 'https://fastly.jsdelivr.net/gh/vulovix/body-muscles@main/LICE
 
 **记录你实际用的 commit sha**（`@main` 会漂）：查 `https://api.github.com/repos/vulovix/body-muscles/commits/main` 拿 sha，写进 NOTICE。
 
-- [ ] **Step 2: 写 NOTICE**
+- [x] **Step 2: 写 NOTICE**
 
 必须含：项目名、作者、来源 URL、**实际使用的 commit sha**、许可（Apache-2.0）、以及一句「文件原样 vendor，未修改」。
 
-- [ ] **Step 3: 给两个 .ts 文件加出处头注释**
+- [x] **Step 3: 给两个 .ts 文件加出处头注释**
 
 在两个文件**开头**加一段注释（**不改文件里任何其它内容**），写明来源、sha、许可、以及「未修改」。
 
-- [ ] **Step 4: 确认它能被 import**
+- [x] **Step 4: 确认它能被 import**
 
 写一个临时脚本（或直接跑一次 `pnpm build`）确认这两个文件能被 TS 正常解析——它们是别人仓库里的 TS，可能引用它自己的类型。
 
 **如果它们 import 了自己的 `../types`，把那些被引用的类型也一起 vendor，或者把 import 去掉并内联类型。** 说明你选了哪种、为什么。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ---
 
@@ -170,7 +170,7 @@ Invoke-WebRequest 'https://fastly.jsdelivr.net/gh/vulovix/body-muscles@main/LICE
 - Create: `frontend/src/assets/body-map/region-ids.ts`（把素材里的 id 抽成一个常量数组，供测试与运行时共用）
 - Test: `backend/src/test/java/com/change/MuscleRegionMappingTest.java`
 
-- [ ] **Step 1: 写迁移**
+- [x] **Step 1: 写迁移**
 
 按上面那张映射表，17 条 `UPDATE`：
 
@@ -188,7 +188,7 @@ UPDATE muscle_group SET region_ids = 'chest-upper-left,chest-lower-left,chest-up
 -- ……其余 16 条，照映射表
 ```
 
-- [ ] **Step 2: 抽出 region-ids.ts**
+- [x] **Step 2: 抽出 region-ids.ts**
 
 从 vendored 的两个文件里**用脚本**（不是手抄）抽出全部 `id`，生成：
 
@@ -200,7 +200,7 @@ export const ALL_REGION_IDS = [...FRONT_REGION_IDS, ...BACK_REGION_IDS]
 
 **必须是脚本抽的**，因为手抄 89 个 id 一定会错一个。
 
-- [ ] **Step 3: 写交叉校验测试（核心）**
+- [x] **Step 3: 写交叉校验测试（核心）**
 
 `MuscleRegionMappingTest` 至少断言：
 
@@ -213,15 +213,15 @@ export const ALL_REGION_IDS = [...FRONT_REGION_IDS, ...BACK_REGION_IDS]
 
 > 这条测试的本质：**把「漂」的一方（DB）与「不漂」的一方（vendored 素材）对起来**。素材是别人仓库的快照、不会变；DB 是我们的、会被改。测试守住的是「改 DB 时别写错 id」。
 
-- [ ] **Step 4: 更新 MigrationTest 的 checksum**
+- [x] **Step 4: 更新 MigrationTest 的 checksum**
 
 V10 的 checksum 从实跑后的 `flyway_schema_history` 读出，**不能猜**。
 
-- [ ] **Step 5: 跑全量测试**
+- [x] **Step 5: 跑全量测试**
 
 Run: `cd backend && mvn -B clean test`
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ---
 
@@ -232,7 +232,7 @@ Run: `cd backend && mvn -B clean test`
 - Create: `backend/src/main/java/com/change/web/BodyMapController.java`
 - Test: `backend/src/test/java/com/change/service/BodyMapServiceTest.java`、`backend/src/test/java/com/change/web/BodyMapControllerTest.java`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 至少覆盖：
 
@@ -243,7 +243,7 @@ Run: `cd backend && mvn -B clean test`
 5. 响应形状断言（键集合）——照 `ProgressControllerTest` / `ExerciseControllerTest` 的做法
 6. `?date=` 不给时默认今天
 
-- [ ] **Step 2: 实现**
+- [x] **Step 2: 实现**
 
 要点：
 
@@ -252,13 +252,13 @@ Run: `cd backend && mvn -B clean test`
 - 响应：`{weekStart, weekEnd, today, muscles:[{muscleGroupId, nameZh, nameEn, sets, min, max, status, lastTrainedOn, daysSince, regionIds}]}`
   - **`regionIds` 一起返回**，让前端不需要自己维护一份映射（前端只做「id → SVG path」的匹配）
 
-- [ ] **Step 3: 跑测试**
+- [x] **Step 3: 跑测试**
 
-- [ ] **Step 4: 真实 HTTP 打一遍**
+- [x] **Step 4: 真实 HTTP 打一遍**
 
 贴一条真实响应（含至少一块 `lastTrainedOn` 非 null 的）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ---
 
@@ -268,7 +268,7 @@ Run: `cd backend && mvn -B clean test`
 - Create: `frontend/src/components/BodyMap.vue`
 - Test: `frontend/src/components/BodyMap.spec.ts`
 
-- [ ] **Step 1: 契约先定死（设计文档冻结的）**
+- [x] **Step 1: 契约先定死（设计文档冻结的）**
 
 ```ts
 defineProps<{
@@ -282,7 +282,7 @@ defineEmits<{
 
 **这两个名字是设计文档冻结的，不要改名**（第二阶段换 Three.js 时只换渲染层，契约不动）。
 
-- [ ] **Step 2: 写失败的测试**
+- [x] **Step 2: 写失败的测试**
 
 至少覆盖：
 
@@ -294,7 +294,7 @@ defineEmits<{
 6. 三种 `mode` 的着色函数不同（给同一份数据、不同 mode，断言着色标记不同）
 7. 颜色全部来自 token（`?raw` 式断言：`var(--` > 0，`#hex` == 0）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 要点：
 
@@ -307,9 +307,9 @@ defineEmits<{
 - **`muscle-click` 传 `muscleGroupId`**：需要一张「区域 id → muscleGroupId」的反查表，从 `volumeByMuscle` 的 `regionIds` 反推
 - 未映射的 24 个区域渲染成**基线灰**，不可点
 
-- [ ] **Step 4: 跑测试 + 构建**
+- [x] **Step 4: 跑测试 + 构建**
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ---
 
@@ -321,11 +321,11 @@ defineEmits<{
 - Create: `frontend/src/api/body-map.ts`
 - Test: `frontend/src/api/body-map.spec.ts`、`frontend/src/views/BodyMapView.spec.ts`
 
-- [ ] **Step 1: 客户端**
+- [x] **Step 1: 客户端**
 
 `bodyMapVolume(date?)` → `GET /api/body-map/volume`，走 `callApi`。**用 Task 3 Step 4 的真实响应当 fixture**，注释写明出处。
 
-- [ ] **Step 2: 写失败的测试**
+- [x] **Step 2: 写失败的测试**
 
 1. 页面加载 → 请求发出 → 画布渲染、**默认模式是「容量」**
 2. **切模式按钮有三个**，点击切换着色（断言 `mode` 传给了 `<BodyMap />`）
@@ -335,21 +335,21 @@ defineEmits<{
 6. **加载中 / 失败**两态都有
 7. 颜色全部来自 token
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 **布局**：左侧画布区（占大头）+ 右侧面板（固定宽）。模式切换在画布区顶部。
 
 **右侧面板内容**（照设计文档的流程 ④）：肌群中文名、本周组数 / 建议区间、状态、该肌群的动作列表。
 
-- [ ] **Step 4: 跑测试 + 构建**
+- [x] **Step 4: 跑测试 + 构建**
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ---
 
 ## Task 6: 端到端验收
 
-- [ ] **Step 1: 干净库全链路**
+- [x] **Step 1: 干净库全链路**
 
 ```powershell
 cd backend
@@ -372,27 +372,27 @@ java -jar target/change-backend-0.1.0-SNAPSHOT.jar
 | 5 | `regionIds` | 胸部是 4 个 `chest-*-*` id，且**都在素材里存在** |
 | 6 | 关掉后端 | 无残留进程 |
 
-- [ ] **Step 2: 记进总览**
+- [x] **Step 2: 记进总览**
 
 在 overview 的「动作详情面板」之后插一节，写清实测数字、映射表规模（17 → 65 区域）、以及**两处刻意不映射的判断**。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ---
 
 ## 完成标准
 
-- [ ] `cd backend && mvn -B clean test` 全绿，**报告实际条数**（基线 336）
-- [ ] `cd frontend && pnpm test` 全绿（基线 243）；`pnpm build` 退 0
-- [ ] **`region_ids` 里的每一个 id 都在 vendored 素材里存在**（交叉校验测试）
-- [ ] **同一区域不会属于两块肌群**（`glutes` / `abductors` 那条）
-- [ ] 空库返回 **17 块全部**（0 组不消失）
-- [ ] `lastTrainedOn` / `daysSince` 对「从没练过」是 **null**，不是 0
-- [ ] 三种模式都能切换，着色函数确实不同
-- [ ] 点肌肉 emit 的是 **`muscleGroupId`** 而不是区域 id
-- [ ] **`package.json` 一字不改**（没加任何依赖）
-- [ ] 素材的 LICENSE 与 NOTICE 都在，NOTICE 里记了实际 commit sha
-- [ ] `git status --short` 无输出
+- [x] `cd backend && mvn -B clean test` 全绿，**报告实际条数**（基线 336）
+- [x] `cd frontend && pnpm test` 全绿（基线 243）；`pnpm build` 退 0
+- [x] **`region_ids` 里的每一个 id 都在 vendored 素材里存在**（交叉校验测试）
+- [x] **同一区域不会属于两块肌群**（`glutes` / `abductors` 那条）
+- [x] 空库返回 **17 块全部**（0 组不消失）
+- [x] `lastTrainedOn` / `daysSince` 对「从没练过」是 **null**，不是 0
+- [x] 三种模式都能切换，着色函数确实不同
+- [x] 点肌肉 emit 的是 **`muscleGroupId`** 而不是区域 id
+- [x] **`package.json` 一字不改**（没加任何依赖）
+- [x] 素材的 LICENSE 与 NOTICE 都在，NOTICE 里记了实际 commit sha
+- [x] `git status --short` 无输出
 
 ## 实施修正（落地时发现的问题）
 
