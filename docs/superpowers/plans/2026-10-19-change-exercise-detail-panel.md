@@ -122,14 +122,14 @@ frontend/src/
 - Modify: `backend/src/test/java/com/change/MigrationTest.java`（冻结 V9 的 checksum）
 - Modify: `backend/src/test/java/com/change/SchemaTest.java`（如果它有 `exercise` 的列快照）
 
-- [ ] **Step 1: 先读真实的既有形态，别照抄本计划**
+- [x] **Step 1: 先读真实的既有形态，别照抄本计划**
 
 ```bash
 grep -n "ADD COLUMN" backend/src/main/resources/db/migration/V8__exercise_category_and_instructions.sql
 grep -n "instructions\|category" backend/src/main/java/com/change/domain/Exercise.java
 ```
 
-- [ ] **Step 2: 写迁移**
+- [x] **Step 2: 写迁移**
 
 ```sql
 -- 动作的分步做法（中文）。
@@ -144,11 +144,11 @@ grep -n "instructions\|category" backend/src/main/java/com/change/domain/Exercis
 ALTER TABLE exercise ADD COLUMN instructions_zh TEXT;
 ```
 
-- [ ] **Step 3: 实体加字段**
+- [x] **Step 3: 实体加字段**
 
 照 `Exercise.instructions` 的写法加一个 `public String instructionsZh;`（`@Column(name = "instructions_zh")`）。
 
-- [ ] **Step 4: 跑全量测试，按需更新两个快照测试**
+- [x] **Step 4: 跑全量测试，按需更新两个快照测试**
 
 Run: `cd backend && mvn -B clean test`
 
@@ -158,7 +158,7 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 
 **V9 的 checksum 必须从实跑后的 `flyway_schema_history` 读出，不能猜。**
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ---
 
@@ -171,7 +171,7 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 - Create: `scripts/merge-instructions-zh.py`（或放 `tools/`，按项目现有惯例）
 - Test: `backend/src/test/java/com/change/seed/InstructionsZhFixturesTest.java`（校验合并产物）
 
-- [ ] **Step 1: 定分批产物的形状**
+- [x] **Step 1: 定分批产物的形状**
 
 每个 `part-NN.json`：
 
@@ -190,7 +190,7 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 - **值是一段段的中文**（数组，不是一整段用 `\n` 拼）——**保留段落结构**，否则前端没法做有序列表。
 - **每条的段数必须与英文原文一致**。少一段 = 丢了一步做法，而这在页面上看不出来。
 
-- [ ] **Step 2: 写合并脚本**
+- [x] **Step 2: 写合并脚本**
 
 `merge-instructions-zh.py` 要做：
 
@@ -204,7 +204,7 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 
 同理，`schema.json` 与 `LICENSE.md` 也在那个目录下。
 
-- [ ] **Step 3: 写校验测试**
+- [x] **Step 3: 写校验测试**
 
 `InstructionsZhFixturesTest` 至少断言：
 
@@ -215,7 +215,7 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 
 > 这条测试跑在**仓库里的产物**上，不需要网络——它守的是「合并之后没丢段、没漏条」。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ---
 
@@ -226,7 +226,7 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 **Files:**
 - Create: `backend/src/main/resources/seed/instructions-zh/part-01.json`（40 条）
 
-- [ ] **Step 1: 翻译约定（写进 MANIFEST.md，后面每批都按它）**
+- [x] **Step 1: 翻译约定（写进 MANIFEST.md，后面每批都按它）**
 
 | 规则 | 为什么 |
 |---|---|
@@ -237,7 +237,7 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 | **第二人称祈使句**（「躺下…」「保持…」），不用「你应该…」 | 操作指引的通行写法 |
 | **不增不减内容**：不补充安全提示、不省略步骤 | 译文不是再创作；安全提示应由我们单独写，不由翻译夹带 |
 
-- [ ] **Step 2: 翻第一批 40 条**
+- [x] **Step 2: 翻第一批 40 条**
 
 按数据集顺序的前 40 条（`free-exercise-db` 的 `dist/exercises.json` 顺序），落盘 `part-01.json`。
 
@@ -247,11 +247,11 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 - 确认段数一一对应
 - 确认没有把数字写错
 
-- [ ] **Step 3: 让用户看一眼这 40 条**
+- [x] **Step 3: 让用户看一眼这 40 条**
 
 **这是本计划唯一一次停下来等确认。** 把 3 条并列贴出来，问「这个风格行不行」。**行 → 继续；不行 → 改约定，重翻这 40 条（很便宜）。**
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ---
 
@@ -260,13 +260,13 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 **Files:**
 - Create: `part-02.json` … `part-22.json`
 
-- [ ] **Step 1: 按 40 条一批切**
+- [x] **Step 1: 按 40 条一批切**
 
 剩 836 条 → 21 批（每批 40，最后一批 36）。批次划分**按数据集顺序**（与 `part-01` 连续），这样「哪条在哪批」是确定的、可复现的。
 
 **批边界必须写进 MANIFEST.md**（第几批 = 数据集的第几条到第几条），否则将来没法验证「有没有漏」。
 
-- [ ] **Step 2: 逐批翻，每批落自己的文件**
+- [x] **Step 2: 逐批翻，每批落自己的文件**
 
 **每批是独立任务**。批与批之间**没有依赖**，所以可以并行（各自写自己的文件）；但**合并必须在全部完成后做**（Task 5）。
 
@@ -276,7 +276,7 @@ Expected: **`SchemaTest` 与 `MigrationTest` 会红**——它们对 `exercise` 
 2. 落盘 `part-NN.json`
 3. 提交（一批一个提交，或几批合并一个提交——都行，但**每批的文件必须是一次成型的**，不要留下半成品）
 
-- [ ] **Step 3: 全部完成后跑合并脚本**
+- [x] **Step 3: 全部完成后跑合并脚本**
 
 Run: `python scripts/merge-instructions-zh.py`
 
@@ -284,11 +284,11 @@ Expected: **`871/871` 覆盖**、`段数全部一致`、无重复键、跳过 5 
 
 **任何一条不满足就停下来修那一批**，不要用「跳过」的方式让脚本通过。
 
-- [ ] **Step 4: 跑校验测试**
+- [x] **Step 4: 跑校验测试**
 
 Run: `cd backend && mvn -B -q -Dtest=InstructionsZhFixturesTest test`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ---
 
@@ -301,7 +301,7 @@ Run: `cd backend && mvn -B -q -Dtest=InstructionsZhFixturesTest test`
 - Create: `backend/src/main/java/com/change/config/ExerciseInstructionsZhRunner.java`
 - Test: `backend/src/test/java/com/change/service/ExerciseInstructionsZhServiceTest.java`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 至少覆盖：
 
@@ -311,7 +311,7 @@ Run: `cd backend && mvn -B -q -Dtest=InstructionsZhFixturesTest test`
 4. **映射里出现库里没有的动作名** → 计入「找不到」而不是抛异常（与 `ExerciseNameZhService` 的 `skippedNotImported` 同一个处理）
 5. 返回的 `Result` 计数正确
 
-- [ ] **Step 2: 实现**
+- [x] **Step 2: 实现**
 
 要点：
 
@@ -319,17 +319,17 @@ Run: `cd backend && mvn -B -q -Dtest=InstructionsZhFixturesTest test`
 - `applyMappingFromClasspath()` 读 `seed/instructions-zh.json`
 - 写库用 `JdbcTemplate`（与中文名那套一致，不引入 JPA 的批量写）
 
-- [ ] **Step 3: 启动 Runner**
+- [x] **Step 3: 启动 Runner**
 
 `@Component` + `ApplicationArguments` runner，**排在中文名 Runner 之后**（用 `@Order` 或按名字判断）。
 
 日志格式照中文名那条：`动作中文做法：写入 871 / 已有跳过 0 / 原文为空 5 / 找不到导入动作 0`。
 
-- [ ] **Step 4: 跑全量测试**
+- [x] **Step 4: 跑全量测试**
 
 Run: `cd backend && mvn -B clean test`
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ---
 
@@ -342,7 +342,7 @@ Run: `cd backend && mvn -B clean test`
 - Modify: `backend/src/main/java/com/change/web/ExerciseController.java`
 - Test: `backend/src/test/java/com/change/web/ExerciseControllerTest.java`（该文件已存在，**加测试不要重写**）
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 至少覆盖：
 
@@ -353,7 +353,7 @@ Run: `cd backend && mvn -B clean test`
 5. 不存在的 id → **404** + `{error}`
 6. **响应形状断言**（键集合）——照计划 6a `ProgressControllerTest` 的做法，因为前端会手写一份 TS interface，两处定义可以漂
 
-- [ ] **Step 2: 实现**
+- [x] **Step 2: 实现**
 
 要点：
 
@@ -362,17 +362,17 @@ Run: `cd backend && mvn -B clean test`
 - 404 用 `ResponseStatusException(NOT_FOUND, "找不到这个动作: " + id)` → `ApiErrors` 翻成 `{error}`
 - **不要**在详情里返回 `source_id` / `note` / `archived`（前端不需要，返回了就是又一处要维护的契约）
 
-- [ ] **Step 3: 跑测试**
+- [x] **Step 3: 跑测试**
 
 Run: `cd backend && mvn -B clean test`
 
-- [ ] **Step 4: 用真实 HTTP 打一遍**
+- [x] **Step 4: 用真实 HTTP 打一遍**
 
 起后端（干净库或现成库都行），贴出**一条真实响应**（含 `instructionsZh` 与`muscles`），以及一条 404 的响应。
 
 > 照计划 6a Task 2 的做法。**必须贴原始 JSON**——它是 Task 7 前端 fixture 的出处。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ---
 
@@ -384,7 +384,7 @@ Run: `cd backend && mvn -B clean test`
 - Test: `frontend/src/api/exercise-detail.spec.ts`、`frontend/src/views/ExerciseDetailPanel.spec.ts`
 - Create（建议）：`frontend/src/components/ExerciseDetailPanel.vue`
 
-- [ ] **Step 1: 先读现约定**
+- [x] **Step 1: 先读现约定**
 
 ```
 frontend/src/api/training.ts          （callApi / ApiError）
@@ -393,7 +393,7 @@ frontend/src/views/BodyDataView.vue   （最新的成品页：token 用法、空
 frontend/src/api/body.ts              （跟 './training' 的关系）
 ```
 
-- [ ] **Step 2: 写失败的测试**
+- [x] **Step 2: 写失败的测试**
 
 客户端：
 
@@ -412,7 +412,7 @@ frontend/src/api/body.ts              （跟 './training' 的关系）
 7. **复制按钮**：点一下调用 `navigator.clipboard.writeText`（测试里 mock），**且存在失败降级**（clipboard 不可用时把 URL 显示出来让人手选）
 8. 颜色全部来自 token（照 Task 5/6 的 `?raw` 式断言）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 **面板形态**：训练记录页里选中的动作旁出现「看做法」按钮 → 点击打开一个**右侧抽屉或弹层**（不跳页——那会丢掉已经填的组）。
 
@@ -425,7 +425,7 @@ frontend/src/api/body.ts              （跟 './training' 的关系）
 - **`<a href>` 不要用**：Tauri 的 WebView 里点它会**把应用导航走**（页面变空白），除非另装 opener。只显示成 `<code>` 文本 + 复制按钮
 - 中文做法用 `<ol>` 渲染（段数就是步骤数）
 
-- [ ] **Step 4: 跑测试 + 构建**
+- [x] **Step 4: 跑测试 + 构建**
 
 Run:
 ```powershell
@@ -436,13 +436,13 @@ pnpm build
 
 Expected: 全绿（**总条数 = 216 + 你新增的**）；`pnpm build` **退 0**。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ---
 
 ## Task 8: 端到端验收
 
-- [ ] **Step 1: 干净库全链路**
+- [x] **Step 1: 干净库全链路**
 
 ```powershell
 cd backend
@@ -465,25 +465,25 @@ java -jar target/change-backend-0.1.0-SNAPSHOT.jar
 | 5 | `instructionsZh` 的段落数 | 与英文原文段数**一致**（抽 3 条核） |
 | 6 | 关掉后端 | 无残留 java 进程 |
 
-- [ ] **Step 2: 记进总览**
+- [x] **Step 2: 记进总览**
 
 在 `docs/superpowers/plans/2026-10-14-change-phase1-overview.md` 的「计划 6a」之后插入一节，写清：翻译条数、批次数、Coverage、以及「视频只给链接、不拉起浏览器」这个决定及其理由。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ---
 
 ## 完成标准
 
-- [ ] `cd backend && mvn -B clean test` 全绿，**报告实际条数**（基线 315）
-- [ ] `cd frontend && pnpm test` 全绿（基线 216）；`pnpm build` 退 0
-- [ ] **876 条里 871 条有中文做法**（5 条原文为空）；`instructions-zh.json` 覆盖 **871/871**（不是 876——那 5 条不该在产物里）
-- [ ] **每条的段数与英文原文一致**（由合并脚本与 `InstructionsZhFixturesTest` 双重守）
-- [ ] `GET /api/exercises/{id}` 返回 `instructions` / `instructionsZh` / `muscles`，有 404
-- [ ] 前端面板三种状态都覆盖：有中文 / 只有英文 / 都没有
-- [ ] 搜索链接**可复制**，且 clipboard 不可用时有降级
-- [ ] **没有新增任何外壳能力**（`capabilities` 与 `generate_handler!` 不变）
-- [ ] `git status --short` 无输出
+- [x] `cd backend && mvn -B clean test` 全绿，**报告实际条数**（基线 315）
+- [x] `cd frontend && pnpm test` 全绿（基线 216）；`pnpm build` 退 0
+- [x] **876 条里 871 条有中文做法**（5 条原文为空）；`instructions-zh.json` 覆盖 **871/871**（不是 876——那 5 条不该在产物里）
+- [x] **每条的段数与英文原文一致**（由合并脚本与 `InstructionsZhFixturesTest` 双重守）
+- [x] `GET /api/exercises/{id}` 返回 `instructions` / `instructionsZh` / `muscles`，有 404
+- [x] 前端面板三种状态都覆盖：有中文 / 只有英文 / 都没有
+- [x] 搜索链接**可复制**，且 clipboard 不可用时有降级
+- [x] **没有新增任何外壳能力**（`capabilities` 与 `generate_handler!` 不变）
+- [x] `git status --short` 无输出
 
 ## 实施修正（落地时发现的问题）
 
