@@ -60,6 +60,38 @@ function baseRules(overrides: Rule[] = []): Rule[] {
   ]
 }
 
+/**
+ * `GET /api/exercises/364` 的详情（JM 卧推）。
+ *
+ * 五个可区分的段落：**段数就是步骤号**——如果接线把段落弄丢/合并，
+ * 「第 3 个 li 的文字」会立刻对不上。
+ */
+const DETAIL_364 = JSON.stringify({
+  id: 364,
+  nameEn: 'JM Press',
+  nameZh: 'JM 卧推',
+  equipment: 'barbell',
+  isCompound: true,
+  category: 'strength',
+  instructions: 'Lie on a bench.\nPress the bar.',
+  instructionsZh: 'JM 第一步\nJM 第二步\nJM 第三步\nJM 第四步\nJM 第五步',
+  muscles: [{ muscleGroupId: 1, nameZh: '胸部', nameEn: 'chest', role: 'primary' }],
+})
+
+/** 第二个动作（id 154 · 三点支撑推胸）的详情，用来测「先发后到」的串台。 */
+const DETAIL_154 = JSON.stringify({
+  id: 154,
+  nameEn: 'Chest Push from 3 point stance',
+  nameZh: '三点支撑推胸',
+  equipment: 'medicine ball',
+  isCompound: true,
+  category: 'plyometrics',
+  instructions: 'Set up.\nPush.',
+  instructionsZh: '三点第一步\n三点第二步',
+  muscles: [{ muscleGroupId: 1, nameZh: '胸部', nameEn: 'chest', role: 'primary' }],
+})
+
+
 async function mountTraining(rules: Rule[] = baseRules()) {
   dispatch(rules)
   const wrapper = mount(TrainingView)
@@ -365,3 +397,157 @@ describe('训练记录页 · 历史', () => {
     expect(wrapper.text()).toContain('找不到这次训练: 999999')
   })
 })
+
+/**
+ * 「看做法」的**接缝**测试。
+ *
+ * `ExerciseDetailPanel.spec.ts` 测的是「给定 detail 对象，渲染对不对」；
+ * `exercise-detail.spec.ts` 测的是「给 id，路径与错误对不对」。两者都绿，
+ * 这条链仍可能整体断掉：按钮没绑、id 传错、请求没发、面板没打开、
+ * 打开时把已填的组清了。这一组只盯这条链。
+ *
+ * 挂起请求用 `mockImplementationOnce` 而不是改分派器：下一次 invoke 一定是
+ * 那次详情请求（点「看做法」不会并发别的请求），这样不用动既有 helper
+ * 就能断言「请求还没回来时不是空白」以及让两个响应乱序回来。
+ */
+describe('训练记录页 · 看做法（详情抽屉接线）', () => {
+  it('opening_the_panel_requests_that_exercise_and_keeps_the_filled_sets', async () => {
+    const wrapper = await mountTraining(
+      baseRules([['/api/exercises/364', { status: 200, body: DETAIL_364 }]]),
+    )
+    await pickFirstExercise(wrapper) // 364 · JM 卧推，预填 60 / 60 / 空
+
+    // 先把第一组改成一个与预填值不同的重量。面板打开后它必须原样还在——
+    // 这是「不跳页、不清表单」的直接证据。
+    await wrapper.findAll('.weight')[0].setValue('62.5')
+    expect(weights(wrapper)).toEqual(['62.5', '60', ''])
+
+    await wrapper.find('.look-up').trigger('click')
+    await flushPromises()
+
+    // 请求的是**选中动作的 id**，不是列表端点、也不是别的动作
+    expect(paths()).toContain('/api/exercises/364')
+    expect(paths().filter((p) => p === '/api/exercises/364')).toHaveLength(1)
+    expect(paths()).not.toContain('/api/exercises/154')
+
+    expect(wrapper.find('.panel').exists()).toBe(true)
+    expect(wrapper.find('.panel-title').text()).toBe('JM 卧推')
+
+    // 中文做法真的渲染出来了：5 段 → 5 步，第 3 步就是第 3 段
+    const steps = wrapper.findAll('ol.steps[data-lang="zh"] li')
+    expect(steps).toHaveLength(5)
+    expect(steps[2].text()).toBe('JM 第三步')
+
+    // 「不跳页」的证据：三行组与刚改的重量都还在
+    expect(wrapper.findAll('.set-row')).toHaveLength(3)
+    expect(weights(wrapper)).toEqual(['62.5', '60', ''])
+  })
+
+  it('a_404_from_the_detail_endpoint_is_shown_in_the_panel_with_the_server_message', async () => {
+    const wrapper = await mountTraining(
+      baseRules([
+        ['/api/exercises/364', { status: 404, body: { error: '找不到这个动作: 364' } }],
+      ]),
+    )
+    await pickFirstExercise(wrapper)
+
+    await wrapper.find('.look-up').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.panel').exists()).toBe(true)
+    expect(wrapper.find('.detail-error').text()).toBe('找不到这个动作: 364')
+    expect(wrapper.find('.detail-error').text()).not.toContain('加载失败')
+    // 失败也不该把已经填好的组清掉
+    expect(wrapper.findAll('.set-row')).toHaveLength(3)
+  })
+
+  it('the_panel_shows_a_loading_line_while_the_request_is_in_flight', async () => {
+    const wrapper = await mountTraining()
+    await pickFirstExercise(wrapper)
+
+    let resolveDetail!: (value: unknown) => void
+    invokeMock.mockImplementationOnce(
+      () =>
+        new Promise<unknown>((resolve) => {
+          resolveDetail = resolve
+        }),
+    )
+    await wrapper.find('.look-up').trigger('click')
+    await flushPromises()
+
+    // 请求还没回来：面板开着并明确说「正在取做法」，页面不是空白
+    expect(wrapper.find('.panel').exists()).toBe(true)
+    expect(wrapper.find('.loading').text()).toContain('正在取做法')
+    expect(wrapper.find('.loading').text()).toContain('…')
+    expect(wrapper.findAll('.set-row')).toHaveLength(3)
+
+    // 回来之后换成内容（加载态不是终点）
+    resolveDetail({ status: 200, body: DETAIL_364 })
+    await flushPromises()
+    expect(wrapper.find('.loading').exists()).toBe(false)
+    expect(wrapper.find('.panel-title').text()).toBe('JM 卧推')
+  })
+
+  it('a_slow_earlier_response_is_discarded_instead_of_overwriting_the_newer_exercise', async () => {
+    const wrapper = await mountTraining(
+      baseRules([
+        ['/api/exercises/364', { status: 200, body: DETAIL_364 }],
+        ['/api/exercises/154', { status: 200, body: DETAIL_154 }],
+      ]),
+    )
+    await pickFirstExercise(wrapper) // 364
+
+    // 第一次「看做法」：请求挂在飞行中
+    let resolveFirst!: (value: unknown) => void
+    invokeMock.mockImplementationOnce(
+      () =>
+        new Promise<unknown>((resolve) => {
+          resolveFirst = resolve
+        }),
+    )
+    await wrapper.find('.look-up').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.loading').exists()).toBe(true)
+
+    // 关掉面板，换第二个动作（154）再打开——这是真实能发生的「切两次」
+    await wrapper.find('.close').trigger('click')
+    await wrapper.findAll('.exercise')[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('三点支撑推胸')
+
+    let resolveSecond!: (value: unknown) => void
+    invokeMock.mockImplementationOnce(
+      () =>
+        new Promise<unknown>((resolve) => {
+          resolveSecond = resolve
+        }),
+    )
+    await wrapper.find('.look-up').trigger('click')
+    await flushPromises()
+
+    const detailPaths = paths().filter(
+      (p) => p.startsWith('/api/exercises/') && !p.endsWith('/last-performance'),
+    )
+    expect(detailPaths).toEqual(['/api/exercises/364', '/api/exercises/154'])
+
+    // 后发的（154）先回来：面板显示第二个动作
+    resolveSecond({ status: 200, body: DETAIL_154 })
+    await flushPromises()
+    expect(wrapper.find('.panel-title').text()).toBe('三点支撑推胸')
+    expect(wrapper.findAll('ol.steps[data-lang="zh"] li').map((li) => li.text())).toEqual([
+      '三点第一步',
+      '三点第二步',
+    ])
+
+    // 先发的（364）后回来：必须被丢弃，不能把面板改回旧动作
+    resolveFirst({ status: 200, body: DETAIL_364 })
+    await flushPromises()
+    expect(wrapper.find('.panel-title').text()).toBe('三点支撑推胸')
+    expect(wrapper.findAll('ol.steps[data-lang="zh"] li').map((li) => li.text())).toEqual([
+      '三点第一步',
+      '三点第二步',
+    ])
+    expect(wrapper.text()).not.toContain('JM 第一步')
+  })
+})
+
