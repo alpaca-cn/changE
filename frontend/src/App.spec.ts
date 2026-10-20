@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createRouter, createWebHistory } from 'vue-router'
+import { h } from 'vue'
 import App from './App.vue'
 import { allRoutes } from './nav'
 
@@ -13,13 +14,59 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 import { invoke } from '@tauri-apps/api/core'
 const invokeMock = vi.mocked(invoke)
 
-async function mountApp() {
+const STARTING = { status: 'starting', port: null, message: '正在启动后端…' }
+const READY = { status: 'ready', port: 51234, message: '后端已连接 · 端口 51234' }
+const FAILED = { status: 'failed', port: null, message: '后端启动超时' }
+
+/**
+ * 按命令名分派 invoke，`shell` 是 `get_backend_status` 的返回值序列
+ * （用完一直返回最后一个）。
+ *
+ * Task 3 之后 `App.vue` 自己也持有一个状态轮询（启动门只知道「能渲染了吗」，
+ * 不查 health），所以这里必须分清是哪条命令，不能笼统 mockResolvedValue。
+ */
+let shellCalls: unknown[] = []
+
+function dispatch(shell: unknown[]) {
+  shellCalls = []
+  invokeMock.mockReset()
+  invokeMock.mockImplementation(async (cmd: unknown) => {
+    if (cmd === 'get_backend_status') {
+      const i = Math.min(shellCalls.length, shell.length - 1)
+      shellCalls.push(shell[i])
+      return shell[i]
+    }
+    if (cmd === 'get_health') {
+      return { status: 'up', cache: '缓存：未启用（配置为关闭）' }
+    }
+    throw new Error(`测试没有为命令 ${String(cmd)} 准备应答`)
+  })
+}
+
+function callCount(cmd: string) {
+  return invokeMock.mock.calls.filter((c) => c[0] === cmd).length
+}
+
+async function advance(ms: number) {
+  await vi.advanceTimersByTimeAsync(ms)
+  await flushPromises()
+}
+
+/**
+ * 默认让后端**已就绪**：下面那三条结构用例守的是「整壳长什么样」，
+ * 而 Task 3 之后整壳只会在就绪时渲染（启动门之外没有侧边栏/工具条/页脚）。
+ * 它们断言的内容一个字没改，只是挂载时后端得是起来的。
+ */
+async function mountApp(shell: unknown[] = [READY]) {
+  dispatch(shell)
   const router = createRouter({
     history: createWebHistory(),
     routes: allRoutes().map((r) => ({
       path: r.path,
       name: r.name,
-      component: { template: '<div/>' },
+      // render 函数而不是 template 字符串：测试环境没有运行时模板编译器，
+      // 字符串模板会静默渲染成空，`.stub-route` 就永远不存在。
+      component: { render: () => h('div', { class: 'stub-route' }) },
     })),
   })
   await router.push('/today')
@@ -32,24 +79,12 @@ async function mountApp() {
 describe('整壳结构', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    invokeMock.mockReset()
-    // 结构测试不关心数据，给个 starting 就够——状态栏因此不会去打 get_health。
-    // 按命令名分派：健康检查已经从 `fetch` 改成 `get_health` 了，
-    // 一个笼统的 mockResolvedValue 会让两条命令拿到同一个外壳状态对象。
-    invokeMock.mockImplementation(async (cmd: unknown) => {
-      if (cmd === 'get_backend_status') {
-        return { status: 'starting', port: null, message: '正在启动后端…' }
-      }
-      if (cmd === 'get_health') {
-        return { status: 'up', cache: '缓存：未启用（配置为关闭）' }
-      }
-      throw new Error(`测试没有为命令 ${String(cmd)} 准备应答`)
-    })
   })
 
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
+    invokeMock.mockReset()
   })
 
   it('三块都在：侧边栏、顶部工具条、底部状态栏', async () => {
@@ -80,5 +115,102 @@ describe('整壳结构', () => {
     // 侧边栏必须与 .main 平级，而不是被塞进 .main
     expect(main.querySelector('.sidebar')).toBeNull()
     expect(w.find('.shell').element.children[0].className).toContain('sidebar')
+  })
+})
+
+describe('启动门', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    invokeMock.mockReset()
+  })
+
+  it('启动中：只显示启动态，工作区与业务页一个都不渲染', async () => {
+    const w = await mountApp([STARTING])
+
+    expect(w.find('.startup').exists()).toBe(true)
+    expect(w.text()).toContain('正在启动服务…')
+
+    // 这就是修复的要点：`RouterView` 不渲染，所以业务页不会在启动期发请求、
+    // 不会把红字错误摆到用户面前。
+    expect(w.find('.workspace').exists()).toBe(false)
+    expect(w.find('.stub-route').exists()).toBe(false)
+    expect(w.find('.sidebar').exists()).toBe(false)
+    expect(w.find('.toolbar').exists()).toBe(false)
+    expect(w.find('.status').exists()).toBe(false)
+    // 启动期一次 health 都不查（启动门不查、页脚还没资格出场）
+    expect(callCount('get_health')).toBe(0)
+  })
+
+  it('就绪后：启动态消失，业务页与页脚出现', async () => {
+    const w = await mountApp([STARTING, READY])
+    expect(w.find('.startup').exists()).toBe(true)
+
+    await advance(500)
+
+    expect(w.find('.startup').exists()).toBe(false)
+    expect(w.find('.stub-route').exists()).toBe(true)
+    expect(w.find('.workspace').exists()).toBe(true)
+    expect(w.find('.status').exists()).toBe(true)
+    // 页脚照常显示「后端已连接 · 端口 51234」
+    expect(w.find('.status').text()).toContain('51234')
+  })
+
+  it('失败：显示错误与重试按钮，不是启动态的转圈文案', async () => {
+    const w = await mountApp([STARTING, FAILED])
+    await advance(500)
+
+    expect(w.find('.startup.failed').exists()).toBe(true)
+    expect(w.text()).toContain('后端启动超时')
+    expect(w.text()).not.toContain('正在启动服务…')
+    expect(w.find('.spinner').exists()).toBe(false)
+    expect(w.find('.retry').exists()).toBe(true)
+    // 失败态同样不渲染业务页
+    expect(w.find('.stub-route').exists()).toBe(false)
+    expect(w.find('.status').exists()).toBe(false)
+  })
+
+  it('启动超过 5 秒后补一句「首次启动需要导入动作库」', async () => {
+    const w = await mountApp([STARTING])
+    expect(w.text()).not.toContain('首次启动')
+
+    await advance(5100)
+
+    expect(w.text()).toContain('首次启动需要导入动作库，可能要十几秒')
+  })
+
+  it('失败后点「重试」重新开始轮询，后端起来后进入正常界面', async () => {
+    const w = await mountApp([STARTING, FAILED, STARTING, READY])
+    await advance(500)
+    expect(w.text()).toContain('后端启动超时')
+    const before = callCount('get_backend_status')
+
+    await w.find('.retry').trigger('click')
+    await flushPromises()
+
+    // 点下那一刻就又问了一次，而不是永远停在错误页
+    expect(callCount('get_backend_status')).toBeGreaterThan(before)
+    expect(w.find('.startup.failed').exists()).toBe(false)
+
+    await advance(500)
+    expect(w.find('.startup').exists()).toBe(false)
+    expect(w.find('.stub-route').exists()).toBe(true)
+    expect(w.find('.status').text()).toContain('51234')
+  })
+
+  it('就绪后只有一个 health 轮询者（启动门不额外打 health）', async () => {
+    // 启动门传了 `healthPolling: false`。若它也跟着 5 秒查一次，
+    // 这里 60 秒会看到约 26 次而不是 13 次——稳态开销白翻一倍。
+    await mountApp([READY])
+    await advance(0)
+    await advance(60_000)
+
+    const n = callCount('get_health')
+    expect(n).toBeGreaterThanOrEqual(12)
+    expect(n).toBeLessThanOrEqual(14)
   })
 })
