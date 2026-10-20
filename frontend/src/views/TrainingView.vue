@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import SessionList from '../components/SessionList.vue'
+import ExerciseDetailPanel from '../components/ExerciseDetailPanel.vue'
+import { exerciseDetail, type ExerciseDetail } from '../api/exercise-detail'
 import {
   lastPerformance,
   recordSession,
@@ -69,6 +71,14 @@ const recent = ref<SessionSummary[]>([])
 const recentError = ref<string | null>(null)
 const detail = ref<SessionDetail | null>(null)
 const detailError = ref<string | null>(null)
+
+// ---- 动作详情抽屉（看做法） ----
+// 与「这次训练的历史详情」是两件事：那个叫 detail，这个叫 panelDetail。
+const panelOpen = ref(false)
+const panelDetail = ref<ExerciseDetail | null>(null)
+const panelLoading = ref(false)
+const panelError = ref<string | null>(null)
+let panelSeq = 0
 
 async function loadMuscles() {
   try {
@@ -205,6 +215,40 @@ async function openDetail(id: number) {
   }
 }
 
+/**
+ * 打开「看做法」抽屉并取详情。
+ *
+ * 不跳页：跳页会把已经填好的组丢掉。面板盖在当前页上，关掉后组还在。
+ * 连点（或关掉又开）时用序号丢掉过期响应——先发的可能后到，把已关闭的
+ * 面板改成有内容只会让人以为点错了。
+ */
+async function openExerciseDetail() {
+  const ex = selectedExercise.value
+  if (ex === null) return
+
+  const seq = ++panelSeq
+  panelOpen.value = true
+  panelDetail.value = null
+  panelError.value = null
+  panelLoading.value = true
+  try {
+    const d = await exerciseDetail(ex.id)
+    if (seq !== panelSeq) return
+    panelDetail.value = d
+  } catch (e) {
+    if (seq !== panelSeq) return
+    panelError.value = reason(e)
+  } finally {
+    if (seq === panelSeq) panelLoading.value = false
+  }
+}
+
+function closeExerciseDetail() {
+  panelOpen.value = false
+  // 推走序号：还在路上的响应不该写进一个已经关掉的面板
+  panelSeq += 1
+}
+
 onMounted(() => {
   void loadMuscles()
   void loadRecent()
@@ -253,7 +297,11 @@ onMounted(() => {
 
     <!-- 2. 选动作 → 带出上次重量 → 填组 -->
     <template v-if="selectedExercise">
-      <h3>{{ selectedExercise.nameZh || selectedExercise.nameEn }}</h3>
+      <div class="exercise-head">
+        <h3>{{ selectedExercise.nameZh || selectedExercise.nameEn }}</h3>
+        <!-- 看做法是抽屉，不跳页：跳走会把下面已经填好的组丢掉 -->
+        <button type="button" class="look-up" @click="openExerciseDetail">看做法</button>
+      </div>
       <p v-if="prefillNote" class="prefill">{{ prefillNote }}</p>
 
       <table class="sets">
@@ -314,6 +362,15 @@ onMounted(() => {
         </li>
       </ul>
     </div>
+
+    <!-- 动作详情抽屉：数据由本页拉，面板只负责渲染三种状态 -->
+    <ExerciseDetailPanel
+      v-if="panelOpen"
+      :detail="panelDetail"
+      :loading="panelLoading"
+      :error="panelError"
+      @close="closeExerciseDetail"
+    />
   </section>
 </template>
 
@@ -352,6 +409,10 @@ select, input {
 .exercise.picked .ex-name { color: var(--accent); font-weight: 700; }
 .ex-name { font-weight: 600; }
 .ex-meta { color: var(--text-dim); font-size: 12px; }
+
+.exercise-head { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-md); }
+.exercise-head h3 { margin-bottom: 0; }
+.look-up { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 
 .prefill { color: var(--text-dim); font-size: 12px; }
 
