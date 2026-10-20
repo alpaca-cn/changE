@@ -26,10 +26,19 @@ import java.util.List;
  * 「本周 0 组」追着（计划 1 的 {@code VolumeCalculator} 对未配置区间返回
  * {@code NOT_CONFIGURED}，正好用得上）。
  *
- * <p><b>播种方式。</b>库里的 17 行来自迁移 {@code V8__muscle_group_seed.sql}，
+ * <p><b>播种方式。</b>库里的 17 行来自迁移 {@code V7__muscle_group_seed.sql}，
  * 而那份 SQL **是由代码从本类的 {@link #ALL} 生成的，不要手改**。改种子请改这里，
  * 再按 {@code MuscleGroupSeedTest} 里的说明重新生成；生成物与常量之间由
  * {@code MuscleGroupSeedTest#the_seed_migration_matches_the_java_constants} 钉住。
+ *
+ * <p><b>⚠️ {@code regionIds} 这一列在 V10 之后已经不等于本类的值了。</b>本类描述的是
+ * V7 当时写进库的东西（{@code chest_left,chest_right} 这种下划线占位名）；
+ * {@code V10__muscle_region_ids.sql} 把库里的值换成了 vendored 人体图素材里的真实
+ * 区域 id（{@code chest-upper-left} 这种连字符名）。
+ *
+ * <p>所以：**本类的 {@code regionIds} 只用于生成 V7 的历史字节，不要再拿它当库里的当前值。**
+ * 当前值的权威是 V10 与素材，两者由 {@code MuscleRegionMappingTest} 交叉校验
+ * （那个测试直接读素材原文，不读任何副本）。
  */
 public final class MuscleGroupSeed {
 
