@@ -1,43 +1,20 @@
-<script lang="ts">
-import type { VolumeStatus } from '../api/training'
+<script setup lang="ts">
+import { computed } from 'vue'
+import type { BodyMapMode, MuscleBodyMap } from '../api/body-map'
+import { FRONT_MUSCLES } from '../assets/body-map/data/muscles.front'
+import { BACK_MUSCLES } from '../assets/body-map/data/muscles.back'
 
 /**
- * 人体图上一块肌群。字段与后端 `GET /api/body-map/volume` 的 `MuscleBodyMap`
- * （`BodyMapService.MuscleBodyMap`）一一对应，共 10 个。
+ * 人体图上一块肌群的类型与三种口径**只有一份定义**，在 `../api/body-map`
+ * （`MuscleBodyMap` / `BodyMapMode`）。这里从那里导入，不再自己声明：
+ * 同一个名字在 `api/training.ts` 里是 `/api/volume/weekly` 的 7 字段形状，
+ * 两处同名不同形会让「导入错的那个」不报错、只是整张图拿不到 `regionIds`。
  *
  * 契约名 `volumeByMuscle` 与事件名 `muscle-click` 是设计文档决定 5 **冻结**的：
  * 第二阶段换 Three.js 时只换渲染层，这两个名字不动。
  */
-export interface MuscleVolume {
-  muscleGroupId: number
-  nameZh: string
-  nameEn: string
-  /** 本周折算组数（主肌群 +1/组、次要 +0.5/组）。0 也要渲染，只是不着色。 */
-  sets: number
-  min: number | null
-  max: number | null
-  status: VolumeStatus
-  lastTrainedOn: string | null
-  /**
-   * `today - lastTrainedOn`。`null` = 从没练过。
-   * **可能是负数**：见 `recoveringLevel` 的注释，这不是 bug。
-   */
-  daysSince: number | null
-  /** 该肌群在 SVG 里的区域 id。不在这里的区域不参与着色，也不可点。 */
-  regionIds: string[]
-}
-
-/** 三种着色口径。同一份数据换一种「怎么算强度」，不换数据。 */
-export type BodyMapMode = 'volume' | 'recovering' | 'neglected'
-</script>
-
-<script setup lang="ts">
-import { computed } from 'vue'
-import { FRONT_MUSCLES } from '../assets/body-map/data/muscles.front'
-import { BACK_MUSCLES } from '../assets/body-map/data/muscles.back'
-
 const props = defineProps<{
-  volumeByMuscle: Record<number, MuscleVolume>
+  volumeByMuscle: Record<number, MuscleBodyMap>
   mode: BodyMapMode
 }>()
 
@@ -80,7 +57,7 @@ function clampLevel(level: number): number {
  * 10 组封顶（2 组一档）：练得多的人再往上不再加深，否则整张图会糊成一块，
  * 反而看不出「哪里练少了」。
  */
-function volumeLevel(mv: MuscleVolume): number {
+function volumeLevel(mv: MuscleBodyMap): number {
   return clampLevel((mv.sets / 10) * 5)
 }
 
@@ -94,7 +71,7 @@ function volumeLevel(mv: MuscleVolume): number {
  * 不能写成 `d >= 0 && d <= 2`：那样负数会落到 else（不着色），图上就是一块
  * 几天前刚练过的肌肉显示成灰的，而界面上看不出来那是错的。
  */
-function recoveringLevel(mv: MuscleVolume): number {
+function recoveringLevel(mv: MuscleBodyMap): number {
   const d = mv.daysSince
   if (d === null) return 0 // 从没练过：谈不上「恢复中」
   const days = Math.max(0, d)
@@ -112,7 +89,7 @@ function recoveringLevel(mv: MuscleVolume): number {
  *
  * 负数按「刚练过」处理（同 recovering 的注释）→ 不着色。
  */
-function neglectedLevel(mv: MuscleVolume): number {
+function neglectedLevel(mv: MuscleBodyMap): number {
   const d = mv.daysSince
   if (d === null) return 5
   const days = Math.max(0, d)
@@ -123,7 +100,7 @@ function neglectedLevel(mv: MuscleVolume): number {
 }
 
 /** 当前 mode 下这块肌群的档位。三种口径就是三个函数，不共用一条判断链。 */
-function levelFor(mv: MuscleVolume): number {
+function levelFor(mv: MuscleBodyMap): number {
   switch (props.mode) {
     case 'recovering':
       return recoveringLevel(mv)

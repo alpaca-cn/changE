@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import BodyMap, { type BodyMapMode, type MuscleVolume } from './BodyMap.vue'
+import BodyMap from './BodyMap.vue'
+// 类型只有一份定义，在 `../api/body-map`（BodyMap.vue 不再自己声明 MuscleVolume 的副本）。
+// 改名而不是「让两边一致」：`api/training.ts` 的 `MuscleVolume` 是另一个端点、另一个形状。
+import type { BodyMapMode, MuscleBodyMap } from '../api/body-map'
 import { ALL_REGION_IDS, BACK_REGION_IDS, FRONT_REGION_IDS } from '../assets/body-map/region-ids'
 import type { VolumeStatus } from '../api/training'
 import source from './BodyMap.vue?raw'
@@ -63,9 +66,9 @@ function statusOf(r: Row): VolumeStatus {
   return 'IN_RANGE'
 }
 
-/** 把行拼成组件契约要的 `Record<number, MuscleVolume>`。 */
-function volumeOf(rows: readonly Row[]): Record<number, MuscleVolume> {
-  const out: Record<number, MuscleVolume> = {}
+/** 把行拼成组件契约要的 `Record<number, MuscleBodyMap>`。 */
+function volumeOf(rows: readonly Row[]): Record<number, MuscleBodyMap> {
+  const out: Record<number, MuscleBodyMap> = {}
   for (const r of rows) {
     out[r.id] = {
       muscleGroupId: r.id,
@@ -83,12 +86,12 @@ function volumeOf(rows: readonly Row[]): Record<number, MuscleVolume> {
   return out
 }
 
-function mountMap(mode: BodyMapMode, data: Record<number, MuscleVolume> = volumeOf(ROWS)) {
+function mountMap(mode: BodyMapMode, data: Record<number, MuscleBodyMap> = volumeOf(ROWS)) {
   return mount(BodyMap, { props: { volumeByMuscle: data, mode } })
 }
 
 /** 造一份只把 `en` 那块的 daysSince 换掉的 fixture（其余不动）。 */
-function withDays(en: string, days: number | null): Record<number, MuscleVolume> {
+function withDays(en: string, days: number | null): Record<number, MuscleBodyMap> {
   return volumeOf(ROWS.map((r) => (r.en === en ? { ...r, days } : r)))
 }
 
