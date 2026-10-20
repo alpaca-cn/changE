@@ -31,10 +31,11 @@ describe('侧边栏', () => {
     expect(pinnedGroups[0].find('.group-label').text()).toBe('我的')
   })
 
-  it('人体图那项显示「预留」角标', () => {
+  it('侧边栏**没有**「预留」角标（人体图第一阶段已实现）', () => {
+    // 原来这条断言 marker === ['预留']。计划 6b 之后人体图能用了，
+    // 再挂「预留」就是在骗用户。现在守「一个都没有」。
     const w = mountWithRouter()
-    const marker = w.findAll('.marker').map((n) => n.text())
-    expect(marker).toEqual(['预留'])
+    expect(w.findAll('.marker')).toHaveLength(0)
   })
 
   it('分隔线在「我的」分组内部，不在功能区', () => {
