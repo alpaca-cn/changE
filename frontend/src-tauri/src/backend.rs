@@ -8,7 +8,7 @@
 
 use serde::Serialize;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -52,32 +52,70 @@ pub fn parse_port_line(line: &str) -> Option<u16> {
     }
 }
 
-/// 解析 Java 可执行文件的位置。
+/// 找 Java：随包 > `CHANGE_JAVA` > `JAVA_HOME`。
 ///
-/// 顺序：显式配置 → `JAVA_HOME` → PATH 上的 `java`。
+/// `bundled_root` 是安装目录下的资源根（`resource_dir()`）；`exists` 是可注入的
+/// 存在性判定——测试靠它造「随包有/没有」而不用真去建一个 48 MB 的 JRE。
 ///
-/// **返回 `PathBuf` 而不是 `Option`**：最后那一档（交给 PATH）永远不会失败——
-/// 真找不到的话，是 `Command::spawn` 抛出的 OS 错误，而且那条消息比我们在这里
-/// 猜的任何话都准。返回 `Option` 只会制造一个「找不到」的假分支。
+/// # 为什么返回 `Result`（这里是**刻意**从 `PathBuf` 改过来的）
 ///
-/// **不做 `is_file()` 检查**：`JAVA_HOME` 指向一个 JDK 是很强的信号，而且
-/// 检查存在性会让这个函数**没法用假路径测试**（测试里那个路径当然不存在）。
+/// 加了「随包优先」之后**必须**先判断随包路径在不在——否则那个路径会永远被选中，
+/// 哪怕它不存在（装了一半的安装目录、或开发机上根本没有 `resources/`）。
+/// 而一旦做了存在性检查，「一个都找不到」就成了一个真实分支：旧实现最后一档
+/// 是交给 PATH 的裸命令 `java`，它的正确性只能由 `Command::spawn` 的 OS 错误
+/// 兜底；现在候选都是可检查的真实路径，全试过仍找不到时，一句**列出试过哪些
+/// 路径**的 `Err` 比让 spawn 去猜有用得多——那是朋友机器上唯一能救命的信息。
+///
+/// 裸 `java` 因此不再作为候选：它无法用同一个 `exists` 判定检查，留在候选里
+/// 只会让「存在的路径才会被返回」这条不变量出现例外。
 ///
 /// 参数是显式传入的，方便测试——不要在函数里直接读 `std::env`。
-pub fn resolve_java(configured: Option<&str>, java_home: Option<&str>) -> PathBuf {
-    if let Some(p) = configured {
-        if !p.is_empty() {
-            return PathBuf::from(p);
+pub fn resolve_java(
+    bundled_root: Option<&Path>,
+    change_java: Option<&str>,
+    java_home: Option<&str>,
+    exists: &dyn Fn(&Path) -> bool,
+) -> Result<PathBuf, String> {
+    let bundled = bundled_root.map(|root| root.join("runtime").join("bin").join(java_exe()));
+    // 空串在 Windows 环境里很常见（`$env:CHANGE_JAVA = ''`），它不是配置
+    let configured = change_java.filter(|p| !p.is_empty()).map(PathBuf::from);
+    let home = java_home
+        .filter(|home| !home.is_empty())
+        .map(|home| Path::new(home).join("bin").join(java_exe()));
+
+    let mut tried: Vec<PathBuf> = Vec::new();
+    for candidate in [bundled, configured, home].into_iter().flatten() {
+        if exists(&candidate) {
+            return Ok(candidate);
         }
+        tried.push(candidate);
     }
-    if let Some(home) = java_home {
-        if !home.is_empty() {
-            let exe = if cfg!(windows) { "java.exe" } else { "java" };
-            return PathBuf::from(home).join("bin").join(exe);
-        }
+
+    if tried.is_empty() {
+        return Err(
+            "找不到可用的 Java：没有随包运行时，也没有设置 CHANGE_JAVA 或 JAVA_HOME。"
+                .to_string(),
+        );
     }
-    // 最后一档：交给 PATH。真找不到的话，spawn 会抛出比我们猜的更准的 OS 错误。
-    PathBuf::from("java")
+    Err(format!(
+        "找不到可用的 Java。已尝试：{}。\
+         随包运行时可能损坏（可以重新安装）；开发时请把 JAVA_HOME 指向一个 JDK，\
+         或用 CHANGE_JAVA 指向 java 可执行文件。",
+        tried
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("；")
+    ))
+}
+
+/// `JAVA_HOME/bin/` 下 java 的文件名。Windows 上带 `.exe`。
+fn java_exe() -> &'static str {
+    if cfg!(windows) {
+        "java.exe"
+    } else {
+        "java"
+    }
 }
 
 /// 等协议行的上限。计划 1 实测后端启动 3.8–6.8 秒，30 秒足够宽松。
@@ -573,46 +611,114 @@ mod tests {
         assert_eq!(parse_port_line(&line), Some(54791)); // 函数自己 trim，解析得出
     }
 
-    // ---- resolve_java ----
+    // ---- resolve_java：随包 > CHANGE_JAVA > JAVA_HOME ----
 
     #[test]
-    fn prefers_the_configured_java() {
+    fn prefers_the_bundled_runtime_over_everything_else() {
+        // 随包存在时**完全不看** CHANGE_JAVA / JAVA_HOME——所以这里让两者都
+        // 「存在」，只要结果是随包路径，就证明优先级对。
+        let root = Path::new("/install");
+        let bundled = bundled_java(root);
+        let exists = |p: &Path| {
+            p == bundled.as_path()
+                || p == Path::new("/custom/bin/java")
+                || p == java_in("/jh").as_path()
+        };
         assert_eq!(
-            resolve_java(Some("/custom/bin/java"), Some("/jh")),
-            PathBuf::from("/custom/bin/java")
+            resolve_java(Some(root), Some("/custom/bin/java"), Some("/jh"), &exists),
+            Ok(bundled.clone())
         );
+    }
+
+    #[test]
+    fn uses_change_java_when_the_bundled_runtime_is_missing() {
+        // 随包路径存在性检查没过就必须往下走。若实现不检查存在性、
+        // 直接返回 bundled，这条会拿到一个根本不存在的路径。
+        let root = Path::new("/install");
+        let exists = |p: &Path| p == Path::new("/custom/bin/java");
+        assert_eq!(
+            resolve_java(Some(root), Some("/custom/bin/java"), Some("/jh"), &exists),
+            Ok(PathBuf::from("/custom/bin/java"))
+        );
+    }
+
+    #[test]
+    fn falls_back_to_java_home_when_bundled_and_change_java_are_missing() {
+        // JAVA_HOME 指向 JDK 根目录，java 在 bin/ 下
+        let exists = |p: &Path| p == java_in("/jh").as_path();
+        assert_eq!(
+            resolve_java(None, None, Some("/jh"), &exists),
+            Ok(java_in("/jh"))
+        );
+    }
+
+    #[test]
+    fn reports_every_candidate_when_no_java_can_be_found() {
+        // 这条是「朋友的机器上出问题」时唯一能救命的信息：错误里必须能看出
+        // 我们到底找过哪几个地方。旧实现最后一档是 PATH 上的裸 `java`，
+        // 那条路已经去掉（见 `resolve_java` 的文档注释），所以这里必须报错。
+        let root = Path::new("/install");
+        let err =
+            resolve_java(Some(root), Some("/custom/bin/java"), Some("/jh"), &|_| false)
+                .unwrap_err();
+        for expected in [
+            bundled_java(root),
+            PathBuf::from("/custom/bin/java"),
+            java_in("/jh"),
+        ] {
+            let needle = expected.display().to_string();
+            assert!(
+                err.contains(&needle),
+                "错误消息里必须列出试过的路径 {needle:?}；实际：{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_panic_when_there_is_no_bundled_root() {
+        // 开发时 resource_dir() 未必拿得到；缺随包根只是一个候选缺席，不是 panic。
+        let err = resolve_java(None, None, None, &|_| false).unwrap_err();
+        assert!(!err.is_empty(), "找不到 Java 必须给出原因");
     }
 
     #[test]
     fn ignores_an_empty_configured_value() {
         // 环境变量设成空串是常见的（`$env:CHANGE_JAVA = ''`），不该当成配置
-        assert_eq!(resolve_java(Some(""), Some("/jh")), java_in("/jh"));
-    }
-
-    #[test]
-    fn falls_back_to_java_home() {
-        // JAVA_HOME 指向 JDK 根目录，java 在 bin/ 下
-        assert_eq!(resolve_java(None, Some("/jh")), java_in("/jh"));
+        let exists = |p: &Path| p == java_in("/jh").as_path();
+        assert_eq!(
+            resolve_java(None, Some(""), Some("/jh"), &exists),
+            Ok(java_in("/jh"))
+        );
     }
 
     #[test]
     fn ignores_an_empty_java_home() {
         // 与 configured 那条同理：`$env:JAVA_HOME = ''` 是常见的，
-        // 空串不该被当成一个有效的 JDK 根目录（那会拼出 `\bin\java.exe` 这种相对路径）。
-        assert_eq!(resolve_java(None, Some("")), PathBuf::from("java"));
+        // 空串不该被当成一个有效的 JDK 根目录（那会拼出 `bin/java` 这种相对路径）。
+        let configured = PathBuf::from("/custom/bin/java");
+        let exists = |p: &Path| p == configured.as_path();
+        assert_eq!(
+            resolve_java(None, Some("/custom/bin/java"), Some(""), &exists),
+            Ok(configured.clone())
+        );
     }
 
-    #[test]
-    fn falls_back_to_java_on_path() {
-        // 最后一档：交给操作系统去找。刻意不做 is_file 检查——
-        // 那会让上面两条用假路径的测试没法写。
-        assert_eq!(resolve_java(None, None), PathBuf::from("java"));
+    /// 随包 JRE 里 java 的期望路径：`<resource_dir>/runtime/bin/java[.exe]`。
+    fn bundled_java(root: &Path) -> PathBuf {
+        root.join("runtime").join("bin").join(java_exe_name())
+    }
+
+    fn java_exe_name() -> &'static str {
+        if cfg!(windows) {
+            "java.exe"
+        } else {
+            "java"
+        }
     }
 
     /// `JAVA_HOME` 下 java 的期望路径。Windows 上带 `.exe`。
     fn java_in(home: &str) -> PathBuf {
-        let exe = if cfg!(windows) { "java.exe" } else { "java" };
-        PathBuf::from(home).join("bin").join(exe)
+        PathBuf::from(home).join("bin").join(java_exe_name())
     }
 
     // ---- BackendState 的状态机 ----
@@ -962,14 +1068,20 @@ mod tests {
 
     fn java_for_e2e() -> PathBuf {
         let from_env = std::env::var("CHANGE_JAVA").ok();
-        let java_home = std::env::var("JAVA_HOME").ok();
+        let mut java_home = std::env::var("JAVA_HOME").ok();
         if java_home.is_none() {
             // 本机 JAVA_HOME 未必设了；用一个已知的 JDK 兜底，让 e2e 能跑起来
-            if let Ok(home) = std::env::var("CHANGE_JAVA_HOME") {
-                return resolve_java(from_env.as_deref(), Some(home.as_str()));
-            }
+            java_home = std::env::var("CHANGE_JAVA_HOME").ok();
         }
-        resolve_java(from_env.as_deref(), java_home.as_deref())
+        resolve_java(
+            None,
+            from_env.as_deref(),
+            java_home.as_deref(),
+            &|p| p.is_file(),
+        )
+        // e2e 是 #[ignore] 的手动测试；真找不到时仍按旧行为交给 PATH，
+        // 让 spawn 自己报错（那比在测试里 panic 一句「找不到 java」更有用）。
+        .unwrap_or_else(|_| PathBuf::from("java"))
     }
 
     /// 真的拉起后端 jar，确认端口协商、端口可访问、关掉后不留孤儿。

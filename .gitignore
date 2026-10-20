@@ -63,6 +63,12 @@ ppt_tasks/*/render/*.pdf
 frontend/node_modules/
 frontend/dist/
 frontend/src-tauri/target/
+# 打安装包用的随包资源：jlink 出来的精简 JRE（约 49 MB）+ 后端 fat jar（约 80 MB）。
+# 它们是**构建产物**，由 backend/scripts/jlink-runtime.ps1 与 mvn package 生成。
+# 真正的交付物是安装包（bundle/nsis/*.exe），不是这些中间文件。
+# 不忽略的话，一次 git add . 就会把 128 MB 塞进历史——而 git 的历史是删不掉的。
+frontend/src-tauri/resources/
+
 frontend/src-tauri/gen/
 
 # ── _review/：单机调试产物，保留在磁盘但不入库 ──
@@ -80,3 +86,9 @@ _healthcheck/
 
 # AI 编码工具的本地配置（opencode / commandcode）
 .commandcode/
+
+# 打好的安装包（约 104 MB）。它是交付物，但也是构建产物——
+# 生成它需要 128 MB 的中间资源与一次 Rust release 构建，不该进历史。
+# 位置：artifacts/（从 frontend/src-tauri/target/release/bundle/nsis/ 复制过来，
+# 因为 cargo clean 会删掉 target/）。
+artifacts/

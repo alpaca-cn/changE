@@ -2,7 +2,7 @@ mod backend;
 pub mod http;
 
 use backend::{Backend, BackendState, BackendStatus};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{Manager, RunEvent};
 
 /// 前端轮询它。**端口只从这里出去**——前端不许硬编码端口。
@@ -92,15 +92,41 @@ fn api_request(
     }
 }
 
-/// 找后端 jar。优先环境变量，其次相对仓库的默认位置。
+/// 找后端 jar：随包 > `CHANGE_BACKEND_JAR` > 开发时的相对仓库路径。
+///
+/// `bundled_root` 是 [`tauri::path::PathResolver::resource_dir`] 给出的资源根；
+/// `exists` 是可注入的存在性判定——测试靠它造「随包有/没有」，不必真放文件。
+///
+/// # 为什么随包排在环境变量前面
+///
+/// 安装包里的 jar 与随包的 JRE 是配套的。让一个环境变量把二者拆开（比如老机器上
+/// 残留的 `CHANGE_BACKEND_JAR` 指向一个旧 jar）只会在别人的机器上炸，而且看起来
+/// 像「装好了却起不来」。所以随包存在时**完全不看**环境变量——与 `resolve_java`
+/// 的「随包 > 环境变量」是同一个理由。
+///
+/// # 顺序的代价（登记在案）
+///
+/// 开发时 `tauri-build` 也会把资源复制到 `target/debug`，而 `resource_dir()`
+/// 正好是 exe 所在目录——于是开发机上可能命中「随包」那一条（目标是构建产物里的
+/// 副本，不是 `resources/` 原件）。只要资源变了就重新构建，副本会跟着更新。
 ///
 /// 候选路径是**相对当前工作目录**的：开发时 `cargo tauri dev` 从 `src-tauri`
 /// 起进程，`../../backend/target/...` 就是仓库根下的 jar。找不到时把当前工作目录
-/// 写进错误消息里，用户才知道为什么没命中。
-fn locate_jar() -> Result<PathBuf, String> {
+/// 与试过的所有路径写进错误消息，用户才知道为什么没命中。
+fn locate_jar(
+    bundled_root: Option<&Path>,
+    exists: &dyn Fn(&Path) -> bool,
+) -> Result<PathBuf, String> {
+    let bundled = bundled_root.map(|root| root.join("change-backend.jar"));
+    if let Some(path) = &bundled {
+        if exists(path) {
+            return Ok(path.clone());
+        }
+    }
+    // 显式指定了却不存在：如实说，别悄悄去用开发路径（那会让人以为环境变量生效了）
     if let Ok(p) = std::env::var("CHANGE_BACKEND_JAR") {
         let path = PathBuf::from(&p);
-        return if path.is_file() {
+        return if exists(&path) {
             Ok(path)
         } else {
             Err(format!("CHANGE_BACKEND_JAR 指向的文件不存在：{p}"))
@@ -108,23 +134,27 @@ fn locate_jar() -> Result<PathBuf, String> {
     }
     // 开发时的默认位置：src-tauri 往上三层是仓库根
     let candidates = [
-        "../../backend/target/change-backend-0.1.0-SNAPSHOT.jar",
-        "../backend/target/change-backend-0.1.0-SNAPSHOT.jar",
+        PathBuf::from("../../backend/target/change-backend-0.1.0-SNAPSHOT.jar"),
+        PathBuf::from("../backend/target/change-backend-0.1.0-SNAPSHOT.jar"),
     ];
-    for c in candidates {
-        let path = PathBuf::from(c);
-        if path.is_file() {
-            return Ok(path);
+    for c in &candidates {
+        if exists(c) {
+            return Ok(c.clone());
         }
     }
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|e| format!("<拿不到工作目录：{e}>"));
+    let tried = bundled
+        .iter()
+        .chain(candidates.iter())
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join("；");
     Err(format!(
         "找不到后端 jar。请先在 backend/ 下执行 `mvn -B -q -DskipTests package`，\
          或设环境变量 CHANGE_BACKEND_JAR 指向它。\
-         （当前工作目录：{cwd}；已尝试的相对路径：{}）",
-        candidates.join(" 与 ")
+         （当前工作目录：{cwd}；已尝试：{tried}）"
     ))
 }
 
@@ -135,16 +165,29 @@ pub fn run() {
         // 按「一行」读注册表（`lines().find(...)`）。改成多行会让它读不到命令名。
         .invoke_handler(tauri::generate_handler![get_backend_status, get_health, api_request])
         .setup(|app| {
-            // 注意：`resolve_java` 返回 `PathBuf`，**不是 `Option`**。
-            // 它刻意不做存在性检查——真是 Java 找不到，`Command::spawn` 抛出的
-            // OS 错误比我们在这里猜的任何话都准，那条错误会经 `from_failed`
-            // 显示给用户。所以这里不需要（也不能）`?` 或 `.ok_or(...)`。
-            let java = backend::resolve_java(
+            // 随包资源的根。安装后（Windows/NSIS）就是 exe 所在目录；
+            // 开发时是 `target/debug` 之类，里面通常没有 resources，
+            // 于是候选自然落到环境变量 / 仓库里的开发路径。
+            let bundled_root = app.path().resource_dir().ok();
+            let exists = |path: &std::path::Path| path.is_file();
+
+            // `resolve_java` 现在返回 `Result`：加了随包候选之后必须做存在性检查，
+            // 「一个都找不到」就成了真实分支。真的找不到时用 `from_failed` 造一个
+            // 只有失败状态的句柄，让前端显示原因，而不是 panic 或拉起一个瞎猜的进程。
+            let java = match backend::resolve_java(
+                bundled_root.as_deref(),
                 std::env::var("CHANGE_JAVA").ok().as_deref(),
                 std::env::var("JAVA_HOME").ok().as_deref(),
-            );
+                &exists,
+            ) {
+                Ok(java) => java,
+                Err(msg) => {
+                    app.manage(Backend::from_failed(msg));
+                    return Ok(());
+                }
+            };
 
-            let backend = match locate_jar() {
+            let backend = match locate_jar(bundled_root.as_deref(), &exists) {
                 Ok(jar) => {
                     let extra = std::env::var("CHANGE_BACKEND_ARGS")
                         .map(|s| s.split_whitespace().map(String::from).collect())
@@ -236,5 +279,136 @@ mod tests {
             3,
             "命令清单恰好是三条（get_backend_status / get_health / api_request）；实际参数：{args}"
         );
+    }
+
+    // ---- locate_jar：随包 > CHANGE_BACKEND_JAR > 开发路径 ----
+
+    use super::locate_jar;
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, MutexGuard};
+
+    /// `CHANGE_BACKEND_JAR` 是**进程级全局状态**，而测试默认并行跑。
+    /// 所有会读/写它的测试都先拿这把锁，避免 A 测试设的值被 B 测试读到。
+    ///
+    /// 锁被 panic 毒化时照样拿（`into_inner`）：测试已经红了，
+    /// 不该让第二重 panic 把真正的失败原因盖住。
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_env() -> MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// 测试结束时把 `CHANGE_BACKEND_JAR` 恢复原值的 RAII 守卫。
+    ///
+    /// 不恢复的话，一个测试留下的值会改变同进程里后面所有测试的行为，
+    /// 而那种失败看起来会像是在别的测试里、且时有时无。
+    struct RestoreChangeBackendJar(Option<OsString>);
+
+    impl Drop for RestoreChangeBackendJar {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => std::env::set_var("CHANGE_BACKEND_JAR", value),
+                None => std::env::remove_var("CHANGE_BACKEND_JAR"),
+            }
+        }
+    }
+
+    fn set_change_backend_jar(value: Option<&str>) -> RestoreChangeBackendJar {
+        let previous = std::env::var_os("CHANGE_BACKEND_JAR");
+        match value {
+            Some(value) => std::env::set_var("CHANGE_BACKEND_JAR", value),
+            None => std::env::remove_var("CHANGE_BACKEND_JAR"),
+        }
+        RestoreChangeBackendJar(previous)
+    }
+
+    /// 与 `locate_jar` 里那两个开发候选保持同一份字面量。
+    const DEV_JAR_A: &str = "../../backend/target/change-backend-0.1.0-SNAPSHOT.jar";
+    const DEV_JAR_B: &str = "../backend/target/change-backend-0.1.0-SNAPSHOT.jar";
+
+    #[test]
+    fn prefers_the_bundled_jar_over_change_backend_jar() {
+        // 随包 jar 存在时**完全不看**环境变量——即使环境变量指向一个同样存在的文件。
+        let _guard = lock_env();
+        let _env = set_change_backend_jar(Some("/env/change-backend.jar"));
+        let root = Path::new("/install");
+        let bundled = root.join("change-backend.jar");
+        let exists = |p: &Path| {
+            p == bundled.as_path() || p == Path::new("/env/change-backend.jar")
+        };
+        assert_eq!(locate_jar(Some(root), &exists), Ok(bundled.clone()));
+    }
+
+    #[test]
+    fn uses_change_backend_jar_when_the_bundled_jar_is_missing() {
+        // 随包路径的存在性检查没过就必须往下走。若实现不做检查、直接返回随包路径，
+        // 这条会拿到一个根本不存在的 jar。
+        let _guard = lock_env();
+        let _env = set_change_backend_jar(Some("/env/change-backend.jar"));
+        let exists = |p: &Path| p == Path::new("/env/change-backend.jar");
+        assert_eq!(
+            locate_jar(Some(Path::new("/install")), &exists),
+            Ok(PathBuf::from("/env/change-backend.jar"))
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_development_jar_path() {
+        // 开发机上的正常路径：没有随包资源、没设环境变量，仓库里那个 jar 还在。
+        // 第二个候选命中，同时也证明第一个候选**先被检查过**（exists 只认第二个）。
+        let _guard = lock_env();
+        let _env = set_change_backend_jar(None);
+        let exists = |p: &Path| p == Path::new(DEV_JAR_B);
+        assert_eq!(locate_jar(None, &exists), Ok(PathBuf::from(DEV_JAR_B)));
+    }
+
+    #[test]
+    fn reports_every_tried_jar_path_when_nothing_exists() {
+        // 「朋友的机器上出问题」时唯一能救命的信息：试过哪些路径。
+        let _guard = lock_env();
+        let _env = set_change_backend_jar(None);
+        let root = Path::new("/install");
+        let err = locate_jar(Some(root), &|_| false).unwrap_err();
+        for expected in [
+            root.join("change-backend.jar"),
+            PathBuf::from(DEV_JAR_A),
+            PathBuf::from(DEV_JAR_B),
+        ] {
+            let needle = expected.display().to_string();
+            assert!(
+                err.contains(&needle),
+                "错误消息里必须列出试过的路径 {needle:?}；实际：{err}"
+            );
+        }
+        // 原来那条可操作的错误不能丢：用户要能照着做。
+        assert!(err.contains("mvn"), "应当告诉人先跑 mvn package；实际：{err}");
+        assert!(
+            err.contains("CHANGE_BACKEND_JAR"),
+            "应当告诉人可以用环境变量指定；实际：{err}"
+        );
+    }
+
+    #[test]
+    fn reports_a_missing_change_backend_jar_instead_of_silently_falling_through() {
+        // 保留原来的行为：显式指定了却不存在，要说出来（而不是悄悄去用开发路径）。
+        let _guard = lock_env();
+        let _env = set_change_backend_jar(Some("/typo/change-backend.jar"));
+        let err = locate_jar(None, &|_| false).unwrap_err();
+        assert!(
+            err.contains("/typo/change-backend.jar"),
+            "错误里要带上是哪个路径不存在；实际：{err}"
+        );
+        assert!(err.contains("CHANGE_BACKEND_JAR"), "实际：{err}");
+    }
+
+    #[test]
+    fn does_not_panic_when_the_resource_dir_is_unavailable() {
+        // 开发时 `resource_dir()` 未必拿得到：缺随包根只是一个候选缺席。
+        let _guard = lock_env();
+        let _env = set_change_backend_jar(None);
+        assert!(locate_jar(None, &|_| false).is_err());
     }
 }
