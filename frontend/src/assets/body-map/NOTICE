@@ -1,0 +1,24 @@
+Body Muscles
+Copyright 2024 Ivan Vulović
+
+This directory contains source files vendored from the Body Muscles
+project by Ivan Vulović:
+
+  https://github.com/vulovix/body-muscles
+  Commit: 15c8085ee97cb94c51f92c75224416b15f955b5c
+
+License: Apache License 2.0. The full license text is in the
+accompanying LICENSE file.
+
+The following files are vendored verbatim, except for a provenance
+header comment prepended to each TypeScript file; no code was modified:
+
+  types.ts
+  data/types.ts
+  data/muscles.front.ts
+  data/muscles.back.ts
+  LICENSE
+
+This NOTICE file was written for changE. The vendored material is used
+as the source of SVG path data for changE's first-stage 2D static body
+heat-map rendering layer.

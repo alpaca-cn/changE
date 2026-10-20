@@ -43,7 +43,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       // 设计文档决定 5：3D 人体图排在第二阶段，但界面位第一阶段就冻结，
       // 免得将来加它时要重排整个导航。
-      { path: '/body-map', label: '人体图',   name: 'bodyMap',  glyph: '体', marker: '预留' },
+      { path: '/body-map', label: '人体图',   name: 'bodyMap',  glyph: '体' },
       { path: '/progress', label: '进步曲线', name: 'progress', glyph: '曲' },
       { path: '/body',     label: '身体数据', name: 'body',     glyph: '数' },
     ],

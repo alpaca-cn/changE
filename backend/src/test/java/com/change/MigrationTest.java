@@ -151,6 +151,13 @@ class MigrationTest {
      * 再次如约变红，V9 的 checksum 从实跑后的库里读出后钉进来：
      *   9:exercise instructions zh。
      * V1–V8 的八个值一个都没变——V9 只加了一个新文件，没有回头改已发布的迁移。
+     *
+     * 计划 6b 的 Task 2 新增 V10（把 muscle_group.region_ids 换成 vendored 人体图素材
+     * 里的真实区域 id），这条再次如约变红，V10 的 checksum 从实跑后的库里读出后钉进来：
+     *   10:muscle region ids。
+     * V1–V9 的九个值一个都没变——V10 只加了一个新文件，没有回头改已发布的迁移。
+     * V10 的正确性由 MuscleRegionMappingTest 交叉校验（它把库里的 region_ids 与
+     * 素材原文里的 id 对起来），这条只负责把 V10 的字节冻结住。
      */
     @Test
     void published_migrations_are_byte_frozen() {
@@ -160,7 +167,7 @@ class MigrationTest {
                 .containsExactly(
                         "1:1904735359", "2:1428719958", "3:1207314981", "4:1460974919",
                         "5:-468526944", "6:1910071904", "7:-1279212921", "8:-1311493510",
-                        "9:2124729678");
+                        "9:2124729678", "10:1758671848");
     }
 
     private String readMigration(String fileName) {
