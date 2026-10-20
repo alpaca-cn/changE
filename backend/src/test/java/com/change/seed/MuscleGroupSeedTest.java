@@ -35,7 +35,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *       再逐字节比对整个文件（连注释、排版、行数、有没有多出一条 UPDATE 都算）。</li>
  *   <li><b>库里真的有 17 行</b>（{@link #after_migration_the_database_really_has_seventeen_groups}）——
  *       「写了 SQL」不等于「迁移跑过、INSERT 生效」。这条读真实的库，按 id 顺序
- *       （= AUTOINCREMENT 的插入顺序）把每一列与常量对齐。</li>
+ *       （= AUTOINCREMENT 的插入顺序）把每一列与常量对齐。
+ *       例外：{@code region_ids} 在 V10 之后不再等于 V7 的占位值，值与素材的交叉
+ *       校验在 {@code com.change.MuscleRegionMappingTest}；这里只查字符串形状。</li>
  * </ul>
  *
  * <p>为什么要 @SpringBootTest：这些断言里有两类必须碰到真实的库与真实的 Spring
@@ -224,9 +226,21 @@ class MuscleGroupSeedTest {
             assertThat(row.get("name_zh")).as("%s 的 name_zh", at).isEqualTo(g.nameZh);
             assertThat(row.get("name_en")).as("%s 的 name_en", at).isEqualTo(g.nameEn);
             assertThat(row.get("body_part")).as("%s 的 body_part", at).isEqualTo(g.bodyPart);
-            // region_ids 在库里是**一个字符串**，不是数组；顺序也必须与常量一致
-            assertThat(row.get("region_ids")).as("%s 的 region_ids", at)
-                    .isEqualTo(String.join(",", g.regionIds));
+            // region_ids 在库里是**一个字符串**，不是数组。
+            //
+            // 这里不再要求它等于 Java 常量：V7 写入的是占位名
+            // （chest_left,chest_right），而 V10 已把它们换成 vendored 人体图素材的
+            // 真实 id（chest-upper-left,...）。Java 常量与 V7 描述的是 V7 那个时点的
+            // 历史值（V1–V9 已发布、不可改），不是库里的当前值。
+            //
+            // 值本身的正确性由 MuscleRegionMappingTest 守护：它把库里的每个 id 与
+            // 素材原文里的 id 对起来——那比「与旧常量一致」有意义得多。这里只守住
+            // 字符串的形状：非空、逗号分隔、逗号两侧没有空格。
+            String regionIds = (String) row.get("region_ids");
+            assertThat(regionIds).as("%s 的 region_ids", at).isNotBlank();
+            assertThat(regionIds.split(",", -1))
+                    .as("%s 的 region_ids 不应含空项或前后空格: %s", at, regionIds)
+                    .allMatch(id -> !id.isBlank() && id.equals(id.trim()));
             assertThat(asInteger(row.get("weekly_sets_min")))
                     .as("%s 的 weekly_sets_min", at).isEqualTo(g.weeklySetsMin);
             assertThat(asInteger(row.get("weekly_sets_max")))

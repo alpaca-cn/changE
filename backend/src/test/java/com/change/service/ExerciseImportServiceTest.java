@@ -176,11 +176,14 @@ class ExerciseImportServiceTest {
                     .as("回滚必须把导入写入的日志一起回滚")
                     .isZero();
         } finally {
-            // 精确补回种子行（连 id 一起），否则 MuscleGroupSeedTest 会看到一张走样的表。
+            // 精确补回种子行（连 id 一起），否则 MuscleGroupSeedTest / MuscleRegionMappingTest
+            // 会看到一张走样的表。
+            // region_ids 必须是 V10 之后的值：V7 的占位名 'neck' 已被 V10 换成素材的
+            // neck-left,neck-right,nape（见 V10__muscle_region_ids.sql）。
             jdbc.update(
                     "INSERT INTO muscle_group(id, name_zh, name_en, body_part, region_ids, "
                             + "weekly_sets_min, weekly_sets_max) "
-                            + "VALUES (?, '颈部', 'neck', '颈', 'neck', NULL, NULL)",
+                            + "VALUES (?, '颈部', 'neck', '颈', 'neck-left,neck-right,nape', NULL, NULL)",
                     neckId);
         }
     }
