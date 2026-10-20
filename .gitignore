@@ -19,7 +19,16 @@ dist-ssr/
 src-tauri/target/
 
 # ── 运行时数据：数据库与照片，绝不入库 ──
-data/
+# 故意写成 `/data/`（只匹配仓库根的那个），而不是 `data/`。
+#
+# 原来的 `data/` 会匹配**任意层级**叫 data 的目录——包括
+# `frontend/src/assets/body-map/data/`（vendored 的人体图路径数据）。后果不是
+# 报错，而是**静默**：在该目录里新增一个文件，`git status` 什么都不显示，
+# 它永远不会被提交。（实测：放一个探针文件进去，status 确实看不见。）
+#
+# 已跟踪的文件不受 .gitignore 影响，所以 vendored 的那三个文件即使规则不修也在；
+# 但「往一个已存在的目录里加下一个文件」是最自然的下一步动作，而它当时是断的。
+/data/
 *.db
 *.db-journal
 # WAL 模式的旁挂文件：开 journal_mode=WAL 后，库旁边会多出 -wal（预写日志）与
