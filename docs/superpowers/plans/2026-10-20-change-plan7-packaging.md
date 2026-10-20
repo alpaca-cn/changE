@@ -102,7 +102,7 @@ frontend/src-tauri/
 - Create: `backend/scripts/jlink-runtime.ps1`
 - Modify: `.gitignore`（忽略 `frontend/src-tauri/resources/`）
 
-- [ ] **Step 1: 写脚本**
+- [x] **Step 1: 写脚本**
 
 脚本要做：
 
@@ -113,11 +113,11 @@ frontend/src-tauri/
 
 `--compress=zip-6` 与 `--strip-debug --no-header-files --no-man-pages` 照实测的那套。
 
-- [ ] **Step 2: 跑一次，报告体积**
+- [x] **Step 2: 跑一次，报告体积**
 
 Expected: **≈ 48.8 MB**，`bin/java.exe` 存在，`java -version` 输出 25.0.2。
 
-- [ ] **Step 3: 用产物跑一次后端**（证明脚本产出的不是个坏 JRE）
+- [x] **Step 3: 用产物跑一次后端**（证明脚本产出的不是个坏 JRE）
 
 ```powershell
 $env:CHANGE_DATA_DIR = "$env:TEMP\jlink-verify"
@@ -127,7 +127,7 @@ $env:CHANGE_REDIS_ENABLED = "false"
 
 Expected: 看到 `CHANGE_PORT=`。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ---
 
@@ -141,7 +141,7 @@ Expected: 看到 `CHANGE_PORT=`。
 - Modify: `frontend/src-tauri/tauri.conf.json`（`bundle.resources`）
 - Test: `frontend/src-tauri/src/backend.rs` 的 `#[cfg(test)]` 模块
 
-- [ ] **Step 1: 先写测试（TDD：这两个函数现在**没有**任何测试）**
+- [x] **Step 1: 先写测试（TDD：这两个函数现在**没有**任何测试）**
 
 要求可测：把「候选路径列表」抽成**纯函数**（不带 IO 判定的版本）或**接受一个「文件存在」谓词**，这样测试能注入假的存在性。
 
@@ -155,7 +155,7 @@ Expected: 看到 `CHANGE_PORT=`。
 
 > ⚠️ **随包路径怎么拿**：Tauri 2 的 `app.path().resource_dir()`。但它需要 `AppHandle`，而 `resolve_java` / `locate_jar` 现在没有。**这正是要处理的设计问题**：把「随包根目录」作为参数传进去，而不是在函数里偷偷拿全局。这样测试不需要 Tauri 运行时。
 
-- [ ] **Step 2: 改 `tauri.conf.json`**
+- [x] **Step 2: 改 `tauri.conf.json`**
 
 ```json
 "bundle": {
@@ -174,7 +174,7 @@ Expected: 看到 `CHANGE_PORT=`。
 
 **`resources` 的映射写法要核实**：Tauri 2 的 `bundle.resources` 支持「源 → 目标」的对象形式；跑一次 `tauri build` 后**进安装目录确认那两个东西真的在里面**，不要只看配置。
 
-- [ ] **Step 3: 加一个「构建前检查」**
+- [x] **Step 3: 加一个「构建前检查」**
 
 `tauri build` 之前，如果 `resources/change-backend.jar` 或 `resources/runtime/bin/java.exe` 不存在，**直接失败并告诉人先跑 Task 1 与 `mvn package`**。
 
@@ -182,9 +182,9 @@ Expected: 看到 `CHANGE_PORT=`。
 
 **做法**：写一个 `beforeBuildCommand`（Tauri 支持）或一个 npm script `build:release`，里面先检查再调 `pnpm build`。
 
-- [ ] **Step 4: 跑外壳测试 + `cargo clippy`**
+- [x] **Step 4: 跑外壳测试 + `cargo clippy`**
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ---
 
@@ -198,9 +198,9 @@ Expected: 看到 `CHANGE_PORT=`。
 - Modify: `frontend/src/views/…` 或新增一个启动态组件
 - Test: 前端组件测试 + 外壳测试
 
-- [ ] **Step 1: 窗口配置成 `visible: false`**
+- [x] **Step 1: 窗口配置成 `visible: false`**
 
-- [ ] **Step 2: 启动态**
+- [x] **Step 2: 启动态**
 
 外壳在后端就绪后调 `window.show()`。前端在 `BackendStatusBar`（已有）之外，**在应用根部**显示一个全屏的启动态：
 
@@ -208,20 +208,20 @@ Expected: 看到 `CHANGE_PORT=`。
 - 分阶段文案（可选）：`正在启动` → `首次启动需要导入动作库，约 10 秒`
 - **失败时**必须显示错误（后端起不来是真实的可能：端口被占、jar 损坏、缺模块）——**不能停在一个永远转圈的加载页**
 
-- [ ] **Step 3: 测试**
+- [x] **Step 3: 测试**
 
 至少覆盖：
 1. 启动态在「后端未就绪」时显示
 2. 就绪后消失
 3. **失败时显示错误文案**（不是空白、不是永远转圈）
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ---
 
 ## Task 4: 打出安装包并核对体积
 
-- [ ] **Step 1: 准备资源**
+- [x] **Step 1: 准备资源**
 
 ```powershell
 cd backend
@@ -232,15 +232,15 @@ Copy-Item ..\..\backend\target\change-backend-0.1.0-SNAPSHOT.jar resources\chang
 # 再跑 Task 1 的脚本产出 resources\runtime
 ```
 
-- [ ] **Step 2: `pnpm tauri build`**
+- [x] **Step 2: `pnpm tauri build`**
 
-- [ ] **Step 3: 报告实际产物**
+- [x] **Step 3: 报告实际产物**
 
 - 安装包路径与**实际字节数**（不是估计）
 - `resources` 在安装后落在哪里（**解压/安装后进目录看**，不要只看配置）
 - 后端 jar 与 runtime 是否真的在里面
 
-- [ ] **Step 4: 提交**（只提交源码与配置，**不提交 `resources/` 与 `target/`**）
+- [x] **Step 4: 提交**（只提交源码与配置，**不提交 `resources/` 与 `target/`**）
 
 ---
 
@@ -248,11 +248,11 @@ Copy-Item ..\..\backend\target\change-backend-0.1.0-SNAPSHOT.jar resources\chang
 
 **这一步是本计划唯一能证明「朋友的机器上能用」的**。
 
-- [ ] **Step 1: 静默安装到一个干净的目录**
+- [x] **Step 1: 静默安装到一个干净的目录**
 
 NSIS 支持 `/S /D=<path>`。装到 `$env:TEMP\change-install-test`。
 
-- [ ] **Step 2: 从那个目录启动（关键：不能带任何开发环境的变量）**
+- [x] **Step 2: 从那个目录启动（关键：不能带任何开发环境的变量）**
 
 ```powershell
 # 清掉所有可能让外壳偷偷用上系统 Java 的变量
@@ -275,25 +275,88 @@ Remove-Item Env:CHANGE_DATA_DIR -ErrorAction SilentlyContinue
 | 5 | **关掉窗口后没有残留 java 进程** |
 | 6 | 卸载后：数据目录**还在**（用户的训练记录不能被卸载带走） |
 
-- [ ] **Step 3: 报告实际结果**
+- [x] **Step 3: 报告实际结果**
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ---
 
 ## 完成标准
 
-- [ ] `jlink` 脚本可复现，产出 ≈ 48.8 MB，且**用产物能真的启动后端**
-- [ ] 外壳**优先用随包资源**，且有测试证明顺序（随包 > CHANGE_JAVA > JAVA_HOME）
-- [ ] 找不到资源时的错误信息**列出试过的路径**
-- [ ] `tauri build` 之前缺资源就**直接失败**（而不是产出缺资源的包）
-- [ ] 启动时窗口**立刻可见**，加载态有文案；**失败时有错误而不是永远转圈**
-- [ ] 安装包实际大小已报告；装完后 `resources` 确实在安装目录里
-- [ ] **在清掉所有开发环境变量的条件下**装一次、启动一次、记一条数据、关掉、确认无残留进程
-- [ ] 卸载后数据目录仍在
-- [ ] `cargo test` / `cargo clippy` 全绿；前端 `pnpm test` + `pnpm build` 全绿
-- [ ] **`resources/` 与 `target/` 没有进 git**
-- [ ] 代码里**没有任何 API key**
+- [x] `jlink` 脚本可复现，产出 ≈ 48.8 MB，且**用产物能真的启动后端**
+- [x] 外壳**优先用随包资源**，且有测试证明顺序（随包 > CHANGE_JAVA > JAVA_HOME）
+- [x] 找不到资源时的错误信息**列出试过的路径**
+- [x] `tauri build` 之前缺资源就**直接失败**（而不是产出缺资源的包）
+- [x] 启动时窗口**立刻可见**，加载态有文案；**失败时有错误而不是永远转圈**
+- [x] 安装包实际大小已报告；装完后 `resources` 确实在安装目录里
+- [x] **在清掉所有开发环境变量的条件下**装一次、启动一次、记一条数据、关掉、确认无残留进程
+- [x] 卸载后数据目录仍在
+- [x] `cargo test` / `cargo clippy` 全绿；前端 `pnpm test` + `pnpm build` 全绿
+- [x] **`resources/` 与 `target/` 没有进 git**
+- [x] 代码里**没有任何 API key**
+
+## 实施记录（落地时真撞上的事）
+
+### 1. NSIS 下载会超时——必须手动准备（**下一个人的第一道墙**）
+
+`pnpm tauri build` 第一次跑到打包阶段时失败：
+
+```
+Info Verifying NSIS package
+Downloading https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.13/nsis-3.13.zip
+failed to bundle project: `timeout: global`
+```
+
+**不是网络不通**——同一个 URL 用 PowerShell `Invoke-WebRequest` 11.8 秒就下来（2.3 MB）。是 Tauri 自己那个 HTTP client 的超时太短。
+
+**手动准备（两个文件，放到 `%LOCALAPPDATA%\tauri\NSIS\`）：**
+
+```powershell
+# 1) NSIS 本体：解压后把 nsis-3.13/* 直接铺到 NSIS 根（makensis.exe 必须在根上）
+$target = "$env:LOCALAPPDATA\tauri\NSIS"
+Invoke-WebRequest 'https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.13/nsis-3.13.zip' -OutFile "$env:TEMP\nsis.zip" -UseBasicParsing
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::ExtractToDirectory("$env:TEMP\nsis.zip", "$env:TEMP\nsis")
+New-Item -ItemType Directory -Force -Path $target | Out-Null
+Copy-Item "$env:TEMP\nsis\nsis-3.13\*" -Destination $target -Recurse -Force
+
+# 2) tauri 的 NSIS 插件 DLL（少它会在 makensis 阶段失败）
+$dllDir = "$target\Plugins\x86-unicode\additional"
+New-Item -ItemType Directory -Force -Path $dllDir | Out-Null
+Invoke-WebRequest 'https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll' -OutFile "$dllDir\nsis_tauri_utils.dll" -UseBasicParsing
+```
+
+然后 `pnpm tauri build` 就过了。
+
+**这两个 URL 与目标路径是从 tauri CLI 的二进制里搜出来的**（`cli.win32-x64-msvc.node` 里的字符串 `nsis-3.13` 与 `Plugins/x86-unicode/additional/nsis_tauri_utils.dll`），不是猜的。
+
+### 2. `bundle.resources` 让「资源存在」成了所有 cargo 构建的前提
+
+加了 `bundle.resources` 之后，**`cargo test` 也会在 build script 阶段检查并复制资源**，缺文件直接失败：
+
+```
+resource path 'resources\change-backend.jar' doesn't exist
+```
+
+所以新克隆 / CI 的顺序必须是：`mvn package` → `jlink-runtime.ps1` → 才能 `cargo test` / `tauri build`。
+
+`pnpm check:release-resources` 的价值是**更早、更可读的失败**，不是唯一的失败点。
+
+### 3. `TerminateProcess` 硬杀外壳会留下孤儿 java
+
+验收时发现：`Popen.terminate()`（Windows 上是 `TerminateProcess`）杀掉 `change.exe` 后，**那个 JVM 还活着**——因为外壳的 `RunEvent::ExitRequested | Exit` 处理器**根本没机会跑**。
+
+**正常关窗（点 X / `CloseMainWindow()`）不会**：实测优雅关闭后残留 java **0 个**。
+
+这不是缺陷（`TerminateProcess` 不给任何进程机会），但它意味着：**崩溃或被强杀之后，下一次启动可能会碰到一个还占着数据库的旧 JVM。** 记在这里，下一轮做「单实例锁」时一起处理。
+
+### 4. 验收脚本自己抢跑过一次
+
+第一次验收里「库完整」那条 FAIL：`change.db` 只有 4,096 B、0 条动作。**不是产品问题**——`/api/health` 返回 200 只代表 Tomcat 起来了，而 876 条动作的导入是在 `Started` **之后**才跑的。补验等到导入完成：**12 秒整**，876 / 871 / 35 全对。
+
+**教训**：「health 200」与「应用可用」是两件事。判「可用」要看**数据**，不看端口。
+
+---
 
 ## 风险与未知
 
