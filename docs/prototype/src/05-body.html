@@ -1,0 +1,95 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0b0e11; --surface:#11151a; --raised:#171c22; --raised2:#1d242b;
+  --line:#222a32; --line-hi:#2f3944;
+  --text:#e9edf1; --dim:#7f8a95; --dim2:#4d5762;
+  --accent:#e0453a; --accent-soft:rgba(224,69,58,.14);
+  --ok:#3fb950; --warn:#d29922;
+  --mono:'Consolas','Cascadia Mono',monospace;
+  --sans:'Microsoft YaHei','Segoe UI',sans-serif;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);
+     -webkit-font-smoothing:antialiased;overflow:hidden}
+.screen{width:1280px;height:820px;display:flex;background:var(--bg);position:relative}
+.screen::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:radial-gradient(#1a2028 1px, transparent 1px);
+  background-size:22px 22px;opacity:.35}
+/* ── 侧边栏 ── */
+.side{width:214px;flex:0 0 214px;background:var(--surface);border-right:1px solid var(--line);
+      padding:22px 0;display:flex;flex-direction:column;position:relative;z-index:2}
+.brand{display:flex;align-items:center;gap:10px;padding:0 20px 26px}
+.brand .mark{width:30px;height:30px;border-radius:9px;background:var(--accent);
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#fff}
+.brand .nm{font-size:15px;font-weight:600;letter-spacing:.3px}
+.brand .nm small{display:block;font-size:10px;color:var(--dim2);font-weight:400;letter-spacing:1.4px}
+.grp{padding:0 12px;margin-bottom:16px}
+.grp>label{display:block;font-size:10px;color:var(--dim2);letter-spacing:2px;padding:0 8px 8px}
+.item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;
+      font-size:13px;color:var(--dim);position:relative}
+.item .g{width:22px;height:22px;border-radius:6px;background:var(--raised);
+        display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dim)}
+.item.on{background:var(--raised);color:var(--text)}
+.item.on .g{background:var(--accent-soft);color:var(--accent)}
+.item.on::before{content:"";position:absolute;left:-12px;top:8px;bottom:8px;width:2px;
+  background:var(--accent);border-radius:2px}
+.side .foot{margin-top:auto;padding:14px 20px 0;border-top:1px solid var(--line);
+  font-size:11px;color:var(--dim2);display:flex;align-items:center;gap:7px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
+/* ── 主区 ── */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative;z-index:1}
+.top{height:52px;flex:0 0 52px;border-bottom:1px solid var(--line);
+     display:flex;align-items:center;padding:0 26px;gap:12px;font-size:12px;color:var(--dim)}
+.top .sep{color:var(--dim2)}
+.top .right{margin-left:auto;display:flex;align-items:center;gap:16px}
+.pill{border:1px solid var(--line-hi);border-radius:999px;padding:4px 12px;font-size:11px;color:var(--dim)}
+.body{flex:1;padding:24px 26px;overflow:hidden;display:flex;flex-direction:column;gap:16px}
+h1{font-size:26px;font-weight:600;letter-spacing:.5px}
+.sub{font-size:12px;color:var(--dim);margin-top:4px}
+.row{display:flex;gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px;
+      position:relative;overflow:hidden}
+.card::before{content:"";position:absolute;left:0;right:0;top:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--line-hi),transparent)}
+.card .cap{font-size:11px;color:var(--dim);letter-spacing:1.2px;margin-bottom:10px}
+.big{font-family:var(--mono);font-size:46px;font-weight:700;line-height:1;letter-spacing:-1px}
+.big small{font-size:15px;color:var(--dim);font-weight:400;margin-left:5px;letter-spacing:0}
+.mid{font-family:var(--mono);font-size:26px;font-weight:700}
+.k{font-size:12px;color:var(--dim)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:3px 9px;border-radius:999px;
+     border:1px solid var(--line-hi);color:var(--dim)}
+.tag.a{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.bar{height:6px;border-radius:3px;background:var(--raised2);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+.bar i.g{background:var(--ok)} .bar i.w{background:var(--warn)}
+.hl{color:var(--accent)}
+.dim{color:var(--dim)}
+.mono{font-family:var(--mono)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;font-weight:400;color:var(--dim2);font-size:10px;letter-spacing:1.2px;
+   padding:0 0 8px;border-bottom:1px solid var(--line)}
+td{padding:9px 0;border-bottom:1px solid #191f26}
+tr:last-child td{border-bottom:none}
+</style></head><body>
+<div class="screen"><div class="side"><div class="brand"><div class="mark">ch</div><div class="nm">changE<small>TRAINING LOG</small></div></div><div class="grp"><label>记录</label><div class="item"><span class="g">今</span>今日</div><div class="item"><span class="g">训</span>训练记录</div><div class="item"><span class="g">食</span>饮食记录</div></div><div class="grp"><label>分析</label><div class="item"><span class="g">体</span>人体图</div><div class="item"><span class="g">曲</span>进步曲线</div><div class="item on"><span class="g">数</span>身体数据</div></div><div class="grp"><label>助手</label><div class="item"><span class="g">智</span>智能体对话</div></div><div class="grp"><label>我的</label><div class="item"><span class="g">设</span>设置</div><div class="item"><span class="g">谢</span>关于与致谢</div></div><div class="foot"><span class="dot"></span>本地服务 · 已连接</div></div>
+<div class="main">
+  <div class="top"><span>changE</span><span class="sep">/</span><span class="hl">身体数据</span>
+    <div class="right"><span class="pill">2026-10-20 周二</span>
+      <span class="dim">本周 第 43 周</span></div></div>
+  <div class="body">
+    <div><h1>身体数据</h1><div class="sub">九项指标，每周记一两次就够。没记过的显示「—」，不是 0。</div></div>
+    <div class="row" style="flex:0 0 auto"><div class="card" style="flex:1"><div class="cap">体重</div><div class="big" style="font-size:32px">72.4<small>kg</small></div><div style="font-size:11px;margin-top:6px;color:var(--ok)">▼ 0.6</div></div><div class="card" style="flex:1"><div class="cap">体脂</div><div class="big" style="font-size:32px">15.8<small>%</small></div><div style="font-size:11px;margin-top:6px;color:var(--ok)">▼ 0.3</div></div><div class="card" style="flex:1"><div class="cap">腰围</div><div class="big" style="font-size:32px">80.0<small>cm</small></div><div style="font-size:11px;margin-top:6px;color:var(--dim)">— 0</div></div><div class="card" style="flex:1"><div class="cap">胸围</div><div class="big" style="font-size:32px">101<small>cm</small></div><div style="font-size:11px;margin-top:6px;color:var(--accent)">▲ 0.5</div></div><div class="card" style="flex:1"><div class="cap">臀围</div><div class="big" style="font-size:32px">95.0<small>cm</small></div><div style="font-size:11px;margin-top:6px;color:var(--dim)">— 0</div></div><div class="card" style="flex:1"><div class="cap">大腿</div><div class="big" style="font-size:32px">57.5<small>cm</small></div><div style="font-size:11px;margin-top:6px;color:var(--accent)">▲ 0.5</div></div></div>
+    <div class="card" style="flex:1">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div class="cap" style="margin:0">时间线</div>
+        <span class="tag">全部指标</span>
+      </div>
+      <table><tr><th>日期</th><th>指标</th><th>数值</th><th>备注</th></tr>
+      <tr><td class="mono">10-19</td><td>体重</td><td class="mono hl">72.4 kg</td><td class="dim">早上空腹</td></tr>
+      <tr><td class="mono">10-19</td><td>腰围</td><td class="mono">80.0 cm</td><td class="dim">—</td></tr>
+      <tr><td class="mono">10-12</td><td>体重</td><td class="mono">73.0 kg</td><td class="dim">训练后</td></tr>
+      <tr><td class="mono">10-12</td><td>体脂</td><td class="mono">16.1 %</td><td class="dim">—</td></tr>
+      </table>
+    </div></div>
+</div></div></body></html>
