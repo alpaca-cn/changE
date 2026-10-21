@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { searchExercises, type ExerciseSummary } from '../api/training'
 import { progress, type ExerciseProgress, type ProgressPoint } from '../api/progress'
+import MetricSpark from '../components/MetricSpark.vue'
+import { groupByType, type MetricSeries } from './metric-series'
+import { listMetrics } from '../api/body'
 
 /**
  * 进步曲线页：选一个动作 → 三条序列各一张小图。
@@ -246,6 +249,32 @@ function buildChart(spec: SeriesSpec): Chart {
 }
 
 const charts = computed<Chart[]>(() => SERIES.map((spec) => buildChart(spec)))
+
+/**
+ * 身体数据。与上面的动作曲线**并列，不是同一件事**：
+ * 动作曲线回答「这个动作我变强了吗」，这里回答「我的体重/腰围在往哪走」。
+ *
+ * 两者共用一页但不共用一个选择器——如果只给一个「选择看什么」的下拉，
+ * 用户得先决定自己想看哪类才能开始，而这两类问题的触发时机完全不同
+ * （想看动作是练完，想看体重是称完）。
+ */
+const metricSeries = ref<MetricSeries[]>([])
+const metricsError = ref<string | null>(null)
+
+async function loadMetrics() {
+  try {
+    metricSeries.value = groupByType(await listMetrics())
+    metricsError.value = null
+  } catch (e) {
+    // 身体数据挂了不该把动作曲线也拖成空白
+    metricSeries.value = []
+    metricsError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+onMounted(() => {
+  void loadMetrics()
+})
 </script>
 
 <template>
@@ -343,6 +372,18 @@ const charts = computed<Chart[]>(() => SERIES.map((spec) => buildChart(spec)))
         </figure>
       </div>
     </template>
+
+    <!-- 身体数据：独立的一块，不随上面选的动作变化 -->
+    <section class="body-metrics">
+      <h3>身体数据</h3>
+      <p v-if="metricsError" class="err">{{ metricsError }}</p>
+      <p v-else-if="metricSeries.length === 0" class="dim">
+        还没有身体数据。去「身体数据」页记一次体重，这里就会出现走势。
+      </p>
+      <div v-else class="metric-grid">
+        <MetricSpark v-for="s in metricSeries" :key="s.metricType" :series="s" />
+      </div>
+    </section>
   </section>
 </template>
 
@@ -428,6 +469,15 @@ input {
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
+.body-metrics { margin-top: var(--gap-xl); }
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--gap-lg);
+  margin-top: var(--gap-md);
+}
+.err { color: var(--danger); }
+
 .chart-svg { display: block; width: 100%; height: auto; aspect-ratio: 320 / 100; }
 .grid { stroke: var(--line); stroke-width: 1; }
 .dot { stroke: none; }

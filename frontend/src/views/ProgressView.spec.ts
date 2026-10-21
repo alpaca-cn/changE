@@ -78,6 +78,10 @@ function baseRules(overrides: Rule[] = []): Rule[] {
     ...overrides,
     [on('GET', '/api/exercises'), { status: 200, body: EXERCISES }],
     [onProgress, { status: 200, body: PROGRESS_THREE_DAYS }],
+    // 这一页现在还会拉身体数据（与动作曲线并列的独立一块）。
+    // 空数组是它的正常空态——不给这条默认值的话，缺应答会抛错，
+    // 于是「还没选动作时页面不该有红字」那条断言会被身体数据那块拖红。
+    [on('GET', '/api/body-metrics'), { status: 200, body: '[]' }],
   ]
 }
 

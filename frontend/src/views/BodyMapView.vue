@@ -9,6 +9,8 @@ import {
 } from '../api/body-map'
 import BodyMap from '../components/BodyMap.vue'
 import BodyMapSidePanel from '../components/BodyMapSidePanel.vue'
+import ExerciseDetailPanel from '../components/ExerciseDetailPanel.vue'
+import { exerciseDetail, type ExerciseDetail } from '../api/exercise-detail'
 
 /**
  * 人体图页：左边是 2D 人体（正反两面），右边是被选中那块肌群的每周详情。
@@ -75,6 +77,29 @@ async function load() {
     error.value = reason(e)
   } finally {
     loading.value = false
+  }
+}
+
+/**
+ * 动作详情的抽屉。与训练记录页用的是同一个组件、同一份数据来源——
+ * 「点一个动作看做法」不该因为你在哪个页面点而长得不一样。
+ */
+const detailOpen = ref(false)
+const detail = ref<ExerciseDetail | null>(null)
+const detailLoading = ref(false)
+const detailError = ref<string | null>(null)
+
+async function openExercise(id: number) {
+  detailOpen.value = true
+  detailLoading.value = true
+  detailError.value = null
+  try {
+    detail.value = await exerciseDetail(id)
+  } catch (e) {
+    detail.value = null
+    detailError.value = reason(e)
+  } finally {
+    detailLoading.value = false
   }
 }
 
@@ -181,6 +206,14 @@ function closePanel() {
         :loading="exercisesLoading"
         :error="exercisesError"
         @close="closePanel"
+        @exercise-click="openExercise"
+      />
+      <ExerciseDetailPanel
+        v-if="detailOpen"
+        :detail="detail"
+        :loading="detailLoading"
+        :error="detailError"
+        @close="detailOpen = false"
       />
     </div>
   </section>

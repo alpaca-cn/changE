@@ -36,7 +36,11 @@ const props = withDefaults(
   { exercises: () => [], loading: false, error: null },
 )
 
-const emit = defineEmits<{ (e: 'close'): void }>()
+const emit = defineEmits<{
+  (e: 'close'): void
+  /** 点了一个动作：上层据此打开动作详情抽屉（与训练页用的是同一个抽屉）。 */
+  (e: 'exercise-click', id: number): void
+}>()
 
 /** 状态 → 中文短语。**界面措辞，不是医学判断**（见文件头注释）。 */
 const STATUS_LABEL: Record<VolumeStatus, string> = {
@@ -238,6 +242,23 @@ const shown = computed<ShownMuscle | null>(() => {
   border-top: var(--line-width) solid var(--line);
 }
 
+.exercise {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 6px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.exercise:hover { background: var(--bg); }
+.ex-name { min-width: 0; }
+.ex-go { flex: none; font-size: 11px; color: var(--accent); }
 .exercise {
   padding: 7px 0;
   border-bottom: var(--line-width) solid var(--line);

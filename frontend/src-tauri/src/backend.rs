@@ -342,14 +342,31 @@ impl Backend {
     ) -> std::io::Result<Self> {
         let state = Arc::new(Mutex::new(BackendState::starting()));
 
-        let mut child = Command::new(&java)
-            .arg("-jar")
+        let mut cmd = Command::new(&java);
+        cmd.arg("-jar")
             .arg(&jar)
             .args(&extra_args)
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .stdin(Stdio::null())
-            .spawn()?;
+            // **stderr 必须 null 而不是 inherit。** Java 是控制台程序，而 release
+            // 外壳是 GUI 程序、自己没有控制台；inherit 时 Windows 会给子进程
+            // （或者它的父进程）配一个可见的 console。用户看到的就是每次启动都弹
+            // 一个黑窗口刷 JVM 的 WARNING —— 那看起来像病毒，不像一个应用。
+            //
+            // 丢掉 stderr 的代价很小：Spring Boot 的日志走 stdout（下面那个读线程
+            // 会转发），而 stderr 里通常只有 JVM 的 native-access / Unsafe 警告。
+            .stderr(Stdio::null())
+            .stdin(Stdio::null());
+
+        // 再钉一次：即使某个 Windows 版本仍然分配了 console，CREATE_NO_WINDOW
+        // 也会让它不显示。0x08000000 是 Win32 的 CREATE_NO_WINDOW。
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let mut child = cmd.spawn()?;
 
         let stdout = child.stdout.take().expect("stdout 已设为 piped");
         let child = Arc::new(Mutex::new(Some(child)));

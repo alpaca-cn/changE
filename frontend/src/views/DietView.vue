@@ -224,6 +224,20 @@ onMounted(() => {
       </li>
     </ul>
 
+    <!--
+      **搜不到时必须说话。** 食物库只有 35 条，用户搜「包子」这类不在库里的词会拿到
+      空数组——之前这里什么都不显示，于是他看到的是「输入了没反应」，
+      接着以为「保存不了」。空结果是最容易让人放弃的失败形态。
+    -->
+    <p v-else-if="query.trim() !== ''" class="no-hit">
+      没找到「{{ query }}」。食物库还很小，换个名字再试；或者去左边的
+      <b>智能体对话</b>（07）说一句，让它按库里的食物折算。
+    </p>
+
+    <p v-if="draft.length === 0 && query.trim() === '' && foods.length === 0" class="how">
+      搜到食物之后，<b>点一下那一行</b>就加进来了。
+    </p>
+
     <!-- 草稿 -->
     <template v-if="draft.length > 0">
       <table class="draft">
@@ -340,6 +354,16 @@ select, input {
 .meal-items { color: var(--text-dim); font-size: 12px; }
 
 .err { color: var(--danger); }
+.no-hit {
+  margin: var(--gap-md) 0;
+  padding: var(--gap-md);
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text-dim);
+  border: var(--line-width) dashed var(--line);
+  border-radius: var(--radius-sm);
+}
+.how { margin: var(--gap-md) 0; font-size: 12px; color: var(--eyebrow); }
 .ok { color: var(--ok); }
 .dim { color: var(--text-dim); }
 </style>
