@@ -2,167 +2,195 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0b0e11; --surface:#11151a; --raised:#171c22; --raised2:#1d242b;
-  --line:#222a32; --line-hi:#2f3944;
-  --text:#e9edf1; --dim:#7f8a95; --dim2:#4d5762;
-  --accent:#e0453a; --accent-soft:rgba(224,69,58,.14);
-  --ok:#3fb950; --warn:#d29922;
-  --mono:'Consolas','Cascadia Mono',monospace;
-  --sans:'Microsoft YaHei','Segoe UI',sans-serif;
+  --bg:#0b0c0b; --panel:#0e0f0e; --card:#131413; --raise:#1a1b19;
+  --ink:#f2f2ef; --muted:rgba(255,255,255,.46); --faint:rgba(255,255,255,.28);
+  --line:rgba(255,255,255,.10); --line-soft:rgba(255,255,255,.06);
+  --accent:#d7ff3f; --pill:#f1f1ee; --pill-ink:#111;
+  --sans:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  --serif:'Songti SC','Noto Serif SC','SimSun',serif;
+  --mono:ui-monospace,'Consolas','Cascadia Mono',monospace;
+  --r:16px; --r-sm:10px;
 }
-body{font-family:var(--sans);background:var(--bg);color:var(--text);
-     -webkit-font-smoothing:antialiased;overflow:hidden}
-.screen{width:1280px;height:820px;display:flex;background:var(--bg);position:relative}
-.screen::before{content:"";position:absolute;inset:0;pointer-events:none;
-  background-image:radial-gradient(#1a2028 1px, transparent 1px);
-  background-size:22px 22px;opacity:.35}
-/* ── 侧边栏 ── */
-.side{width:214px;flex:0 0 214px;background:var(--surface);border-right:1px solid var(--line);
-      padding:22px 0;display:flex;flex-direction:column;position:relative;z-index:2}
-.brand{display:flex;align-items:center;gap:10px;padding:0 20px 26px}
-.brand .mark{width:30px;height:30px;border-radius:9px;background:var(--accent);
-  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#fff}
-.brand .nm{font-size:15px;font-weight:600;letter-spacing:.3px}
-.brand .nm small{display:block;font-size:10px;color:var(--dim2);font-weight:400;letter-spacing:1.4px}
-.grp{padding:0 12px;margin-bottom:16px}
-.grp>label{display:block;font-size:10px;color:var(--dim2);letter-spacing:2px;padding:0 8px 8px}
-.item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;
-      font-size:13px;color:var(--dim);position:relative}
-.item .g{width:22px;height:22px;border-radius:6px;background:var(--raised);
-        display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dim)}
-.item.on{background:var(--raised);color:var(--text)}
-.item.on .g{background:var(--accent-soft);color:var(--accent)}
-.item.on::before{content:"";position:absolute;left:-12px;top:8px;bottom:8px;width:2px;
-  background:var(--accent);border-radius:2px}
-.side .foot{margin-top:auto;padding:14px 20px 0;border-top:1px solid var(--line);
-  font-size:11px;color:var(--dim2);display:flex;align-items:center;gap:7px}
-.dot{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
-/* ── 主区 ── */
-.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative;z-index:1}
-.top{height:52px;flex:0 0 52px;border-bottom:1px solid var(--line);
-     display:flex;align-items:center;padding:0 26px;gap:12px;font-size:12px;color:var(--dim)}
-.top .sep{color:var(--dim2)}
-.top .right{margin-left:auto;display:flex;align-items:center;gap:16px}
-.pill{border:1px solid var(--line-hi);border-radius:999px;padding:4px 12px;font-size:11px;color:var(--dim)}
-.body{flex:1;padding:24px 26px;overflow:hidden;display:flex;flex-direction:column;gap:16px}
-h1{font-size:26px;font-weight:600;letter-spacing:.5px}
-.sub{font-size:12px;color:var(--dim);margin-top:4px}
-.row{display:flex;gap:14px}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px;
-      position:relative;overflow:hidden}
-.card::before{content:"";position:absolute;left:0;right:0;top:0;height:1px;
-  background:linear-gradient(90deg,transparent,var(--line-hi),transparent)}
-.card .cap{font-size:11px;color:var(--dim);letter-spacing:1.2px;margin-bottom:10px}
-.big{font-family:var(--mono);font-size:46px;font-weight:700;line-height:1;letter-spacing:-1px}
-.big small{font-size:15px;color:var(--dim);font-weight:400;margin-left:5px;letter-spacing:0}
-.mid{font-family:var(--mono);font-size:26px;font-weight:700}
-.k{font-size:12px;color:var(--dim)}
-.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:3px 9px;border-radius:999px;
-     border:1px solid var(--line-hi);color:var(--dim)}
-.tag.a{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
-.bar{height:6px;border-radius:3px;background:var(--raised2);overflow:hidden}
-.bar i{display:block;height:100%;border-radius:3px;background:var(--accent)}
-.bar i.g{background:var(--ok)} .bar i.w{background:var(--warn)}
-.hl{color:var(--accent)}
-.dim{color:var(--dim)}
-.mono{font-family:var(--mono)}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{text-align:left;font-weight:400;color:var(--dim2);font-size:10px;letter-spacing:1.2px;
-   padding:0 0 8px;border-bottom:1px solid var(--line)}
-td{padding:9px 0;border-bottom:1px solid #191f26}
-tr:last-child td{border-bottom:none}
+body{font-family:var(--sans);background:var(--bg);color:var(--ink);
+  -webkit-font-smoothing:antialiased;overflow:hidden}
+.screen{width:1280px;height:820px;display:flex;background:var(--bg)}
 
-    .shade{position:absolute;inset:0;background:rgba(6,9,12,.72);z-index:3}
-    .drawer{position:absolute;right:0;top:0;bottom:0;width:452px;background:var(--surface);
-      border-left:1px solid var(--line-hi);z-index:4;padding:22px 24px;display:flex;
-      flex-direction:column;gap:16px;box-shadow:-30px 0 60px rgba(0,0,0,.55)}
-    .drawer h3{font-size:19px;font-weight:600}
-    .drawer .en{font-size:11px;color:var(--dim);letter-spacing:.6px;margin-top:3px}
-    .steps{display:flex;flex-direction:column;gap:11px}
-    .step{display:flex;gap:11px;font-size:12.5px;line-height:1.65;color:#c8d0d8}
-    .step .n{flex:0 0 20px;height:20px;border-radius:50%;background:var(--raised2);
-      color:var(--dim);font-size:10px;font-family:var(--mono);display:flex;
-      align-items:center;justify-content:center;margin-top:2px}
-    .search{display:flex;gap:8px}
-    .sbtn{flex:1;border:1px solid var(--line-hi);border-radius:9px;padding:9px 10px;font-size:11.5px;
-      color:var(--dim);display:flex;align-items:center;justify-content:space-between}
-    .sbtn span{font-family:var(--mono);color:var(--dim2)}
+/* ── 侧栏：编号导航 ── */
+.side{width:224px;flex:0 0 224px;background:var(--panel);border-right:1px solid var(--line);
+  padding:34px 22px;display:flex;flex-direction:column}
+.brand{padding:0 8px 34px}
+.brand .nm{font-size:17px;font-weight:720;line-height:1.02;letter-spacing:-.01em}
+.brand .nm i{font-style:normal;color:var(--accent)}
+.brand .cap{font-size:8px;font-weight:650;letter-spacing:.15em;color:var(--faint);
+  text-transform:uppercase;margin-top:6px}
+.nav{display:flex;flex-direction:column;gap:2px;flex:1;justify-content:center}
+.nav .it{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:13px;
+  color:var(--muted);font-size:13px;position:relative;transition:background .15s}
+.nav .it .no{font-family:var(--mono);font-size:10px;color:var(--faint);width:16px;flex:none;
+  letter-spacing:.02em}
+.nav .it .tw{display:flex;flex-direction:column;gap:2px;min-width:0}
+.nav .it .tw b{font-weight:500;font-size:13px;color:inherit}
+.nav .it .tw em{font-style:normal;font-size:8px;font-weight:650;letter-spacing:.15em;
+  color:var(--faint);text-transform:uppercase}
+.nav .it.on{background:var(--pill);color:var(--pill-ink)}
+.nav .it.on .no{color:rgba(0,0,0,.42)}
+.nav .it.on .tw em{color:rgba(0,0,0,.42)}
+.nav .it.on::before{content:"";position:absolute;left:-8px;top:50%;transform:translateY(-50%);
+  width:4px;height:18px;border-radius:2px;background:var(--accent)}
+.side .foot{margin-top:auto;padding:16px 8px 0;border-top:1px solid var(--line);
+  font-size:10px;color:var(--faint);letter-spacing:.04em;display:flex;align-items:center;gap:7px}
+.side .foot .d{width:5px;height:5px;border-radius:50%;background:var(--accent)}
+
+/* ── 主区 ── */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.top{height:66px;flex:0 0 66px;border-bottom:1px solid var(--line);display:flex;
+  align-items:center;padding:0 26px;gap:10px}
+.top h1{font-size:15px;font-weight:650;letter-spacing:-.01em}
+.top h1::before{content:"changE / ";color:var(--faint);font-weight:500;letter-spacing:.08em}
+.top .right{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11px;color:var(--faint)}
+.top .right b{font-weight:500;color:var(--muted)}
+.body{flex:1;padding:26px 30px;display:flex;flex-direction:column;gap:0;overflow:hidden}
+
+/* ── 排版：眉标 / 双语小标题 / 大数字 ── */
+.eyebrow{font-size:11px;color:var(--faint);letter-spacing:.08em;margin-bottom:6px}
+.hi{font-family:var(--serif);font-size:34px;font-weight:400;line-height:1.28;letter-spacing:-.01em}
+.sub{font-size:12px;color:var(--muted);margin-top:8px;letter-spacing:.01em}
+h2{font-size:15px;font-weight:500;margin:0 0 10px;display:flex;align-items:baseline;gap:8px}
+h2 .t{color:var(--faint);font-size:12px;font-weight:400}
+hr{border:none;border-top:1px solid var(--line);margin:16px 0}
+.big{font-size:46px;font-weight:500;line-height:1;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums}
+.big small{font-size:13px;font-weight:400;color:var(--faint);margin-left:6px;letter-spacing:0}
+.mid{font-size:22px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.k{font-size:11px;color:var(--faint);letter-spacing:.04em}
+.row{display:flex;gap:18px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:4px 10px;
+  border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.chip.on{border-color:transparent;background:var(--pill);color:var(--pill-ink);font-weight:500}
+.chip.hot{border-color:rgba(215,255,63,.45);color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.card .hd{padding:16px 18px 0}
+.rows{display:flex;flex-direction:column}
+.r{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:14px 18px;border-bottom:1px solid var(--line-soft)}
+.r:last-child{border-bottom:none}
+.r .l .n{font-size:14px;font-weight:500}
+.r .l .s{font-size:11px;color:var(--muted);margin-top:3px}
+.r .v{font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.r .v small{font-size:11px;color:var(--faint);font-weight:400;margin-left:3px}
+.bar{height:3px;background:rgba(255,255,255,.09);border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.bar i.neutral{background:rgba(255,255,255,.42)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+    .shade{position:absolute;inset:0;background:rgba(5,5,5,.62);z-index:3}
+    .drawer{position:absolute;right:0;top:0;bottom:0;width:436px;background:var(--panel);
+      border-left:1px solid var(--line);z-index:4;padding:26px 24px;display:flex;
+      flex-direction:column;gap:18px;box-shadow:-40px 0 80px rgba(0,0,0,.5)}
+    .drawer .en{font-size:8px;font-weight:650;letter-spacing:.15em;color:var(--faint);
+      text-transform:uppercase;margin-top:6px}
+    .steps{display:flex;flex-direction:column;gap:12px}
+    .step{display:flex;gap:11px;font-size:12.5px;line-height:1.7;color:rgba(255,255,255,.72)}
+    .step .n{flex:0 0 18px;font-family:var(--mono);font-size:10px;color:var(--accent);
+      padding-top:3px}
+    .sbtn{flex:1;border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px;
+      font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:space-between}
+    .sbtn span{font-family:var(--mono);color:var(--faint)}
+    .sets{display:flex;flex-direction:column}
     </style></head><body>
-<div class="screen"><div class="side"><div class="brand"><div class="mark">ch</div><div class="nm">changE<small>TRAINING LOG</small></div></div><div class="grp"><label>记录</label><div class="item"><span class="g">今</span>今日</div><div class="item on"><span class="g">训</span>训练记录</div><div class="item"><span class="g">食</span>饮食记录</div></div><div class="grp"><label>分析</label><div class="item"><span class="g">体</span>人体图</div><div class="item"><span class="g">曲</span>进步曲线</div><div class="item"><span class="g">数</span>身体数据</div></div><div class="grp"><label>助手</label><div class="item"><span class="g">智</span>智能体对话</div></div><div class="grp"><label>我的</label><div class="item"><span class="g">设</span>设置</div><div class="item"><span class="g">谢</span>关于与致谢</div></div><div class="foot"><span class="dot"></span>本地服务 · 已连接</div></div>
-<div class="main">
-  <div class="top"><span>changE</span><span class="sep">/</span><span class="hl">训练记录</span>
-    <div class="right"><span class="pill">2026-10-20 周二</span>
-      <span class="dim">本周 第 43 周</span></div></div>
-  <div class="body">
-    <div><h1>训练记录</h1><div class="sub">选肌群 → 选动作 → 填组。点「看做法」不会离开这一页。</div></div>
-    <div class="row" style="flex:0 0 auto">
-      <span class="tag a">胸</span><span class="tag">背</span><span class="tag">腿</span>
-      <span class="tag">肩</span><span class="tag">手臂</span><span class="tag">核心</span>
-      <span class="tag" style="margin-left:auto">复合动作</span>
+<div class="screen">
+  <aside class="side">
+    <div class="brand"><div class="nm">chang<i>E</i></div>
+      <div class="cap">Personal Training System</div></div>
+    <nav class="nav"><div class="it"><span class="no">01</span><span class="tw"><b>今日</b><em>Today</em></span></div><div class="it on"><span class="no">02</span><span class="tw"><b>训练记录</b><em>Training</em></span></div><div class="it"><span class="no">03</span><span class="tw"><b>饮食记录</b><em>Nutrition</em></span></div><div class="it"><span class="no">04</span><span class="tw"><b>人体图</b><em>Body Map</em></span></div><div class="it"><span class="no">05</span><span class="tw"><b>进步曲线</b><em>Progress</em></span></div><div class="it"><span class="no">06</span><span class="tw"><b>身体数据</b><em>Body</em></span></div><div class="it"><span class="no">07</span><span class="tw"><b>智能体对话</b><em>Agent</em></span></div><div class="it"><span class="no">08</span><span class="tw"><b>设置</b><em>Settings</em></span></div></nav>
+    <div class="foot"><span class="d"></span>本地服务 · 已连接</div>
+  </aside>
+  <div class="main">
+    <div class="top"><h1>训练记录</h1>
+      <div class="right"><b>2026-10-20</b><span>周二</span><span>第 43 周</span></div></div>
+    <div class="body">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between">
+      <div><div class="eyebrow">Session</div><div class="hi" style="font-size:26px">今日训练</div></div>
+      <div style="display:flex;gap:6px">
+        <span class="chip on">胸</span><span class="chip">背</span><span class="chip">腿</span>
+        <span class="chip">肩</span><span class="chip">手臂</span></div>
     </div>
+    <hr>
     <div class="row" style="flex:1">
-      <div class="card" style="flex:1.05;align-self:flex-start;width:100%">
-        <div class="cap">动作</div>
-        <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
-          <div style="padding:9px 10px;border-radius:8px;background:var(--raised);
-            border-left:2px solid var(--accent)">杠铃卧推 <span class="dim" style="font-size:11px">· 胸部</span></div>
-          <div style="padding:9px 10px;border-radius:8px;color:var(--dim)">上斜哑铃卧推</div>
-          <div style="padding:9px 10px;border-radius:8px;color:var(--dim)">双杠臂屈伸</div>
-          <div style="padding:9px 10px;border-radius:8px;color:var(--dim)">蝴蝶机夹胸</div>
-          <div style="padding:9px 10px;border-radius:8px;color:var(--dim)">龙门架夹胸</div>
-          <div style="padding:9px 10px;border-radius:8px;color:var(--dim)">俯卧撑</div>
+      <div style="flex:1;min-width:0">
+        <h2>动作 <span class="t">Exercises</span></h2>
+        <div class="rows" style="margin:0 -18px">
+          <div class="r" style="padding-left:18px">
+            <div class="l"><div class="n">杠铃卧推</div><div class="s">胸部 · 复合</div></div>
+            <span class="v" style="font-size:13px">看做法 ——</span></div>
+          <div class="r"><div class="l"><div class="n">上斜哑铃卧推</div>
+            <div class="s">胸部 · 复合</div></div></div>
+          <div class="r"><div class="l"><div class="n">双杠臂屈伸</div>
+            <div class="s">胸部 · 自重</div></div></div>
+          <div class="r"><div class="l"><div class="n">蝴蝶机夹胸</div>
+            <div class="s">胸部 · 孤立</div></div></div>
         </div>
-        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);
-                    display:flex;justify-content:space-between;font-size:11px;color:var(--dim2)">
-          <span>共 24 个胸部动作</span><span>按使用频率排 ›</span></div>
       </div>
-      <div class="card" style="flex:1.35">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-          <div class="cap" style="margin:0">杠铃卧推 · 本次</div>
-          <span class="tag a">看做法 ›</span>
+      <div style="flex:1.15;min-width:0">
+        <h2>本次 <span class="t">Sets</span></h2>
+        <div class="card">
+          <div class="rows">
+            <div class="r"><div class="l"><div class="n mono">01<span style="color:var(--faint);
+              font-size:11px;margin-left:8px">组</span></div></div>
+              <div style="display:flex;gap:22px;align-items:baseline">
+                <span class="v">60<small>kg</small></span><span class="v">8<small>次</small></span>
+                <span class="mono" style="color:var(--accent);font-size:14px">✓</span></div></div>
+            <div class="r"><div class="l"><div class="n mono">02</div></div>
+              <div style="display:flex;gap:22px;align-items:baseline">
+                <span class="v">62.5<small>kg</small></span><span class="v">8<small>次</small></span>
+                <span class="mono" style="color:var(--accent);font-size:14px">✓</span></div></div>
+            <div class="r"><div class="l"><div class="n mono">03</div></div>
+              <div style="display:flex;gap:22px;align-items:baseline">
+                <span class="v" style="color:var(--faint)">62.5<small>kg</small></span>
+                <span class="v" style="color:var(--faint)">6<small>次</small></span>
+                <span class="mono" style="color:var(--faint);font-size:14px">—</span></div></div>
+          </div>
         </div>
-        <table><tr><th>#</th><th>重量</th><th>次数</th><th>完成</th></tr>
-        <tr><td class="mono dim">1</td><td class="mono">60 kg</td><td class="mono">8</td><td class="hl">✓</td></tr>
-        <tr><td class="mono dim">2</td><td class="mono">62.5 kg</td><td class="mono">8</td><td class="hl">✓</td></tr>
-        <tr><td class="mono dim">3</td><td class="mono">62.5 kg</td><td class="mono">6</td><td class="dim">—</td></tr>
-        </table>
-        <div style="margin-top:14px;display:flex;gap:8px">
-          <span class="tag">上次 62.5 × 8</span><span class="tag">估算 1RM <b class="hl mono">76.5</b></span>
-        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <span class="chip">上次 62.5 × 8</span>
+          <span class="chip hot">估算 1RM 76.5</span></div>
       </div>
     </div>
     <div class="shade"></div>
     <div class="drawer">
       <div>
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
-          <div><h3>杠铃卧推</h3><div class="en">BARBELL BENCH PRESS · MEDIUM GRIP</div></div>
-          <span class="dim" style="font-size:18px">×</span>
-        </div>
-        <div style="margin-top:11px;display:flex;gap:6px">
-          <span class="tag">杠铃</span><span class="tag">力量</span><span class="tag">复合</span>
-        </div>
+          <div><div style="font-size:21px;font-weight:650;letter-spacing:-.01em">杠铃卧推</div>
+            <div class="en">Barbell Bench Press · Medium Grip</div></div>
+          <span style="color:var(--faint);font-size:18px">×</span></div>
+        <div style="display:flex;gap:6px;margin-top:14px">
+          <span class="chip">杠铃</span><span class="chip">力量</span><span class="chip">复合</span></div>
       </div>
       <div>
-        <div class="cap">目标肌群</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <span class="tag a">胸部 · 主要</span><span class="tag">肩部 · 次要</span><span class="tag">肱三头肌 · 次要</span>
-        </div>
+        <div class="eyebrow">Target Muscles</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+          <span class="chip hot">胸部 · 主要</span><span class="chip">肩部 · 次要</span>
+          <span class="chip">肱三头肌 · 次要</span></div>
       </div>
+      <hr style="margin:2px 0">
       <div>
-        <div class="cap">分步做法</div>
-        <div class="steps">
-          <div class="step"><span class="n">1</span><span>仰卧在平凳上，双脚踩实地面。掌心朝前握杠，握距略宽于肩。</span></div>
-          <div class="step"><span class="n">2</span><span>把横杠从架上取下，双臂锁定，将横杠笔直举在身体上方。这是起始姿势。</span></div>
-          <div class="step"><span class="n">3</span><span>吸气并缓慢下放，直到横杠触到胸部中间。</span></div>
-          <div class="step"><span class="n">4</span><span>稍作停顿后，呼气的同时把横杠推回起始姿势。在顶端锁定手臂并挤压胸部。</span></div>
+        <div class="eyebrow">Steps</div>
+        <div class="steps" style="margin-top:10px">
+          <div class="step"><span class="n">01</span><span>仰卧在平凳上，双脚踩实地面。
+            掌心朝前握杠，握距略宽于肩。</span></div>
+          <div class="step"><span class="n">02</span><span>把横杠从架上取下，双臂锁定，
+            将横杠笔直举在身体上方。这是起始姿势。</span></div>
+          <div class="step"><span class="n">03</span><span>吸气并缓慢下放，
+            直到横杠触到胸部中间。</span></div>
+          <div class="step"><span class="n">04</span><span>稍作停顿后，呼气的同时把横杠推回起始姿势。</span></div>
         </div>
       </div>
       <div style="margin-top:auto">
-        <div class="cap">找教学视频</div>
-        <div class="search">
+        <div class="eyebrow">Video Search</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
           <div class="sbtn">B 站 · 杠铃卧推<span>复制</span></div>
-          <div class="sbtn">YouTube · form<span>复制</span></div>
-        </div>
+          <div class="sbtn">YouTube<span>复制</span></div></div>
       </div>
     </div></div>
-</div></div></body></html>
+  </div>
+</div></body></html>

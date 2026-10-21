@@ -19,17 +19,18 @@ OUT = pathlib.Path(r"E:\devtools\cache\deck")
 OUT.mkdir(parents=True, exist_ok=True)
 PPTX = OUT / "changE-原型图.pptx"
 
-BG = "#0b0e11"; SURFACE = "#11151a"; RAISED = "#171c22"; RAISED2 = "#1d242b"
-LINE = "#222a32"; LINE_HI = "#2f3944"
-TEXT = "#e9edf1"; DIM = "#7f8a95"; DIM2 = "#4d5762"
-ACCENT = "#e0453a"; OK = "#3fb950"; WARN = "#d29922"
+BG = "#0b0c0b"; SURFACE = "#131413"; RAISED = "#1a1b19"; RAISED2 = "#22231f"
+LINE = "#232625"; LINE_HI = "#2b2f2e"
+TEXT = "#f2f2ef"; DIM = "#7e827e"; DIM2 = "#4b4f4b"
+ACCENT = "#d7ff3f"; OK = "#d7ff3f"; WARN = "#9a9d8e"
+PILL = "#f1f1ee"; PILL_INK = "#111111"
 CJK = "Microsoft YaHei"; MONO = "Consolas"
 W, H = 13.333, 7.5
 TOTAL = 10
 
 th = ThemeComposer().compose(style="dark-tech", seed=7)
 th["colors"].update({
-    "primary": ACCENT, "on-primary": "#ffffff", "secondary": DIM, "accent": ACCENT,
+    "primary": ACCENT, "on-primary": "#111111", "secondary": DIM, "accent": ACCENT,
     "background": BG, "foreground": TEXT, "muted": SURFACE,
     "muted-foreground": DIM, "border": LINE, "destructive": ACCENT,
 })
@@ -76,8 +77,8 @@ multiline(s, 0.9, 3.44, 4.9, 1.5, [
     "876 个动作 · 871 条中文分步做法",
     "17 块肌群 · 按本周训练量着色",
 ], font_size=12.5, color=DIM, font_name=CJK, line_spacing=1.95)
-T(s, 0.9, 5.62, 4.9, 0.6,
-  "这七张界面是 HTML 一比一渲染的，\n不是手绘示意图。", font_size=11, color=DIM2, font_name=CJK)
+T(s, 0.9, 5.50, 4.9, 0.9,
+  "风格参考 LZheng0411/Lzheng-fitness 的 workbench-template。\n七张界面是 HTML 一比一渲染的，不是手绘示意图。", font_size=10.5, color=DIM2, font_name=CJK)
 
 pic(s, MOCK / "03-bodymap.png", 6.05, 1.30, 6.85, 4.39)
 T(s, 6.05, 5.80, 6.85, 0.3, "人体图 · 真实 SVG · 89 个区域 · 按本周组数着色",
@@ -89,40 +90,42 @@ s = add_slide(prs)
 bg(s)
 eyebrow(s, "设计语言", 0.8, 0.55)
 h1(s, "为什么现在显得「素」", 0.8, 0.86, 28)
-body(s, "不是缺颜色，是缺层级：现在只有「底色 + 一条描边」，所有东西都在同一层。",
+body(s, "不是缺颜色，是缺层级与节奏：现在只有「底色 + 一条描边」，字重全是粗的，也没有编号与眉标。",
      0.8, 1.46, 11.5, size=12.5)
 rule(s, 0.8, 1.86)
 
 tokens = [
     ("--bg", BG, "页面底"),
-    ("--surface", SURFACE, "卡片"),
-    ("--raised", RAISED, "卡片里的块"),
-    ("--line", LINE, "分隔线"),
-    ("--line-hi", LINE_HI, "卡片顶边高光"),
-    ("--accent", ACCENT, "数据与选中"),
-    ("--ok", OK, "达标"),
-    ("--warn", WARN, "提醒"),
+    ("--panel", "#0e0f0e", "侧栏"),
+    ("--card", SURFACE, "卡片"),
+    ("--raise", RAISED, "卡内块"),
+    ("--line", LINE, "1px 发丝线"),
+    ("--ink", TEXT, "正文"),
+    ("--muted", DIM, "次要文字"),
+    ("--faint", DIM2, "标注"),
+    ("--accent", ACCENT, "唯一强调色"),
+    ("--pill", PILL, "导航选中（反色）"),
 ]
-T(s, 0.8, 2.10, 6, 0.28, "① 加三层表面 + 一条顶边高光，靠层级分层而不是靠描边",
+T(s, 0.8, 2.06, 6, 0.28, "① 近单色 + 一个柠檬绿：层级靠发丝线和留白，不靠颜色",
   font_size=11.5, color=TEXT, bold=True, font_name=CJK)
 for i, (nm, hexv, use) in enumerate(tokens):
-    y = 2.50 + i * 0.545
-    rrect(s, 0.82, y, 0.60, 0.36, fill=hexv, line=LINE_HI)
-    T(s, 1.56, y + 0.00, 1.9, 0.22, nm, font_size=10, color=TEXT, font_name=MONO)
-    T(s, 1.56, y + 0.19, 1.9, 0.18, hexv.upper(), font_size=8, color=DIM2, font_name=MONO)
-    T(s, 3.38, y + 0.07, 2.6, 0.24, use, font_size=11.5, color=DIM, font_name=CJK)
+    y = 2.40 + i * 0.475
+    rrect(s, 0.82, y, 0.56, 0.32, fill=hexv, line=LINE_HI)
+    T(s, 1.52, y - 0.01, 1.9, 0.20, nm, font_size=9.5, color=TEXT, font_name=MONO)
+    T(s, 1.52, y + 0.16, 1.9, 0.16, hexv.upper(), font_size=7.5, color=DIM2, font_name=MONO)
+    T(s, 3.28, y + 0.05, 2.6, 0.22, use, font_size=11, color=DIM, font_name=CJK)
 
 rules = [
-    ("01", "数字用等宽大字", "容量、组数、热量是这几页真正的主角。46pt 等宽数字 + 小号单位，眼睛先看到数，再看到字。"),
-    ("02", "红色只给「数据」与「正在发生」", "不做装饰色。达标用绿、提醒用黄，红只出现在「这是你的数」和「这个被选中」。"),
-    ("03", "每页至少一张微型图", "17 格热力条、环形进度、sparkline、分段条。图比文字更快回答「我这周怎么样」。"),
+    ("01", "编号导航 + 小字母英文", "01 今日 / TODAY。数字用等宽、英文 8px 字距 .15em，中文照常。选中项是反色浅底，不是加粗。"),
+    ("02", "字重 500，不是 700", "标题 650、数字 500。粗体让界面显得吵；轻一点、大一点、间距开一点，才有编辑感。"),
+    ("03", "一个色只做一件事", "柠檬绿只表示「这是你的数」和「这里被选中」。其余一律用墨色与灰阶分级。"),
 ]
 for i, (num, title, desc) in enumerate(rules):
-    y = 2.10 + i * 1.60
-    T(s, 6.95, y, 0.75, 0.4, num, font_size=21, color=ACCENT, bold=True, font_name=MONO)
-    T(s, 7.70, y + 0.02, 4.9, 0.30, title, font_size=14.5, color=TEXT, bold=True, font_name=CJK)
-    multiline(s, 7.70, y + 0.40, 4.8, 1.0, [desc], font_size=10.5, color=DIM,
-              font_name=CJK, line_spacing=1.5)
+    y = 2.06 + i * 1.58
+    T(s, 6.95, y, 0.75, 0.4, num, font_size=20, color=ACCENT, bold=True, font_name=MONO)
+    T(s, 7.70, y + 0.01, 4.9, 0.30, title, font_size=14, color=TEXT, bold=True, font_name=CJK)
+    multiline(s, 7.70, y + 0.38, 4.8, 1.0, [desc], font_size=10.5, color=DIM,
+              font_name=CJK, line_spacing=1.55)
 page_number(s, 2, TOTAL)
 
 # ═════════ S3–S9 七个界面 ═════════
