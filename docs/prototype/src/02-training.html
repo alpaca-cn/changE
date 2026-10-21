@@ -2,10 +2,11 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0b0c0b; --panel:#0e0f0e; --card:#131413; --raise:#1a1b19;
-  --ink:#f2f2ef; --muted:rgba(255,255,255,.46); --faint:rgba(255,255,255,.28);
-  --line:rgba(255,255,255,.10); --line-soft:rgba(255,255,255,.06);
-  --accent:#d7ff3f; --pill:#f1f1ee; --pill-ink:#111;
+  --bg:#f4f2ed; --panel:#efece3; --card:#ffffff; --raise:#f8f6f0;
+  --ink:#1a1a1a; --muted:#6b6559; --faint:#9c968a;
+  --line:#e3dfd5; --line-soft:#eceae1;
+  --accent:#b5893a; --pill:#1a1a1a; --pill-ink:#f6f4ef;
+  --hero:#161412;
   --sans:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
   --serif:'Songti SC','Noto Serif SC','SimSun',serif;
   --mono:ui-monospace,'Consolas','Cascadia Mono',monospace;
@@ -15,7 +16,6 @@ body{font-family:var(--sans);background:var(--bg);color:var(--ink);
   -webkit-font-smoothing:antialiased;overflow:hidden}
 .screen{width:1280px;height:820px;display:flex;background:var(--bg)}
 
-/* ── 侧栏：编号导航 ── */
 .side{width:224px;flex:0 0 224px;background:var(--panel);border-right:1px solid var(--line);
   padding:34px 22px;display:flex;flex-direction:column}
 .brand{padding:0 8px 34px}
@@ -25,33 +25,30 @@ body{font-family:var(--sans);background:var(--bg);color:var(--ink);
   text-transform:uppercase;margin-top:6px}
 .nav{display:flex;flex-direction:column;gap:2px;flex:1;justify-content:center}
 .nav .it{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:13px;
-  color:var(--muted);font-size:13px;position:relative;transition:background .15s}
-.nav .it .no{font-family:var(--mono);font-size:10px;color:var(--faint);width:16px;flex:none;
-  letter-spacing:.02em}
+  color:var(--muted);font-size:13px;position:relative}
+.nav .it .no{font-family:var(--mono);font-size:10px;color:var(--faint);width:16px;flex:none}
 .nav .it .tw{display:flex;flex-direction:column;gap:2px;min-width:0}
 .nav .it .tw b{font-weight:500;font-size:13px;color:inherit}
 .nav .it .tw em{font-style:normal;font-size:8px;font-weight:650;letter-spacing:.15em;
   color:var(--faint);text-transform:uppercase}
 .nav .it.on{background:var(--pill);color:var(--pill-ink)}
-.nav .it.on .no{color:rgba(0,0,0,.42)}
-.nav .it.on .tw em{color:rgba(0,0,0,.42)}
+.nav .it.on .no{color:rgba(246,244,239,.5)}
+.nav .it.on .tw em{color:rgba(246,244,239,.5)}
 .nav .it.on::before{content:"";position:absolute;left:-8px;top:50%;transform:translateY(-50%);
   width:4px;height:18px;border-radius:2px;background:var(--accent)}
 .side .foot{margin-top:auto;padding:16px 8px 0;border-top:1px solid var(--line);
   font-size:10px;color:var(--faint);letter-spacing:.04em;display:flex;align-items:center;gap:7px}
 .side .foot .d{width:5px;height:5px;border-radius:50%;background:var(--accent)}
 
-/* ── 主区 ── */
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .top{height:66px;flex:0 0 66px;border-bottom:1px solid var(--line);display:flex;
-  align-items:center;padding:0 26px;gap:10px}
+  align-items:center;padding:0 26px;gap:10px;background:rgba(244,242,237,.86)}
 .top h1{font-size:15px;font-weight:650;letter-spacing:-.01em}
 .top h1::before{content:"changE / ";color:var(--faint);font-weight:500;letter-spacing:.08em}
 .top .right{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11px;color:var(--faint)}
 .top .right b{font-weight:500;color:var(--muted)}
-.body{flex:1;padding:26px 30px;display:flex;flex-direction:column;gap:0;overflow:hidden}
+.body{flex:1;padding:22px 30px;display:flex;flex-direction:column;overflow:hidden}
 
-/* ── 排版：眉标 / 双语小标题 / 大数字 ── */
 .eyebrow{font-size:11px;color:var(--faint);letter-spacing:.08em;margin-bottom:6px}
 .hi{font-family:var(--serif);font-size:34px;font-weight:400;line-height:1.28;letter-spacing:-.01em}
 .sub{font-size:12px;color:var(--muted);margin-top:8px;letter-spacing:.01em}
@@ -65,38 +62,47 @@ hr{border:none;border-top:1px solid var(--line);margin:16px 0}
 .k{font-size:11px;color:var(--faint);letter-spacing:.04em}
 .row{display:flex;gap:18px}
 .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:4px 10px;
-  border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+  border-radius:999px;border:1px solid var(--line);color:var(--muted);background:#fff}
 .chip.on{border-color:transparent;background:var(--pill);color:var(--pill-ink);font-weight:500}
-.chip.hot{border-color:rgba(215,255,63,.45);color:var(--accent)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
-.card .hd{padding:16px 18px 0}
+.chip.hot{border-color:rgba(181,137,58,.42);color:var(--accent);background:rgba(181,137,58,.07)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  overflow:hidden;box-shadow:0 1px 2px rgba(26,26,26,.035)}
 .rows{display:flex;flex-direction:column}
 .r{display:flex;align-items:center;justify-content:space-between;gap:14px;
   padding:14px 18px;border-bottom:1px solid var(--line-soft)}
 .r:last-child{border-bottom:none}
 .r .l .n{font-size:14px;font-weight:500}
 .r .l .s{font-size:11px;color:var(--muted);margin-top:3px}
-.r .v{font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.r .v{font-size:19px;font-weight:500;font-variant-numeric:tabular-nums}
 .r .v small{font-size:11px;color:var(--faint);font-weight:400;margin-left:3px}
-.bar{height:3px;background:rgba(255,255,255,.09);border-radius:2px;overflow:hidden}
+.bar{height:3px;background:#e7e3d9;border-radius:2px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--accent)}
-.bar i.neutral{background:rgba(255,255,255,.42)}
+.bar i.neutral{background:#b9b3a5}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+/* 深色 hero：参考项目的 --hero:#161616 */
+.hero{position:relative;border-radius:var(--r);overflow:hidden;background:var(--hero);
+  background-image:url('file:///E:/idea/program/change/docs/prototype/assets/pose-night.jpg');background-size:cover;background-position:68% 32%}
+.hero .scrim{position:absolute;inset:0;
+  background:linear-gradient(96deg,rgba(12,11,9,.94) 0%,rgba(12,11,9,.80) 34%,
+  rgba(12,11,9,.28) 62%,rgba(12,11,9,.05) 100%)}
+.hero .ct{position:relative;padding:22px 28px;color:#f4f2ed}
+.hero .ct .eyebrow{color:rgba(244,242,237,.52)}
+.hero .ct .hi{color:#f7f5f0}
+.hero .ct .sub{color:rgba(244,242,237,.62)}
 
-    .shade{position:absolute;inset:0;background:rgba(5,5,5,.62);z-index:3}
-    .drawer{position:absolute;right:0;top:0;bottom:0;width:436px;background:var(--panel);
+    .shade{position:absolute;inset:0;background:rgba(20,18,15,.34);z-index:3}
+    .drawer{position:absolute;right:0;top:0;bottom:0;width:436px;background:#fff;
       border-left:1px solid var(--line);z-index:4;padding:26px 24px;display:flex;
-      flex-direction:column;gap:18px;box-shadow:-40px 0 80px rgba(0,0,0,.5)}
+      flex-direction:column;gap:18px;box-shadow:-40px 0 80px rgba(26,26,26,.16)}
     .drawer .en{font-size:8px;font-weight:650;letter-spacing:.15em;color:var(--faint);
       text-transform:uppercase;margin-top:6px}
     .steps{display:flex;flex-direction:column;gap:12px}
-    .step{display:flex;gap:11px;font-size:12.5px;line-height:1.7;color:rgba(255,255,255,.72)}
+    .step{display:flex;gap:11px;font-size:12.5px;line-height:1.7;color:#3d3a33}
     .step .n{flex:0 0 18px;font-family:var(--mono);font-size:10px;color:var(--accent);
       padding-top:3px}
     .sbtn{flex:1;border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px;
       font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:space-between}
     .sbtn span{font-family:var(--mono);color:var(--faint)}
-    .sets{display:flex;flex-direction:column}
     </style></head><body>
 <div class="screen">
   <aside class="side">
@@ -119,41 +125,36 @@ hr{border:none;border-top:1px solid var(--line);margin:16px 0}
     <div class="row" style="flex:1">
       <div style="flex:1;min-width:0">
         <h2>动作 <span class="t">Exercises</span></h2>
-        <div class="rows" style="margin:0 -18px">
-          <div class="r" style="padding-left:18px">
-            <div class="l"><div class="n">杠铃卧推</div><div class="s">胸部 · 复合</div></div>
-            <span class="v" style="font-size:13px">看做法 ——</span></div>
+        <div class="card"><div class="rows">
+          <div class="r"><div class="l"><div class="n">杠铃卧推</div><div class="s">胸部 · 复合</div></div>
+            <span class="k">看做法 →</span></div>
           <div class="r"><div class="l"><div class="n">上斜哑铃卧推</div>
-            <div class="s">胸部 · 复合</div></div></div>
+            <div class="s">胸部 · 复合</div></div><span class="k">看做法 →</span></div>
           <div class="r"><div class="l"><div class="n">双杠臂屈伸</div>
-            <div class="s">胸部 · 自重</div></div></div>
+            <div class="s">胸部 · 自重</div></div><span class="k">看做法 →</span></div>
           <div class="r"><div class="l"><div class="n">蝴蝶机夹胸</div>
-            <div class="s">胸部 · 孤立</div></div></div>
-        </div>
+            <div class="s">胸部 · 孤立</div></div><span class="k">看做法 →</span></div>
+        </div></div>
       </div>
       <div style="flex:1.15;min-width:0">
         <h2>本次 <span class="t">Sets</span></h2>
-        <div class="card">
-          <div class="rows">
-            <div class="r"><div class="l"><div class="n mono">01<span style="color:var(--faint);
-              font-size:11px;margin-left:8px">组</span></div></div>
-              <div style="display:flex;gap:22px;align-items:baseline">
-                <span class="v">60<small>kg</small></span><span class="v">8<small>次</small></span>
-                <span class="mono" style="color:var(--accent);font-size:14px">✓</span></div></div>
-            <div class="r"><div class="l"><div class="n mono">02</div></div>
-              <div style="display:flex;gap:22px;align-items:baseline">
-                <span class="v">62.5<small>kg</small></span><span class="v">8<small>次</small></span>
-                <span class="mono" style="color:var(--accent);font-size:14px">✓</span></div></div>
-            <div class="r"><div class="l"><div class="n mono">03</div></div>
-              <div style="display:flex;gap:22px;align-items:baseline">
-                <span class="v" style="color:var(--faint)">62.5<small>kg</small></span>
-                <span class="v" style="color:var(--faint)">6<small>次</small></span>
-                <span class="mono" style="color:var(--faint);font-size:14px">—</span></div></div>
-          </div>
-        </div>
+        <div class="card"><div class="rows">
+          <div class="r"><div class="l"><div class="n mono">01</div></div>
+            <div style="display:flex;gap:22px;align-items:baseline">
+              <span class="v">60<small>kg</small></span><span class="v">8<small>次</small></span>
+              <span class="mono" style="color:var(--accent);font-size:14px">✓</span></div></div>
+          <div class="r"><div class="l"><div class="n mono">02</div></div>
+            <div style="display:flex;gap:22px;align-items:baseline">
+              <span class="v">62.5<small>kg</small></span><span class="v">8<small>次</small></span>
+              <span class="mono" style="color:var(--accent);font-size:14px">✓</span></div></div>
+          <div class="r"><div class="l"><div class="n mono">03</div></div>
+            <div style="display:flex;gap:22px;align-items:baseline">
+              <span class="v" style="color:var(--faint)">62.5<small>kg</small></span>
+              <span class="v" style="color:var(--faint)">6<small>次</small></span>
+              <span class="mono" style="color:var(--faint);font-size:14px">—</span></div></div>
+        </div></div>
         <div style="display:flex;gap:8px;margin-top:14px">
-          <span class="chip">上次 62.5 × 8</span>
-          <span class="chip hot">估算 1RM 76.5</span></div>
+          <span class="chip">上次 62.5 × 8</span><span class="chip hot">估算 1RM 76.5</span></div>
       </div>
     </div>
     <div class="shade"></div>
@@ -180,8 +181,7 @@ hr{border:none;border-top:1px solid var(--line);margin:16px 0}
             掌心朝前握杠，握距略宽于肩。</span></div>
           <div class="step"><span class="n">02</span><span>把横杠从架上取下，双臂锁定，
             将横杠笔直举在身体上方。这是起始姿势。</span></div>
-          <div class="step"><span class="n">03</span><span>吸气并缓慢下放，
-            直到横杠触到胸部中间。</span></div>
+          <div class="step"><span class="n">03</span><span>吸气并缓慢下放，直到横杠触到胸部中间。</span></div>
           <div class="step"><span class="n">04</span><span>稍作停顿后，呼气的同时把横杠推回起始姿势。</span></div>
         </div>
       </div>

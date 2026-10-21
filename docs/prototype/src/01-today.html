@@ -2,10 +2,11 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0b0c0b; --panel:#0e0f0e; --card:#131413; --raise:#1a1b19;
-  --ink:#f2f2ef; --muted:rgba(255,255,255,.46); --faint:rgba(255,255,255,.28);
-  --line:rgba(255,255,255,.10); --line-soft:rgba(255,255,255,.06);
-  --accent:#d7ff3f; --pill:#f1f1ee; --pill-ink:#111;
+  --bg:#f4f2ed; --panel:#efece3; --card:#ffffff; --raise:#f8f6f0;
+  --ink:#1a1a1a; --muted:#6b6559; --faint:#9c968a;
+  --line:#e3dfd5; --line-soft:#eceae1;
+  --accent:#b5893a; --pill:#1a1a1a; --pill-ink:#f6f4ef;
+  --hero:#161412;
   --sans:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
   --serif:'Songti SC','Noto Serif SC','SimSun',serif;
   --mono:ui-monospace,'Consolas','Cascadia Mono',monospace;
@@ -15,7 +16,6 @@ body{font-family:var(--sans);background:var(--bg);color:var(--ink);
   -webkit-font-smoothing:antialiased;overflow:hidden}
 .screen{width:1280px;height:820px;display:flex;background:var(--bg)}
 
-/* ── 侧栏：编号导航 ── */
 .side{width:224px;flex:0 0 224px;background:var(--panel);border-right:1px solid var(--line);
   padding:34px 22px;display:flex;flex-direction:column}
 .brand{padding:0 8px 34px}
@@ -25,33 +25,30 @@ body{font-family:var(--sans);background:var(--bg);color:var(--ink);
   text-transform:uppercase;margin-top:6px}
 .nav{display:flex;flex-direction:column;gap:2px;flex:1;justify-content:center}
 .nav .it{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:13px;
-  color:var(--muted);font-size:13px;position:relative;transition:background .15s}
-.nav .it .no{font-family:var(--mono);font-size:10px;color:var(--faint);width:16px;flex:none;
-  letter-spacing:.02em}
+  color:var(--muted);font-size:13px;position:relative}
+.nav .it .no{font-family:var(--mono);font-size:10px;color:var(--faint);width:16px;flex:none}
 .nav .it .tw{display:flex;flex-direction:column;gap:2px;min-width:0}
 .nav .it .tw b{font-weight:500;font-size:13px;color:inherit}
 .nav .it .tw em{font-style:normal;font-size:8px;font-weight:650;letter-spacing:.15em;
   color:var(--faint);text-transform:uppercase}
 .nav .it.on{background:var(--pill);color:var(--pill-ink)}
-.nav .it.on .no{color:rgba(0,0,0,.42)}
-.nav .it.on .tw em{color:rgba(0,0,0,.42)}
+.nav .it.on .no{color:rgba(246,244,239,.5)}
+.nav .it.on .tw em{color:rgba(246,244,239,.5)}
 .nav .it.on::before{content:"";position:absolute;left:-8px;top:50%;transform:translateY(-50%);
   width:4px;height:18px;border-radius:2px;background:var(--accent)}
 .side .foot{margin-top:auto;padding:16px 8px 0;border-top:1px solid var(--line);
   font-size:10px;color:var(--faint);letter-spacing:.04em;display:flex;align-items:center;gap:7px}
 .side .foot .d{width:5px;height:5px;border-radius:50%;background:var(--accent)}
 
-/* ── 主区 ── */
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .top{height:66px;flex:0 0 66px;border-bottom:1px solid var(--line);display:flex;
-  align-items:center;padding:0 26px;gap:10px}
+  align-items:center;padding:0 26px;gap:10px;background:rgba(244,242,237,.86)}
 .top h1{font-size:15px;font-weight:650;letter-spacing:-.01em}
 .top h1::before{content:"changE / ";color:var(--faint);font-weight:500;letter-spacing:.08em}
 .top .right{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11px;color:var(--faint)}
 .top .right b{font-weight:500;color:var(--muted)}
-.body{flex:1;padding:26px 30px;display:flex;flex-direction:column;gap:0;overflow:hidden}
+.body{flex:1;padding:22px 30px;display:flex;flex-direction:column;overflow:hidden}
 
-/* ── 排版：眉标 / 双语小标题 / 大数字 ── */
 .eyebrow{font-size:11px;color:var(--faint);letter-spacing:.08em;margin-bottom:6px}
 .hi{font-family:var(--serif);font-size:34px;font-weight:400;line-height:1.28;letter-spacing:-.01em}
 .sub{font-size:12px;color:var(--muted);margin-top:8px;letter-spacing:.01em}
@@ -65,23 +62,33 @@ hr{border:none;border-top:1px solid var(--line);margin:16px 0}
 .k{font-size:11px;color:var(--faint);letter-spacing:.04em}
 .row{display:flex;gap:18px}
 .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:4px 10px;
-  border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+  border-radius:999px;border:1px solid var(--line);color:var(--muted);background:#fff}
 .chip.on{border-color:transparent;background:var(--pill);color:var(--pill-ink);font-weight:500}
-.chip.hot{border-color:rgba(215,255,63,.45);color:var(--accent)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
-.card .hd{padding:16px 18px 0}
+.chip.hot{border-color:rgba(181,137,58,.42);color:var(--accent);background:rgba(181,137,58,.07)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  overflow:hidden;box-shadow:0 1px 2px rgba(26,26,26,.035)}
 .rows{display:flex;flex-direction:column}
 .r{display:flex;align-items:center;justify-content:space-between;gap:14px;
   padding:14px 18px;border-bottom:1px solid var(--line-soft)}
 .r:last-child{border-bottom:none}
 .r .l .n{font-size:14px;font-weight:500}
 .r .l .s{font-size:11px;color:var(--muted);margin-top:3px}
-.r .v{font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.r .v{font-size:19px;font-weight:500;font-variant-numeric:tabular-nums}
 .r .v small{font-size:11px;color:var(--faint);font-weight:400;margin-left:3px}
-.bar{height:3px;background:rgba(255,255,255,.09);border-radius:2px;overflow:hidden}
+.bar{height:3px;background:#e7e3d9;border-radius:2px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--accent)}
-.bar i.neutral{background:rgba(255,255,255,.42)}
+.bar i.neutral{background:#b9b3a5}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+/* 深色 hero：参考项目的 --hero:#161616 */
+.hero{position:relative;border-radius:var(--r);overflow:hidden;background:var(--hero);
+  background-image:url('file:///E:/idea/program/change/docs/prototype/assets/pose-night.jpg');background-size:cover;background-position:68% 32%}
+.hero .scrim{position:absolute;inset:0;
+  background:linear-gradient(96deg,rgba(12,11,9,.94) 0%,rgba(12,11,9,.80) 34%,
+  rgba(12,11,9,.28) 62%,rgba(12,11,9,.05) 100%)}
+.hero .ct{position:relative;padding:22px 28px;color:#f4f2ed}
+.hero .ct .eyebrow{color:rgba(244,242,237,.52)}
+.hero .ct .hi{color:#f7f5f0}
+.hero .ct .sub{color:rgba(244,242,237,.62)}
 </style></head><body>
 <div class="screen">
   <aside class="side">
@@ -94,56 +101,59 @@ hr{border:none;border-top:1px solid var(--line);margin:16px 0}
     <div class="top"><h1>今日</h1>
       <div class="right"><b>2026-10-20</b><span>周二</span><span>第 43 周</span></div></div>
     <div class="body">
-    <div class="eyebrow">9 月 12 日 星期六 · 第 7 周</div>
-    <div class="hi">今天，专注这一练。</div>
-    <div class="sub">本周已记 6 次训练 · 还差 3.5 组到胸部上限</div>
-    <hr>
-    <div class="row" style="flex:1;align-items:stretch">
-      <div style="flex:1.35;display:flex;flex-direction:column;gap:18px;min-width:0">
+    <div class="hero" style="height:156px;flex:0 0 auto">
+      <div class="scrim"></div>
+      <div class="ct">
+        <div class="eyebrow">9 月 12 日 星期六 · 第 7 周</div>
+        <div class="hi" style="font-size:29px">今天，专注这一练。</div>
+        <div class="sub">本周已记 6 次训练 · 还差 3.5 组到胸部上限</div>
+      </div>
+    </div>
+    <div class="row" style="flex:1;margin-top:18px">
+      <div style="flex:1.35;display:flex;flex-direction:column;gap:16px;min-width:0">
         <div>
           <div class="eyebrow">Week Volume</div>
           <div class="big">16<small>组</small></div>
           <div class="k" style="margin-top:8px">折合 42.5 组 · 主肌群 +1 / 次肌群 +0.5</div>
-          <div class="bar" style="margin-top:14px"><i style="width:82%"></i></div>
+          <div class="bar" style="margin-top:13px"><i style="width:82%"></i></div>
           <div style="display:flex;justify-content:space-between;margin-top:8px">
             <span class="k">参考区间</span><span class="k mono">10 – 20</span></div>
         </div>
         <div>
           <div class="eyebrow">Muscle Strip · 17</div>
-          <div style="display:flex;gap:5px;margin-top:8px"><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:rgb(130,153,57)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">胸</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:#2a2f33"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">腹</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:#2a2f33"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">背</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:#2a2f33"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">中</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:rgb(118,138,56)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">下</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:#2a2f33"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">斜</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:rgb(112,131,55)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">肩</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:#2a2f33"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">二</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:rgb(112,131,55)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">三</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:#2a2f33"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">前</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:rgb(142,167,57)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">股</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:rgb(118,138,56)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">腘</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:rgb(118,138,56)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">臀</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:#2a2f33"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">小</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:#2a2f33"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">内</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:#2a2f33"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">外</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;background:#2a2f33"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">颈</div></div></div>
+          <div style="display:flex;gap:5px;margin-top:8px"><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:rgb(138,118,80)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">胸</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:#e6e1d5"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">腹</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:#e6e1d5"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">背</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:#e6e1d5"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">中</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:rgb(125,108,74)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">下</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:#e6e1d5"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">斜</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:rgb(119,103,72)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">肩</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:#e6e1d5"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">二</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:rgb(119,103,72)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">三</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:#e6e1d5"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">前</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:rgb(150,129,86)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">股</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:rgb(125,108,74)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">腘</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:rgb(125,108,74)"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">臀</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:#e6e1d5"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">小</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:#e6e1d5"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">内</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:#e6e1d5"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">外</div></div><div style="flex:1;text-align:center"><div style="height:22px;border-radius:3px;border:1px solid var(--line);background:#e6e1d5"></div><div style="font-size:8px;color:var(--faint);margin-top:6px">颈</div></div></div>
         </div>
-        <div style="border-top:1px solid var(--line);padding-top:18px;display:flex;
+        <div style="border-top:1px solid var(--line);padding-top:14px;display:flex;
                     align-items:center;gap:22px">
-          <div style="position:relative;width:88px;height:88px;flex:none">
-            <svg width="88" height="88" style="transform:rotate(-90deg)">
-              <circle cx="44" cy="44" r="38" fill="none" stroke="rgba(255,255,255,.10)"
-                      stroke-width="3"/>
-              <circle cx="44" cy="44" r="38" fill="none" stroke="#d7ff3f" stroke-width="3"
-                      stroke-dasharray="239" stroke-dashoffset="67" stroke-linecap="round"/>
+          <div style="position:relative;width:82px;height:82px;flex:none">
+            <svg width="82" height="82" style="transform:rotate(-90deg)">
+              <circle cx="41" cy="41" r="35" fill="none" stroke="#e7e3d9" stroke-width="3"/>
+              <circle cx="41" cy="41" r="35" fill="none" stroke="#b5893a" stroke-width="3"
+                      stroke-dasharray="220" stroke-dashoffset="62" stroke-linecap="round"/>
             </svg>
             <div style="position:absolute;inset:0;display:flex;flex-direction:column;
                         align-items:center;justify-content:center">
-              <div style="font-size:19px;font-weight:500;font-variant-numeric:tabular-nums">72%</div>
-              <div style="font-size:9px;color:var(--faint);letter-spacing:.08em">WEEK</div>
+              <div style="font-size:18px;font-weight:500;font-variant-numeric:tabular-nums">72%</div>
+              <div style="font-size:8px;color:var(--faint);letter-spacing:.1em">WEEK</div>
             </div>
           </div>
           <div style="flex:1;min-width:0">
-            <div style="display:flex;justify-content:space-between;padding:7px 0;
+            <div style="display:flex;justify-content:space-between;padding:6px 0;
                         border-bottom:1px solid var(--line-soft)">
               <span class="k">本周训练</span><span style="font-size:12px;font-weight:500">6 次</span></div>
-            <div style="display:flex;justify-content:space-between;padding:7px 0;
+            <div style="display:flex;justify-content:space-between;padding:6px 0;
                         border-bottom:1px solid var(--line-soft)">
               <span class="k">总组数</span><span style="font-size:12px;font-weight:500">49</span></div>
-            <div style="display:flex;justify-content:space-between;padding:7px 0">
+            <div style="display:flex;justify-content:space-between;padding:6px 0">
               <span class="k">漏练</span><span style="font-size:12px;font-weight:500">小腿</span></div>
           </div>
         </div>
       </div>
-      <div style="flex:1;display:flex;flex-direction:column;gap:18px;min-width:0">
+      <div style="flex:1;display:flex;flex-direction:column;gap:16px;min-width:0">
         <div>
           <div class="eyebrow">Today Intake</div>
           <div class="big">1 840<small>千卡</small></div>
-          <div style="display:flex;flex-direction:column;gap:9px;margin-top:14px">
+          <div style="display:flex;flex-direction:column;gap:10px;margin-top:13px">
             <div><div style="display:flex;justify-content:space-between"><span class="k">蛋白</span>
               <span class="k mono">118 / 140 g</span></div>
               <div class="bar" style="margin-top:5px"><i style="width:84%"></i></div></div>
@@ -155,22 +165,22 @@ hr{border:none;border-top:1px solid var(--line);margin:16px 0}
               <div class="bar" style="margin-top:5px"><i class="neutral" style="width:80%"></i></div></div>
           </div>
         </div>
-        <div style="border-top:1px solid var(--line);padding-top:16px">
+        <div style="border-top:1px solid var(--line);padding-top:14px">
           <div class="eyebrow">Meals</div>
           <div style="display:flex;flex-direction:column">
-            <div style="display:flex;justify-content:space-between;padding:9px 0;
+            <div style="display:flex;justify-content:space-between;padding:8px 0;
                         border-bottom:1px solid var(--line-soft)">
               <span style="font-size:12px">早餐<span class="k mono" style="margin-left:10px">08:10</span></span>
               <span style="font-size:13px;font-weight:500" class="mono">520</span></div>
-            <div style="display:flex;justify-content:space-between;padding:9px 0;
+            <div style="display:flex;justify-content:space-between;padding:8px 0;
                         border-bottom:1px solid var(--line-soft)">
               <span style="font-size:12px">午餐<span class="k mono" style="margin-left:10px">12:30</span></span>
               <span style="font-size:13px;font-weight:500" class="mono">760</span></div>
-            <div style="display:flex;justify-content:space-between;padding:9px 0;
+            <div style="display:flex;justify-content:space-between;padding:8px 0;
                         border-bottom:1px solid var(--line-soft)">
               <span style="font-size:12px">加餐<span class="k mono" style="margin-left:10px">16:00</span></span>
               <span style="font-size:13px;font-weight:500" class="mono">210</span></div>
-            <div style="display:flex;justify-content:space-between;padding:9px 0">
+            <div style="display:flex;justify-content:space-between;padding:8px 0">
               <span style="font-size:12px;color:var(--faint)">晚餐<span class="k mono"
                 style="margin-left:10px">还没记</span></span>
               <span style="font-size:13px;color:var(--faint)">—</span></div>
@@ -178,8 +188,8 @@ hr{border:none;border-top:1px solid var(--line);margin:16px 0}
         </div>
       </div>
     </div>
-    <hr style="margin:14px 0 0">
-    <div style="margin-top:14px">
+    <hr style="margin:14px 0 10px">
+    <div>
       <h2>最近训练 <span class="t">Recent Sessions</span></h2>
       <div class="rows" style="margin:0 -18px">
         <div class="r"><div class="l"><div class="n">胸 · 三头</div>
@@ -190,10 +200,6 @@ hr{border:none;border-top:1px solid var(--line);margin:16px 0}
           <div class="s mono">10-19 · 深蹲、罗马尼亚硬拉</div></div>
           <div style="display:flex;align-items:center;gap:14px">
             <span class="chip">昨天</span><span class="v">9<small>组</small></span></div></div>
-        <div class="r"><div class="l"><div class="n">背 · 二头</div>
-          <div class="s mono">10-17 · 引体、杠铃划船</div></div>
-          <div style="display:flex;align-items:center;gap:14px">
-            <span class="chip">3 天前</span><span class="v">8<small>组</small></span></div></div>
       </div>
     </div></div>
   </div>

@@ -15,24 +15,32 @@ from pptx_designer.tools.text import text as T, multiline
 from pptx_designer.tools.images import cover_image
 
 MOCK = pathlib.Path(r"E:\devtools\cache\ui_mock")
+ASSETS = pathlib.Path(r"E:\idea\program\change\docs\prototype\assets")
 OUT = pathlib.Path(r"E:\devtools\cache\deck")
 OUT.mkdir(parents=True, exist_ok=True)
 PPTX = OUT / "changE-原型图.pptx"
 
-BG = "#0b0c0b"; SURFACE = "#131413"; RAISED = "#1a1b19"; RAISED2 = "#22231f"
-LINE = "#232625"; LINE_HI = "#2b2f2e"
-TEXT = "#f2f2ef"; DIM = "#7e827e"; DIM2 = "#4b4f4b"
-ACCENT = "#d7ff3f"; OK = "#d7ff3f"; WARN = "#9a9d8e"
-PILL = "#f1f1ee"; PILL_INK = "#111111"
+BG = "#e8e3d7"; SURFACE = "#ffffff"; RAISED = "#f8f6f0"; RAISED2 = "#efece3"
+LINE = "#e3dfd5"; LINE_HI = "#cfc9bb"
+TEXT = "#1a1a1a"; DIM = "#6b6559"; DIM2 = "#9c968a"
+ACCENT = "#b5893a"; OK = "#6c8a4a"; WARN = "#a8792c"
+PILL = "#1a1a1a"; PILL_INK = "#f6f4ef"
+INK = "#161412"
 CJK = "Microsoft YaHei"; MONO = "Consolas"
 W, H = 13.333, 7.5
 TOTAL = 10
 
 th = ThemeComposer().compose(style="dark-tech", seed=7)
 th["colors"].update({
-    "primary": ACCENT, "on-primary": "#111111", "secondary": DIM, "accent": ACCENT,
+    "primary": ACCENT, "on-primary": "#ffffff", "secondary": DIM, "accent": ACCENT,
     "background": BG, "foreground": TEXT, "muted": SURFACE,
     "muted-foreground": DIM, "border": LINE, "destructive": ACCENT,
+})
+th["semantic_roles"].update({
+    "background": BG, "surface": SURFACE, "ink": TEXT, "muted": DIM,
+    "accent": ACCENT, "accent-secondary": DIM, "success": OK, "warning": WARN,
+    "danger": ACCENT, "border": LINE,
+    "data-series-1": ACCENT, "data-series-2": DIM,
 })
 validate_resolved_theme(th)
 prs = Presentation(theme=th, strict_theme=True)
@@ -67,7 +75,7 @@ def rule(slide, left, top, width=1.4, color=ACCENT):
 # ═════════ S1 封面（不裁切：左边字，右边一张大图）═════════
 s = add_slide(prs)
 bg(s)
-rect(s, 0, 0, W, 0.035, fill=ACCENT)
+rect(s, 0, 0, 7.94, 0.035, fill=ACCENT)
 eyebrow(s, "CHANGE · 界面原型", 0.9, 0.78)
 T(s, 0.9, 1.30, 5.2, 1.15, "changE", font_size=72, color=TEXT, bold=True, font_name=MONO)
 T(s, 0.9, 2.52, 5.2, 0.5, "一个只属于你的训练记录本", font_size=21, color=TEXT, font_name=CJK)
@@ -77,51 +85,54 @@ multiline(s, 0.9, 3.44, 4.9, 1.5, [
     "876 个动作 · 871 条中文分步做法",
     "17 块肌群 · 按本周训练量着色",
 ], font_size=12.5, color=DIM, font_name=CJK, line_spacing=1.95)
-T(s, 0.9, 5.50, 4.9, 0.9,
-  "风格参考 LZheng0411/Lzheng-fitness 的 workbench-template。\n七张界面是 HTML 一比一渲染的，不是手绘示意图。", font_size=10.5, color=DIM2, font_name=CJK)
-
-pic(s, MOCK / "03-bodymap.png", 6.05, 1.30, 6.85, 4.39)
-T(s, 6.05, 5.80, 6.85, 0.3, "人体图 · 真实 SVG · 89 个区域 · 按本周组数着色",
+T(s, 0.9, 4.55, 4.9, 0.6,
+  "风格参考 LZheng0411/Lzheng-fitness 的 workbench-template。",
   font_size=10, color=DIM2, font_name=CJK)
-T(s, 6.05, 6.35, 6.85, 0.3, "v0.1 · 2026-10-20", font_size=10, color=DIM2, font_name=MONO)
+
+cover_image(s, 7.94, 0, 5.39, 7.5, str(ASSETS / "oil-painting.jpg"))
+T(s, 0.9, 5.30, 4.9, 0.9,
+  "背景不再用纯黑 —— 改成暖米白，深色只留在一块 hero 里。\n人物图与油画来自你自己的素材。",
+  font_size=10.5, color=DIM2, font_name=CJK)
+T(s, 0.9, 6.55, 4.9, 0.3, "v0.2 · 2026-10-21", font_size=10, color=DIM2, font_name=MONO)
 
 # ═════════ S2 设计语言 ═════════
 s = add_slide(prs)
 bg(s)
-eyebrow(s, "设计语言", 0.8, 0.55)
-h1(s, "为什么现在显得「素」", 0.8, 0.86, 28)
-body(s, "不是缺颜色，是缺层级与节奏：现在只有「底色 + 一条描边」，字重全是粗的，也没有编号与眉标。",
+eyebrow(s, "DESIGN LANGUAGE", 0.8, 0.55)
+h1(s, "从压抑到稳重", 0.8, 0.86, 28)
+body(s, "上一版全黑，看着压抑。这一版换成暖米白：深色只留一块 hero，其余靠发丝线与留白分层。",
      0.8, 1.46, 11.5, size=12.5)
 rule(s, 0.8, 1.86)
 
 tokens = [
-    ("--bg", BG, "页面底"),
-    ("--panel", "#0e0f0e", "侧栏"),
+    ("--bg", "#f4f2ed", "页面底（暖米白）"),
+    ("--panel", "#efece3", "侧栏"),
     ("--card", SURFACE, "卡片"),
     ("--raise", RAISED, "卡内块"),
     ("--line", LINE, "1px 发丝线"),
     ("--ink", TEXT, "正文"),
     ("--muted", DIM, "次要文字"),
     ("--faint", DIM2, "标注"),
-    ("--accent", ACCENT, "唯一强调色"),
-    ("--pill", PILL, "导航选中（反色）"),
+    ("--accent", ACCENT, "黄铜：数据与选中"),
+    ("--pill", INK, "导航选中（反色深底）"),
+    ("--hero", INK, "深色 hero 块"),
 ]
-T(s, 0.8, 2.06, 6, 0.28, "① 近单色 + 一个柠檬绿：层级靠发丝线和留白，不靠颜色",
+T(s, 0.8, 2.02, 6, 0.26, "① 暖米白打底，深色只留一块 hero，墨色分层",
   font_size=11.5, color=TEXT, bold=True, font_name=CJK)
 for i, (nm, hexv, use) in enumerate(tokens):
-    y = 2.40 + i * 0.475
-    rrect(s, 0.82, y, 0.56, 0.32, fill=hexv, line=LINE_HI)
-    T(s, 1.52, y - 0.01, 1.9, 0.20, nm, font_size=9.5, color=TEXT, font_name=MONO)
-    T(s, 1.52, y + 0.16, 1.9, 0.16, hexv.upper(), font_size=7.5, color=DIM2, font_name=MONO)
-    T(s, 3.28, y + 0.05, 2.6, 0.22, use, font_size=11, color=DIM, font_name=CJK)
+    y = 2.32 + i * 0.435
+    rrect(s, 0.82, y, 0.54, 0.30, fill=hexv, line=LINE_HI)
+    T(s, 1.50, y - 0.01, 1.9, 0.19, nm, font_size=9.5, color=TEXT, font_name=MONO)
+    T(s, 1.50, y + 0.15, 1.9, 0.15, hexv.upper(), font_size=7.5, color=DIM2, font_name=MONO)
+    T(s, 3.26, y + 0.04, 2.7, 0.21, use, font_size=10.5, color=DIM, font_name=CJK)
 
 rules = [
-    ("01", "编号导航 + 小字母英文", "01 今日 / TODAY。数字用等宽、英文 8px 字距 .15em，中文照常。选中项是反色浅底，不是加粗。"),
-    ("02", "字重 500，不是 700", "标题 650、数字 500。粗体让界面显得吵；轻一点、大一点、间距开一点，才有编辑感。"),
-    ("03", "一个色只做一件事", "柠檬绿只表示「这是你的数」和「这里被选中」。其余一律用墨色与灰阶分级。"),
+    ("01", "先解决「压抑」", "纯黑 + 高饱和红会让界面像监控室。换成暖米白，文字用墨色，深色只保留一块 hero 用来压住画面。"),
+    ("02", "编号导航 + 小字母英文", "01 今日 / TODAY。选中项是反色深底药丸，不是加粗；左边一条黄铜竖条。"),
+    ("03", "一个色只做一件事", "黄铜只表示「这是你的数」和「这里被选中」。其余用墨色与暖灰分级。"),
 ]
 for i, (num, title, desc) in enumerate(rules):
-    y = 2.06 + i * 1.58
+    y = 2.02 + i * 1.58
     T(s, 6.95, y, 0.75, 0.4, num, font_size=20, color=ACCENT, bold=True, font_name=MONO)
     T(s, 7.70, y + 0.01, 4.9, 0.30, title, font_size=14, color=TEXT, bold=True, font_name=CJK)
     multiline(s, 7.70, y + 0.38, 4.8, 1.0, [desc], font_size=10.5, color=DIM,

@@ -1,17 +1,17 @@
-"""按 LZheng 风格重画 7 张界面。
+"""浅色版界面原型：暖米白 + 墨色 + 黄铜。
 
-设计语言来自 LZheng0411/Lzheng-fitness 的 workbench-template.html（已下载到
-E:\\devtools\\cache\\lzheng\\），抽出来的真实约定：
-
-  近单色 + 一个柠檬绿点缀；1px 发丝线；--radius:16px；几乎无阴影；
-  字重 500/650（不是 700）；编号导航 + 中文 + 8px 小字母英文；
-  眉标 11px 字距 .08em；数字 tabular-nums、weight 500。
+改动依据（都是用户反馈与参考项目里抽的事实）：
+- 纯黑太压抑 → 换成暖米白底
+- 参考项目的 :root 本体就是浅色（--bg:#f6f6f4 --ink:#1a1a1a --line:#e6e6e3）
+- 它的 --hero:#161616 说明「浅色页 + 一块深色 hero」是这套语言本来就有的手法
+- 用户发了两张图：深夜人像（横）与油画海报（竖），分别用于 今日 hero 与 deck 封面
 """
 import pathlib
 import re
 
 ROOT = pathlib.Path(r"E:\idea\program\change")
 ASSET = ROOT / "frontend/src/assets/body-map/data"
+IMG = ROOT / "docs/prototype/assets"
 OUT = pathlib.Path(r"E:\devtools\cache\ui_mock")
 OUT.mkdir(parents=True, exist_ok=True)
 
@@ -55,8 +55,8 @@ for m, s in DEMO.items():
     for r in MUSCLE_REGIONS[m]:
         REGION_SETS[r] = max(REGION_SETS.get(r, 0), s)
 
-BASE = "#2a2f33"          # 未练：低饱和深灰
-HOT = (215, 255, 63)      # 柠檬绿：整个系统唯一的强调色
+BASE = "#2e2b26"          # 未练：暖墨色（深剪影，浅底上才立得住）
+HOT = (227, 192, 122)     # 亮黄铜 #e3c07a：强度即亮度
 
 
 def fill_for(rid):
@@ -65,14 +65,15 @@ def fill_for(rid):
         return BASE
     a = 0.30 + 0.70 * min(1.0, s / 10.0)
     r0, g0, b0 = int(BASE[1:3], 16), int(BASE[3:5], 16), int(BASE[5:7], 16)
-    return "rgb({},{},{})".format(
-        int(r0 + (HOT[0] - r0) * a), int(g0 + (HOT[1] - g0) * a), int(b0 + (HOT[2] - b0) * a))
+    return "rgb({},{},{})".format(int(r0 + (HOT[0] - r0) * a),
+                                  int(g0 + (HOT[1] - g0) * a),
+                                  int(b0 + (HOT[2] - b0) * a))
 
 
 def body_svg(entries, viewbox, width):
     parts = [f'<svg viewBox="{viewbox}" width="{width}" xmlns="http://www.w3.org/2000/svg">']
     for rid, _v, d in entries:
-        parts.append(f'<path d="{d}" fill="{fill_for(rid)}" stroke="#0b0c0b" stroke-width="0.15"/>')
+        parts.append(f'<path d="{d}" fill="{fill_for(rid)}" stroke="#f4f2ed" stroke-width="0.18"/>')
     parts.append("</svg>")
     return "".join(parts)
 
@@ -80,10 +81,11 @@ def body_svg(entries, viewbox, width):
 CSS = """
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0b0c0b; --panel:#0e0f0e; --card:#131413; --raise:#1a1b19;
-  --ink:#f2f2ef; --muted:rgba(255,255,255,.46); --faint:rgba(255,255,255,.28);
-  --line:rgba(255,255,255,.10); --line-soft:rgba(255,255,255,.06);
-  --accent:#d7ff3f; --pill:#f1f1ee; --pill-ink:#111;
+  --bg:#f4f2ed; --panel:#efece3; --card:#ffffff; --raise:#f8f6f0;
+  --ink:#1a1a1a; --muted:#6b6559; --faint:#9c968a;
+  --line:#e3dfd5; --line-soft:#eceae1;
+  --accent:#b5893a; --pill:#1a1a1a; --pill-ink:#f6f4ef;
+  --hero:#161412;
   --sans:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
   --serif:'Songti SC','Noto Serif SC','SimSun',serif;
   --mono:ui-monospace,'Consolas','Cascadia Mono',monospace;
@@ -93,7 +95,6 @@ body{font-family:var(--sans);background:var(--bg);color:var(--ink);
   -webkit-font-smoothing:antialiased;overflow:hidden}
 .screen{width:1280px;height:820px;display:flex;background:var(--bg)}
 
-/* ── 侧栏：编号导航 ── */
 .side{width:224px;flex:0 0 224px;background:var(--panel);border-right:1px solid var(--line);
   padding:34px 22px;display:flex;flex-direction:column}
 .brand{padding:0 8px 34px}
@@ -103,33 +104,30 @@ body{font-family:var(--sans);background:var(--bg);color:var(--ink);
   text-transform:uppercase;margin-top:6px}
 .nav{display:flex;flex-direction:column;gap:2px;flex:1;justify-content:center}
 .nav .it{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:13px;
-  color:var(--muted);font-size:13px;position:relative;transition:background .15s}
-.nav .it .no{font-family:var(--mono);font-size:10px;color:var(--faint);width:16px;flex:none;
-  letter-spacing:.02em}
+  color:var(--muted);font-size:13px;position:relative}
+.nav .it .no{font-family:var(--mono);font-size:10px;color:var(--faint);width:16px;flex:none}
 .nav .it .tw{display:flex;flex-direction:column;gap:2px;min-width:0}
 .nav .it .tw b{font-weight:500;font-size:13px;color:inherit}
 .nav .it .tw em{font-style:normal;font-size:8px;font-weight:650;letter-spacing:.15em;
   color:var(--faint);text-transform:uppercase}
 .nav .it.on{background:var(--pill);color:var(--pill-ink)}
-.nav .it.on .no{color:rgba(0,0,0,.42)}
-.nav .it.on .tw em{color:rgba(0,0,0,.42)}
+.nav .it.on .no{color:rgba(246,244,239,.5)}
+.nav .it.on .tw em{color:rgba(246,244,239,.5)}
 .nav .it.on::before{content:"";position:absolute;left:-8px;top:50%;transform:translateY(-50%);
   width:4px;height:18px;border-radius:2px;background:var(--accent)}
 .side .foot{margin-top:auto;padding:16px 8px 0;border-top:1px solid var(--line);
   font-size:10px;color:var(--faint);letter-spacing:.04em;display:flex;align-items:center;gap:7px}
 .side .foot .d{width:5px;height:5px;border-radius:50%;background:var(--accent)}
 
-/* ── 主区 ── */
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .top{height:66px;flex:0 0 66px;border-bottom:1px solid var(--line);display:flex;
-  align-items:center;padding:0 26px;gap:10px}
+  align-items:center;padding:0 26px;gap:10px;background:rgba(244,242,237,.86)}
 .top h1{font-size:15px;font-weight:650;letter-spacing:-.01em}
 .top h1::before{content:"changE / ";color:var(--faint);font-weight:500;letter-spacing:.08em}
 .top .right{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11px;color:var(--faint)}
 .top .right b{font-weight:500;color:var(--muted)}
-.body{flex:1;padding:26px 30px;display:flex;flex-direction:column;gap:0;overflow:hidden}
+.body{flex:1;padding:22px 30px;display:flex;flex-direction:column;overflow:hidden}
 
-/* ── 排版：眉标 / 双语小标题 / 大数字 ── */
 .eyebrow{font-size:11px;color:var(--faint);letter-spacing:.08em;margin-bottom:6px}
 .hi{font-family:var(--serif);font-size:34px;font-weight:400;line-height:1.28;letter-spacing:-.01em}
 .sub{font-size:12px;color:var(--muted);margin-top:8px;letter-spacing:.01em}
@@ -143,23 +141,33 @@ hr{border:none;border-top:1px solid var(--line);margin:16px 0}
 .k{font-size:11px;color:var(--faint);letter-spacing:.04em}
 .row{display:flex;gap:18px}
 .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:4px 10px;
-  border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+  border-radius:999px;border:1px solid var(--line);color:var(--muted);background:#fff}
 .chip.on{border-color:transparent;background:var(--pill);color:var(--pill-ink);font-weight:500}
-.chip.hot{border-color:rgba(215,255,63,.45);color:var(--accent)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
-.card .hd{padding:16px 18px 0}
+.chip.hot{border-color:rgba(181,137,58,.42);color:var(--accent);background:rgba(181,137,58,.07)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  overflow:hidden;box-shadow:0 1px 2px rgba(26,26,26,.035)}
 .rows{display:flex;flex-direction:column}
 .r{display:flex;align-items:center;justify-content:space-between;gap:14px;
   padding:14px 18px;border-bottom:1px solid var(--line-soft)}
 .r:last-child{border-bottom:none}
 .r .l .n{font-size:14px;font-weight:500}
 .r .l .s{font-size:11px;color:var(--muted);margin-top:3px}
-.r .v{font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.r .v{font-size:19px;font-weight:500;font-variant-numeric:tabular-nums}
 .r .v small{font-size:11px;color:var(--faint);font-weight:400;margin-left:3px}
-.bar{height:3px;background:rgba(255,255,255,.09);border-radius:2px;overflow:hidden}
+.bar{height:3px;background:#e7e3d9;border-radius:2px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--accent)}
-.bar i.neutral{background:rgba(255,255,255,.42)}
+.bar i.neutral{background:#b9b3a5}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+/* 深色 hero：参考项目的 --hero:#161616 */
+.hero{position:relative;border-radius:var(--r);overflow:hidden;background:var(--hero);
+  background-image:url('__HERO__');background-size:cover;background-position:68% 32%}
+.hero .scrim{position:absolute;inset:0;
+  background:linear-gradient(96deg,rgba(12,11,9,.94) 0%,rgba(12,11,9,.80) 34%,
+  rgba(12,11,9,.28) 62%,rgba(12,11,9,.05) 100%)}
+.hero .ct{position:relative;padding:22px 28px;color:#f4f2ed}
+.hero .ct .eyebrow{color:rgba(244,242,237,.52)}
+.hero .ct .hi{color:#f7f5f0}
+.hero .ct .sub{color:rgba(244,242,237,.62)}
 """
 
 NAV = [
@@ -168,6 +176,7 @@ NAV = [
     ("05", "进步曲线", "Progress", "progress"), ("06", "身体数据", "Body", "body"),
     ("07", "智能体对话", "Agent", "agent"), ("08", "设置", "Settings", "settings"),
 ]
+HERO_URI = (IMG / "pose-night.jpg").as_uri()
 
 
 def wrap(title_cn, active, inner, extra=""):
@@ -175,8 +184,9 @@ def wrap(title_cn, active, inner, extra=""):
         f'<div class="it{" on" if k == active else ""}"><span class="no">{no}</span>'
         f'<span class="tw"><b>{cn}</b><em>{en}</em></span></div>'
         for no, cn, en, k in NAV)
+    css = (CSS + extra).replace("__HERO__", HERO_URI)
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<style>{CSS}{extra}</style></head><body>
+<style>{css}</style></head><body>
 <div class="screen">
   <aside class="side">
     <div class="brand"><div class="nm">chang<i>E</i></div>
@@ -194,27 +204,32 @@ def wrap(title_cn, active, inner, extra=""):
 
 # ═══ 01 今日 ═══
 def today():
+    names = list(MUSCLE_REGIONS)
     blocks = [("胸", 3), ("腹", 0), ("背", 0), ("中", 0), ("下", 2), ("斜", 0), ("肩", 1.5),
               ("二", 0), ("三", 1.5), ("前", 0), ("股", 4), ("腘", 2), ("臀", 2),
               ("小", 0), ("内", 0), ("外", 0), ("颈", 0)]
     strip = "".join(
         f'<div style="flex:1;text-align:center">'
-        f'<div style="height:22px;border-radius:3px;background:'
-        f'{fill_for(MUSCLE_REGIONS[list(MUSCLE_REGIONS)[i]][0]) if v else BASE}"></div>'
+        f'<div style="height:22px;border-radius:3px;border:1px solid var(--line);background:'
+        f'{fill_for(MUSCLE_REGIONS[names[i]][0]) if v else "#e6e1d5"}"></div>'
         f'<div style="font-size:8px;color:var(--faint);margin-top:6px">{b}</div></div>'
         for i, (b, v) in enumerate(blocks))
     inner = f"""
-    <div class="eyebrow">9 月 12 日 星期六 · 第 7 周</div>
-    <div class="hi">今天，专注这一练。</div>
-    <div class="sub">本周已记 6 次训练 · 还差 3.5 组到胸部上限</div>
-    <hr>
-    <div class="row" style="flex:1;align-items:stretch">
-      <div style="flex:1.35;display:flex;flex-direction:column;gap:18px;min-width:0">
+    <div class="hero" style="height:156px;flex:0 0 auto">
+      <div class="scrim"></div>
+      <div class="ct">
+        <div class="eyebrow">9 月 12 日 星期六 · 第 7 周</div>
+        <div class="hi" style="font-size:29px">今天，专注这一练。</div>
+        <div class="sub">本周已记 6 次训练 · 还差 3.5 组到胸部上限</div>
+      </div>
+    </div>
+    <div class="row" style="flex:1;margin-top:18px">
+      <div style="flex:1.35;display:flex;flex-direction:column;gap:16px;min-width:0">
         <div>
           <div class="eyebrow">Week Volume</div>
           <div class="big">16<small>组</small></div>
           <div class="k" style="margin-top:8px">折合 42.5 组 · 主肌群 +1 / 次肌群 +0.5</div>
-          <div class="bar" style="margin-top:14px"><i style="width:82%"></i></div>
+          <div class="bar" style="margin-top:13px"><i style="width:82%"></i></div>
           <div style="display:flex;justify-content:space-between;margin-top:8px">
             <span class="k">参考区间</span><span class="k mono">10 – 20</span></div>
         </div>
@@ -222,38 +237,37 @@ def today():
           <div class="eyebrow">Muscle Strip · 17</div>
           <div style="display:flex;gap:5px;margin-top:8px">{strip}</div>
         </div>
-        <div style="border-top:1px solid var(--line);padding-top:18px;display:flex;
+        <div style="border-top:1px solid var(--line);padding-top:14px;display:flex;
                     align-items:center;gap:22px">
-          <div style="position:relative;width:88px;height:88px;flex:none">
-            <svg width="88" height="88" style="transform:rotate(-90deg)">
-              <circle cx="44" cy="44" r="38" fill="none" stroke="rgba(255,255,255,.10)"
-                      stroke-width="3"/>
-              <circle cx="44" cy="44" r="38" fill="none" stroke="#d7ff3f" stroke-width="3"
-                      stroke-dasharray="239" stroke-dashoffset="67" stroke-linecap="round"/>
+          <div style="position:relative;width:82px;height:82px;flex:none">
+            <svg width="82" height="82" style="transform:rotate(-90deg)">
+              <circle cx="41" cy="41" r="35" fill="none" stroke="#e7e3d9" stroke-width="3"/>
+              <circle cx="41" cy="41" r="35" fill="none" stroke="#b5893a" stroke-width="3"
+                      stroke-dasharray="220" stroke-dashoffset="62" stroke-linecap="round"/>
             </svg>
             <div style="position:absolute;inset:0;display:flex;flex-direction:column;
                         align-items:center;justify-content:center">
-              <div style="font-size:19px;font-weight:500;font-variant-numeric:tabular-nums">72%</div>
-              <div style="font-size:9px;color:var(--faint);letter-spacing:.08em">WEEK</div>
+              <div style="font-size:18px;font-weight:500;font-variant-numeric:tabular-nums">72%</div>
+              <div style="font-size:8px;color:var(--faint);letter-spacing:.1em">WEEK</div>
             </div>
           </div>
           <div style="flex:1;min-width:0">
-            <div style="display:flex;justify-content:space-between;padding:7px 0;
+            <div style="display:flex;justify-content:space-between;padding:6px 0;
                         border-bottom:1px solid var(--line-soft)">
               <span class="k">本周训练</span><span style="font-size:12px;font-weight:500">6 次</span></div>
-            <div style="display:flex;justify-content:space-between;padding:7px 0;
+            <div style="display:flex;justify-content:space-between;padding:6px 0;
                         border-bottom:1px solid var(--line-soft)">
               <span class="k">总组数</span><span style="font-size:12px;font-weight:500">49</span></div>
-            <div style="display:flex;justify-content:space-between;padding:7px 0">
+            <div style="display:flex;justify-content:space-between;padding:6px 0">
               <span class="k">漏练</span><span style="font-size:12px;font-weight:500">小腿</span></div>
           </div>
         </div>
       </div>
-      <div style="flex:1;display:flex;flex-direction:column;gap:18px;min-width:0">
+      <div style="flex:1;display:flex;flex-direction:column;gap:16px;min-width:0">
         <div>
           <div class="eyebrow">Today Intake</div>
           <div class="big">1 840<small>千卡</small></div>
-          <div style="display:flex;flex-direction:column;gap:9px;margin-top:14px">
+          <div style="display:flex;flex-direction:column;gap:10px;margin-top:13px">
             <div><div style="display:flex;justify-content:space-between"><span class="k">蛋白</span>
               <span class="k mono">118 / 140 g</span></div>
               <div class="bar" style="margin-top:5px"><i style="width:84%"></i></div></div>
@@ -265,22 +279,22 @@ def today():
               <div class="bar" style="margin-top:5px"><i class="neutral" style="width:80%"></i></div></div>
           </div>
         </div>
-        <div style="border-top:1px solid var(--line);padding-top:16px">
+        <div style="border-top:1px solid var(--line);padding-top:14px">
           <div class="eyebrow">Meals</div>
           <div style="display:flex;flex-direction:column">
-            <div style="display:flex;justify-content:space-between;padding:9px 0;
+            <div style="display:flex;justify-content:space-between;padding:8px 0;
                         border-bottom:1px solid var(--line-soft)">
               <span style="font-size:12px">早餐<span class="k mono" style="margin-left:10px">08:10</span></span>
               <span style="font-size:13px;font-weight:500" class="mono">520</span></div>
-            <div style="display:flex;justify-content:space-between;padding:9px 0;
+            <div style="display:flex;justify-content:space-between;padding:8px 0;
                         border-bottom:1px solid var(--line-soft)">
               <span style="font-size:12px">午餐<span class="k mono" style="margin-left:10px">12:30</span></span>
               <span style="font-size:13px;font-weight:500" class="mono">760</span></div>
-            <div style="display:flex;justify-content:space-between;padding:9px 0;
+            <div style="display:flex;justify-content:space-between;padding:8px 0;
                         border-bottom:1px solid var(--line-soft)">
               <span style="font-size:12px">加餐<span class="k mono" style="margin-left:10px">16:00</span></span>
               <span style="font-size:13px;font-weight:500" class="mono">210</span></div>
-            <div style="display:flex;justify-content:space-between;padding:9px 0">
+            <div style="display:flex;justify-content:space-between;padding:8px 0">
               <span style="font-size:12px;color:var(--faint)">晚餐<span class="k mono"
                 style="margin-left:10px">还没记</span></span>
               <span style="font-size:13px;color:var(--faint)">—</span></div>
@@ -288,8 +302,8 @@ def today():
         </div>
       </div>
     </div>
-    <hr style="margin:14px 0 0">
-    <div style="margin-top:14px">
+    <hr style="margin:14px 0 10px">
+    <div>
       <h2>最近训练 <span class="t">Recent Sessions</span></h2>
       <div class="rows" style="margin:0 -18px">
         <div class="r"><div class="l"><div class="n">胸 · 三头</div>
@@ -300,32 +314,27 @@ def today():
           <div class="s mono">10-19 · 深蹲、罗马尼亚硬拉</div></div>
           <div style="display:flex;align-items:center;gap:14px">
             <span class="chip">昨天</span><span class="v">9<small>组</small></span></div></div>
-        <div class="r"><div class="l"><div class="n">背 · 二头</div>
-          <div class="s mono">10-17 · 引体、杠铃划船</div></div>
-          <div style="display:flex;align-items:center;gap:14px">
-            <span class="chip">3 天前</span><span class="v">8<small>组</small></span></div></div>
       </div>
     </div>"""
     return wrap("今日", "today", inner)
 
 
-# ═══ 02 训练记录（含抽屉）═══
+# ═══ 02 训练记录 ═══
 def training():
     extra = """
-    .shade{position:absolute;inset:0;background:rgba(5,5,5,.62);z-index:3}
-    .drawer{position:absolute;right:0;top:0;bottom:0;width:436px;background:var(--panel);
+    .shade{position:absolute;inset:0;background:rgba(20,18,15,.34);z-index:3}
+    .drawer{position:absolute;right:0;top:0;bottom:0;width:436px;background:#fff;
       border-left:1px solid var(--line);z-index:4;padding:26px 24px;display:flex;
-      flex-direction:column;gap:18px;box-shadow:-40px 0 80px rgba(0,0,0,.5)}
+      flex-direction:column;gap:18px;box-shadow:-40px 0 80px rgba(26,26,26,.16)}
     .drawer .en{font-size:8px;font-weight:650;letter-spacing:.15em;color:var(--faint);
       text-transform:uppercase;margin-top:6px}
     .steps{display:flex;flex-direction:column;gap:12px}
-    .step{display:flex;gap:11px;font-size:12.5px;line-height:1.7;color:rgba(255,255,255,.72)}
+    .step{display:flex;gap:11px;font-size:12.5px;line-height:1.7;color:#3d3a33}
     .step .n{flex:0 0 18px;font-family:var(--mono);font-size:10px;color:var(--accent);
       padding-top:3px}
     .sbtn{flex:1;border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px;
       font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:space-between}
     .sbtn span{font-family:var(--mono);color:var(--faint)}
-    .sets{display:flex;flex-direction:column}
     """
     inner = f"""
     <div style="display:flex;align-items:flex-end;justify-content:space-between">
@@ -338,41 +347,36 @@ def training():
     <div class="row" style="flex:1">
       <div style="flex:1;min-width:0">
         <h2>动作 <span class="t">Exercises</span></h2>
-        <div class="rows" style="margin:0 -18px">
-          <div class="r" style="padding-left:18px">
-            <div class="l"><div class="n">杠铃卧推</div><div class="s">胸部 · 复合</div></div>
-            <span class="v" style="font-size:13px">看做法 ——</span></div>
+        <div class="card"><div class="rows">
+          <div class="r"><div class="l"><div class="n">杠铃卧推</div><div class="s">胸部 · 复合</div></div>
+            <span class="k">看做法 →</span></div>
           <div class="r"><div class="l"><div class="n">上斜哑铃卧推</div>
-            <div class="s">胸部 · 复合</div></div></div>
+            <div class="s">胸部 · 复合</div></div><span class="k">看做法 →</span></div>
           <div class="r"><div class="l"><div class="n">双杠臂屈伸</div>
-            <div class="s">胸部 · 自重</div></div></div>
+            <div class="s">胸部 · 自重</div></div><span class="k">看做法 →</span></div>
           <div class="r"><div class="l"><div class="n">蝴蝶机夹胸</div>
-            <div class="s">胸部 · 孤立</div></div></div>
-        </div>
+            <div class="s">胸部 · 孤立</div></div><span class="k">看做法 →</span></div>
+        </div></div>
       </div>
       <div style="flex:1.15;min-width:0">
         <h2>本次 <span class="t">Sets</span></h2>
-        <div class="card">
-          <div class="rows">
-            <div class="r"><div class="l"><div class="n mono">01<span style="color:var(--faint);
-              font-size:11px;margin-left:8px">组</span></div></div>
-              <div style="display:flex;gap:22px;align-items:baseline">
-                <span class="v">60<small>kg</small></span><span class="v">8<small>次</small></span>
-                <span class="mono" style="color:var(--accent);font-size:14px">✓</span></div></div>
-            <div class="r"><div class="l"><div class="n mono">02</div></div>
-              <div style="display:flex;gap:22px;align-items:baseline">
-                <span class="v">62.5<small>kg</small></span><span class="v">8<small>次</small></span>
-                <span class="mono" style="color:var(--accent);font-size:14px">✓</span></div></div>
-            <div class="r"><div class="l"><div class="n mono">03</div></div>
-              <div style="display:flex;gap:22px;align-items:baseline">
-                <span class="v" style="color:var(--faint)">62.5<small>kg</small></span>
-                <span class="v" style="color:var(--faint)">6<small>次</small></span>
-                <span class="mono" style="color:var(--faint);font-size:14px">—</span></div></div>
-          </div>
-        </div>
+        <div class="card"><div class="rows">
+          <div class="r"><div class="l"><div class="n mono">01</div></div>
+            <div style="display:flex;gap:22px;align-items:baseline">
+              <span class="v">60<small>kg</small></span><span class="v">8<small>次</small></span>
+              <span class="mono" style="color:var(--accent);font-size:14px">✓</span></div></div>
+          <div class="r"><div class="l"><div class="n mono">02</div></div>
+            <div style="display:flex;gap:22px;align-items:baseline">
+              <span class="v">62.5<small>kg</small></span><span class="v">8<small>次</small></span>
+              <span class="mono" style="color:var(--accent);font-size:14px">✓</span></div></div>
+          <div class="r"><div class="l"><div class="n mono">03</div></div>
+            <div style="display:flex;gap:22px;align-items:baseline">
+              <span class="v" style="color:var(--faint)">62.5<small>kg</small></span>
+              <span class="v" style="color:var(--faint)">6<small>次</small></span>
+              <span class="mono" style="color:var(--faint);font-size:14px">—</span></div></div>
+        </div></div>
         <div style="display:flex;gap:8px;margin-top:14px">
-          <span class="chip">上次 62.5 × 8</span>
-          <span class="chip hot">估算 1RM 76.5</span></div>
+          <span class="chip">上次 62.5 × 8</span><span class="chip hot">估算 1RM 76.5</span></div>
       </div>
     </div>
     <div class="shade"></div>
@@ -399,8 +403,7 @@ def training():
             掌心朝前握杠，握距略宽于肩。</span></div>
           <div class="step"><span class="n">02</span><span>把横杠从架上取下，双臂锁定，
             将横杠笔直举在身体上方。这是起始姿势。</span></div>
-          <div class="step"><span class="n">03</span><span>吸气并缓慢下放，
-            直到横杠触到胸部中间。</span></div>
+          <div class="step"><span class="n">03</span><span>吸气并缓慢下放，直到横杠触到胸部中间。</span></div>
           <div class="step"><span class="n">04</span><span>稍作停顿后，呼气的同时把横杠推回起始姿势。</span></div>
         </div>
       </div>
@@ -454,13 +457,15 @@ def bodymap():
           <span class="chip">低于参考区间</span><span class="k mono">10 – 20</span></div>
         <hr style="margin:16px 0">
         <div class="eyebrow">Exercises</div>
-        <div class="rows" style="margin:0 -18px">
-          <div class="r" style="padding:11px 0"><div class="l"><div class="n">杠铃卧推</div></div>
-            <span class="k mono">1RM 76.5</span></div>
-          <div class="r" style="padding:11px 0"><div class="l"><div class="n">上斜哑铃卧推</div></div>
-            <span class="k mono">1RM 32</span></div>
-          <div class="r" style="padding:11px 0"><div class="l"><div class="n">双杠臂屈伸</div></div>
-            <span class="k mono">自重</span></div>
+        <div style="display:flex;flex-direction:column">
+          <div style="display:flex;justify-content:space-between;padding:11px 0;
+                      border-bottom:1px solid var(--line-soft)">
+            <span style="font-size:13px">杠铃卧推</span><span class="k mono">1RM 76.5</span></div>
+          <div style="display:flex;justify-content:space-between;padding:11px 0;
+                      border-bottom:1px solid var(--line-soft)">
+            <span style="font-size:13px">上斜哑铃卧推</span><span class="k mono">1RM 32</span></div>
+          <div style="display:flex;justify-content:space-between;padding:11px 0">
+            <span style="font-size:13px">双杠臂屈伸</span><span class="k mono">自重</span></div>
         </div>
       </div>
     </div>"""
@@ -478,19 +483,19 @@ def spark(vals, w=250, h=96):
         pts.append(f"{x:.1f},{y:.1f}")
     last = pts[-1].split(",")
     return (f'<svg width="{w}" height="{h}"><polyline points="{" ".join(pts)}" fill="none" '
-            f'stroke="#d7ff3f" stroke-width="1.6" stroke-linejoin="round"/>'
-            f'<circle cx="{float(last[0]):.1f}" cy="{float(last[1]):.1f}" r="3" fill="#d7ff3f"/></svg>')
+            f'stroke="#b5893a" stroke-width="1.8" stroke-linejoin="round"/>'
+            f'<circle cx="{float(last[0]):.1f}" cy="{float(last[1]):.1f}" r="3" fill="#b5893a"/></svg>')
 
 
 def progress():
-    extra = """.ch{display:flex;flex-direction:column;gap:0}"""
-    def chart(cap, en, num, unit, delta, vals, delta_color="var(--accent)"):
+    def chart(cap, en, num, unit, delta, vals, dc="var(--accent)", last=False):
+        br = "" if last else "border-right:1px solid var(--line);padding-right:20px"
         return f"""
-        <div style="flex:1;min-width:0;border-right:1px solid var(--line);padding-right:20px">
+        <div style="flex:1;min-width:0;{br}">
           <div class="eyebrow">{en}</div>
           <div style="font-size:13px;font-weight:500;margin-bottom:10px">{cap}</div>
           <div class="big" style="font-size:38px">{num}<small>{unit}</small></div>
-          <div class="k mono" style="margin-top:6px;color:{delta_color}">{delta}</div>
+          <div class="k mono" style="margin-top:6px;color:{dc}">{delta}</div>
           <div style="margin-top:14px">{spark(vals)}</div>
           <div style="display:flex;justify-content:space-between;margin-top:4px">
             <span class="k mono">09-08</span><span class="k mono">10-20</span></div>
@@ -503,12 +508,11 @@ def progress():
         <span class="chip on">杠铃卧推</span><span class="chip">上斜哑铃卧推</span></div>
     </div>
     <hr>
-    <div class="ch" style="flex:1;display:flex;flex-direction:row;gap:20px;margin-top:4px">
+    <div style="flex:1;display:flex;gap:20px;margin-top:4px">
       {chart("估算 1RM", "Estimated 1RM", "78.0", "kg", "▲ 2.0 · 六周", [71.5, 73.0, 74.0, 75.0, 76.0, 78.0])}
       {chart("最大重量", "Max Weight", "65.0", "kg", "▲ 5.0 · 六周", [60, 60, 62.5, 62.5, 62.5, 65])}
       {chart("总吨位", "Tonnage", "1 920", "kg", "◆ 持平 · 六周",
-             [1440, 1620, 1500, 1750, 1875, 1920], "var(--faint)").replace(
-          'border-right:1px solid var(--line);padding-right:20px', '')}
+             [1440, 1620, 1500, 1750, 1875, 1920], "var(--faint)", True)}
     </div>
     <hr>
     <div style="display:flex;gap:44px">
@@ -518,7 +522,7 @@ def progress():
       <div style="margin-left:auto;align-self:flex-end">
         <span class="k">Epley 口径 · 只算 12 次以内的组</span></div>
     </div>"""
-    return wrap("进步曲线", "progress", inner, extra)
+    return wrap("进步曲线", "progress", inner)
 
 
 # ═══ 05 身体数据 ═══
@@ -530,12 +534,18 @@ def body():
              ("臀围", "Hip", "95.0", "cm", "— 持平", "var(--faint)"),
              ("大腿", "Thigh", "57.5", "cm", "▲ 0.5", "var(--accent)")]
     cells = "".join(
-        f'<div style="flex:1;min-width:0;border-right:1px solid var(--line);'
-        f'padding-right:18px">'
+        f'<div style="flex:1;min-width:0;border-right:1px solid var(--line);padding-right:18px">'
         f'<div class="eyebrow">{en}</div><div style="font-size:13px;font-weight:500">{cn}</div>'
         f'<div class="big" style="font-size:32px;margin-top:8px">{v}<small>{u}</small></div>'
         f'<div class="k mono" style="margin-top:6px;color:{c}">{d}</div></div>'
         for cn, en, v, u, d, c in items)
+    rows = [("体重", "10-19 · 早上空腹", "72.4", "kg"), ("腰围", "10-19", "80.0", "cm"),
+            ("体重", "10-12 · 训练后", "73.0", "kg"), ("体脂", "10-12", "16.1", "%")]
+    tl = "".join(
+        f'<div class="r"><div class="l"><div class="n">{n}</div>'
+        f'<div class="s mono">{s}</div></div>'
+        f'<span class="v">{v}<small>{u}</small></span></div>'
+        for n, s, v, u in rows)
     inner = f"""
     <div><div class="eyebrow">Body Metrics</div>
       <div class="hi" style="font-size:26px">九项指标，每周记一两次</div>
@@ -545,42 +555,24 @@ def body():
     <hr>
     <div style="flex:1">
       <h2>时间线 <span class="t">Timeline</span></h2>
-      <div class="rows" style="margin:0 -18px">
-        <div class="r"><div class="l"><div class="n">体重</div>
-          <div class="s mono">10-19 · 早上空腹</div></div>
-          <div style="display:flex;align-items:center;gap:16px">
-            <span class="v">72.4<small>kg</small></span></div></div>
-        <div class="r"><div class="l"><div class="n">腰围</div>
-          <div class="s mono">10-19</div></div>
-          <div style="display:flex;align-items:center;gap:16px">
-            <span class="v">80.0<small>cm</small></span></div></div>
-        <div class="r"><div class="l"><div class="n">体重</div>
-          <div class="s mono">10-12 · 训练后</div></div>
-          <div style="display:flex;align-items:center;gap:16px">
-            <span class="v">73.0<small>kg</small></span></div></div>
-        <div class="r"><div class="l"><div class="n">体脂</div>
-          <div class="s mono">10-12</div></div>
-          <div style="display:flex;align-items:center;gap:16px">
-            <span class="v">16.1<small>%</small></span></div></div>
-      </div>
+      <div class="card"><div class="rows">{tl}</div></div>
     </div>"""
     return wrap("身体数据", "body", inner)
 
 
 # ═══ 06 饮食记录 ═══
 def diet():
-    meals = [("早餐", "Breakfast", "08:10", "燕麦 60g · 鸡蛋 2 个 · 黑咖啡", 520),
-             ("午餐", "Lunch", "12:30", "米饭 200g · 鸡胸 150g · 西兰花", 760),
-             ("加餐", "Snack", "16:00", "希腊酸奶 150g · 蓝莓 80g", 210),
-             ("晚餐", "Dinner", "—", "还没记", 0)]
+    meals = [("早餐", "08:10", "燕麦 60g · 鸡蛋 2 个 · 黑咖啡", 520),
+             ("午餐", "12:30", "米饭 200g · 鸡胸 150g · 西兰花", 760),
+             ("加餐", "16:00", "希腊酸奶 150g · 蓝莓 80g", 210),
+             ("晚餐", "—", "还没记", 0)]
     rows = "".join(
         f'<div class="r"><div class="l"><div class="n">{cn}'
         f'<span class="k mono" style="margin-left:10px">{t}</span></div>'
         f'<div class="s">{items}</div></div>'
-        f'<div><span class="v" style="font-size:17px;'
-        f'{"color:var(--faint)" if kcal == 0 else ""}">'
-        f'{("—" if kcal == 0 else str(kcal))}<small>{"kcal" if kcal else ""}</small></span></div></div>'
-        for cn, en, t, items, kcal in meals)
+        f'<span class="v" style="font-size:17px;{"color:var(--faint)" if kcal == 0 else ""}">'
+        f'{("—" if kcal == 0 else str(kcal))}<small>{"kcal" if kcal else ""}</small></span></div>'
+        for cn, t, items, kcal in meals)
     inner = f"""
     <div style="display:flex;align-items:flex-end;justify-content:space-between">
       <div><div class="eyebrow">Nutrition</div>
@@ -609,7 +601,7 @@ def diet():
     <hr>
     <div style="flex:1">
       <h2>今天吃了什么 <span class="t">Meals</span></h2>
-      <div class="rows" style="margin:0 -18px">{rows}</div>
+      <div class="card"><div class="rows">{rows}</div></div>
     </div>"""
     return wrap("饮食记录", "diet", inner)
 
@@ -619,10 +611,10 @@ def agent():
     extra = """
     .chat{flex:1;display:flex;flex-direction:column;gap:14px;overflow:hidden}
     .msg{max-width:70%;font-size:13px;line-height:1.75;padding:12px 16px;border-radius:14px}
-    .me{align-self:flex-end;background:var(--raise);border:1px solid var(--line)}
-    .ai{align-self:flex-start;border:1px solid var(--line)}
+    .me{align-self:flex-end;background:var(--pill);color:var(--pill-ink)}
+    .ai{align-self:flex-start;background:#fff;border:1px solid var(--line)}
     .tool{align-self:flex-start;width:74%;border:1px solid var(--line);border-radius:14px;
-      padding:14px 16px;background:var(--card)}
+      padding:14px 16px;background:#fff}
     .tool .hd{display:flex;align-items:center;gap:8px;font-size:8px;font-weight:650;
       letter-spacing:.15em;color:var(--faint);text-transform:uppercase;margin-bottom:10px}
     .tool .hd b{color:var(--accent);font-weight:650}
@@ -631,7 +623,7 @@ def agent():
     .tool .ln:last-of-type{border-bottom:none}
     .tool .ln span:first-child{color:var(--muted)}
     .inbox{border:1px solid var(--line);border-radius:14px;padding:14px 16px;
-      display:flex;align-items:center;gap:12px;background:var(--card)}
+      display:flex;align-items:center;gap:12px;background:#fff}
     """
     inner = f"""
     <div><div class="eyebrow">Agent</div>
@@ -661,7 +653,7 @@ def agent():
       <span style="font-size:13px;color:var(--faint);flex:1">说一句话，或者…</span>
       <span class="chip">拍照</span><span class="chip">语音</span>
       <span style="width:30px;height:30px;border-radius:9px;background:var(--accent);
-        display:flex;align-items:center;justify-content:center;color:#111;
+        display:flex;align-items:center;justify-content:center;color:#fff;
         font-weight:650;font-size:14px">↑</span>
     </div>"""
     return wrap("智能体对话", "agent", inner, extra)

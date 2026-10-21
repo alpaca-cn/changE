@@ -2,10 +2,11 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0b0c0b; --panel:#0e0f0e; --card:#131413; --raise:#1a1b19;
-  --ink:#f2f2ef; --muted:rgba(255,255,255,.46); --faint:rgba(255,255,255,.28);
-  --line:rgba(255,255,255,.10); --line-soft:rgba(255,255,255,.06);
-  --accent:#d7ff3f; --pill:#f1f1ee; --pill-ink:#111;
+  --bg:#f4f2ed; --panel:#efece3; --card:#ffffff; --raise:#f8f6f0;
+  --ink:#1a1a1a; --muted:#6b6559; --faint:#9c968a;
+  --line:#e3dfd5; --line-soft:#eceae1;
+  --accent:#b5893a; --pill:#1a1a1a; --pill-ink:#f6f4ef;
+  --hero:#161412;
   --sans:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
   --serif:'Songti SC','Noto Serif SC','SimSun',serif;
   --mono:ui-monospace,'Consolas','Cascadia Mono',monospace;
@@ -15,7 +16,6 @@ body{font-family:var(--sans);background:var(--bg);color:var(--ink);
   -webkit-font-smoothing:antialiased;overflow:hidden}
 .screen{width:1280px;height:820px;display:flex;background:var(--bg)}
 
-/* ── 侧栏：编号导航 ── */
 .side{width:224px;flex:0 0 224px;background:var(--panel);border-right:1px solid var(--line);
   padding:34px 22px;display:flex;flex-direction:column}
 .brand{padding:0 8px 34px}
@@ -25,33 +25,30 @@ body{font-family:var(--sans);background:var(--bg);color:var(--ink);
   text-transform:uppercase;margin-top:6px}
 .nav{display:flex;flex-direction:column;gap:2px;flex:1;justify-content:center}
 .nav .it{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:13px;
-  color:var(--muted);font-size:13px;position:relative;transition:background .15s}
-.nav .it .no{font-family:var(--mono);font-size:10px;color:var(--faint);width:16px;flex:none;
-  letter-spacing:.02em}
+  color:var(--muted);font-size:13px;position:relative}
+.nav .it .no{font-family:var(--mono);font-size:10px;color:var(--faint);width:16px;flex:none}
 .nav .it .tw{display:flex;flex-direction:column;gap:2px;min-width:0}
 .nav .it .tw b{font-weight:500;font-size:13px;color:inherit}
 .nav .it .tw em{font-style:normal;font-size:8px;font-weight:650;letter-spacing:.15em;
   color:var(--faint);text-transform:uppercase}
 .nav .it.on{background:var(--pill);color:var(--pill-ink)}
-.nav .it.on .no{color:rgba(0,0,0,.42)}
-.nav .it.on .tw em{color:rgba(0,0,0,.42)}
+.nav .it.on .no{color:rgba(246,244,239,.5)}
+.nav .it.on .tw em{color:rgba(246,244,239,.5)}
 .nav .it.on::before{content:"";position:absolute;left:-8px;top:50%;transform:translateY(-50%);
   width:4px;height:18px;border-radius:2px;background:var(--accent)}
 .side .foot{margin-top:auto;padding:16px 8px 0;border-top:1px solid var(--line);
   font-size:10px;color:var(--faint);letter-spacing:.04em;display:flex;align-items:center;gap:7px}
 .side .foot .d{width:5px;height:5px;border-radius:50%;background:var(--accent)}
 
-/* ── 主区 ── */
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .top{height:66px;flex:0 0 66px;border-bottom:1px solid var(--line);display:flex;
-  align-items:center;padding:0 26px;gap:10px}
+  align-items:center;padding:0 26px;gap:10px;background:rgba(244,242,237,.86)}
 .top h1{font-size:15px;font-weight:650;letter-spacing:-.01em}
 .top h1::before{content:"changE / ";color:var(--faint);font-weight:500;letter-spacing:.08em}
 .top .right{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11px;color:var(--faint)}
 .top .right b{font-weight:500;color:var(--muted)}
-.body{flex:1;padding:26px 30px;display:flex;flex-direction:column;gap:0;overflow:hidden}
+.body{flex:1;padding:22px 30px;display:flex;flex-direction:column;overflow:hidden}
 
-/* ── 排版：眉标 / 双语小标题 / 大数字 ── */
 .eyebrow{font-size:11px;color:var(--faint);letter-spacing:.08em;margin-bottom:6px}
 .hi{font-family:var(--serif);font-size:34px;font-weight:400;line-height:1.28;letter-spacing:-.01em}
 .sub{font-size:12px;color:var(--muted);margin-top:8px;letter-spacing:.01em}
@@ -65,23 +62,33 @@ hr{border:none;border-top:1px solid var(--line);margin:16px 0}
 .k{font-size:11px;color:var(--faint);letter-spacing:.04em}
 .row{display:flex;gap:18px}
 .chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:4px 10px;
-  border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+  border-radius:999px;border:1px solid var(--line);color:var(--muted);background:#fff}
 .chip.on{border-color:transparent;background:var(--pill);color:var(--pill-ink);font-weight:500}
-.chip.hot{border-color:rgba(215,255,63,.45);color:var(--accent)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
-.card .hd{padding:16px 18px 0}
+.chip.hot{border-color:rgba(181,137,58,.42);color:var(--accent);background:rgba(181,137,58,.07)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  overflow:hidden;box-shadow:0 1px 2px rgba(26,26,26,.035)}
 .rows{display:flex;flex-direction:column}
 .r{display:flex;align-items:center;justify-content:space-between;gap:14px;
   padding:14px 18px;border-bottom:1px solid var(--line-soft)}
 .r:last-child{border-bottom:none}
 .r .l .n{font-size:14px;font-weight:500}
 .r .l .s{font-size:11px;color:var(--muted);margin-top:3px}
-.r .v{font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.r .v{font-size:19px;font-weight:500;font-variant-numeric:tabular-nums}
 .r .v small{font-size:11px;color:var(--faint);font-weight:400;margin-left:3px}
-.bar{height:3px;background:rgba(255,255,255,.09);border-radius:2px;overflow:hidden}
+.bar{height:3px;background:#e7e3d9;border-radius:2px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--accent)}
-.bar i.neutral{background:rgba(255,255,255,.42)}
+.bar i.neutral{background:#b9b3a5}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+/* 深色 hero：参考项目的 --hero:#161616 */
+.hero{position:relative;border-radius:var(--r);overflow:hidden;background:var(--hero);
+  background-image:url('file:///E:/idea/program/change/docs/prototype/assets/pose-night.jpg');background-size:cover;background-position:68% 32%}
+.hero .scrim{position:absolute;inset:0;
+  background:linear-gradient(96deg,rgba(12,11,9,.94) 0%,rgba(12,11,9,.80) 34%,
+  rgba(12,11,9,.28) 62%,rgba(12,11,9,.05) 100%)}
+.hero .ct{position:relative;padding:22px 28px;color:#f4f2ed}
+.hero .ct .eyebrow{color:rgba(244,242,237,.52)}
+.hero .ct .hi{color:#f7f5f0}
+.hero .ct .sub{color:rgba(244,242,237,.62)}
 </style></head><body>
 <div class="screen">
   <aside class="side">
@@ -121,7 +128,7 @@ hr{border:none;border-top:1px solid var(--line);margin:16px 0}
     <hr>
     <div style="flex:1">
       <h2>今天吃了什么 <span class="t">Meals</span></h2>
-      <div class="rows" style="margin:0 -18px"><div class="r"><div class="l"><div class="n">早餐<span class="k mono" style="margin-left:10px">08:10</span></div><div class="s">燕麦 60g · 鸡蛋 2 个 · 黑咖啡</div></div><div><span class="v" style="font-size:17px;">520<small>kcal</small></span></div></div><div class="r"><div class="l"><div class="n">午餐<span class="k mono" style="margin-left:10px">12:30</span></div><div class="s">米饭 200g · 鸡胸 150g · 西兰花</div></div><div><span class="v" style="font-size:17px;">760<small>kcal</small></span></div></div><div class="r"><div class="l"><div class="n">加餐<span class="k mono" style="margin-left:10px">16:00</span></div><div class="s">希腊酸奶 150g · 蓝莓 80g</div></div><div><span class="v" style="font-size:17px;">210<small>kcal</small></span></div></div><div class="r"><div class="l"><div class="n">晚餐<span class="k mono" style="margin-left:10px">—</span></div><div class="s">还没记</div></div><div><span class="v" style="font-size:17px;color:var(--faint)">—<small></small></span></div></div></div>
+      <div class="card"><div class="rows"><div class="r"><div class="l"><div class="n">早餐<span class="k mono" style="margin-left:10px">08:10</span></div><div class="s">燕麦 60g · 鸡蛋 2 个 · 黑咖啡</div></div><span class="v" style="font-size:17px;">520<small>kcal</small></span></div><div class="r"><div class="l"><div class="n">午餐<span class="k mono" style="margin-left:10px">12:30</span></div><div class="s">米饭 200g · 鸡胸 150g · 西兰花</div></div><span class="v" style="font-size:17px;">760<small>kcal</small></span></div><div class="r"><div class="l"><div class="n">加餐<span class="k mono" style="margin-left:10px">16:00</span></div><div class="s">希腊酸奶 150g · 蓝莓 80g</div></div><span class="v" style="font-size:17px;">210<small>kcal</small></span></div><div class="r"><div class="l"><div class="n">晚餐<span class="k mono" style="margin-left:10px">—</span></div><div class="s">还没记</div></div><span class="v" style="font-size:17px;color:var(--faint)">—<small></small></span></div></div></div>
     </div></div>
   </div>
 </div></body></html>
