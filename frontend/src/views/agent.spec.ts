@@ -33,6 +33,15 @@ function methodsCalled(): string[] {
 const NOT_CONFIGURED = { configured: false, baseUrl: '', model: '' }
 const CONFIGURED = { configured: true, baseUrl: 'https://a/v1', model: 'deepseek-chat' }
 
+/** 设置页除了配置，还会拉备份列表与数据目录信息。 */
+function withBackup(map: Record<string, Reply>): Record<string, Reply> {
+  return {
+    '/api/backup/info': { status: 200, body: { dataDir: 'C:/d', note: '关掉应用，把备份文件改名成 change.db 放回数据目录。' } },
+    '/api/backup': { status: 200, body: [] },
+    ...map,
+  }
+}
+
 async function mountAt(component: unknown) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -83,7 +92,7 @@ describe('智能体接口契约', () => {
 describe('智能体对话页', () => {
   it('没配模型时不给输入框，只给一个去设置的入口', async () => {
     // 让用户敲完一句话再告诉他不能用，是最烦的失败方式
-    dispatch({ '/api/agent/config': { status: 200, body: NOT_CONFIGURED } })
+    dispatch(withBackup({ '/api/agent/config': { status: 200, body: NOT_CONFIGURED } }))
     const { w } = await mountAt(AgentView)
 
     expect(w.find('.inbox').exists()).toBe(false)
@@ -92,7 +101,7 @@ describe('智能体对话页', () => {
   })
 
   it('点「去设置」跳到设置页', async () => {
-    dispatch({ '/api/agent/config': { status: 200, body: NOT_CONFIGURED } })
+    dispatch(withBackup({ '/api/agent/config': { status: 200, body: NOT_CONFIGURED } }))
     const { w, router } = await mountAt(AgentView)
 
     await w.find('.primary').trigger('click')
@@ -156,7 +165,7 @@ describe('智能体对话页', () => {
 
 describe('设置页的模型配置', () => {
   it('留空的 key 不会被当成「清除」发出去', async () => {
-    dispatch({ '/api/agent/config': { status: 200, body: CONFIGURED } })
+    dispatch(withBackup({ '/api/agent/config': { status: 200, body: CONFIGURED } }))
     const { w } = await mountAt(SettingsView)
 
     // 打开时 baseUrl 与 model 被回填，key 永远是空的（后端不回传它）
@@ -185,13 +194,13 @@ describe('设置页的模型配置', () => {
   })
 
   it('什么都没填时保存按钮是禁用的', async () => {
-    dispatch({ '/api/agent/config': { status: 200, body: NOT_CONFIGURED } })
+    dispatch(withBackup({ '/api/agent/config': { status: 200, body: NOT_CONFIGURED } }))
     const { w } = await mountAt(SettingsView)
     expect(w.find('.primary').attributes('disabled')).toBeDefined()
   })
 
   it('已配置时提示不再显示 key，并说明留空表示不改', async () => {
-    dispatch({ '/api/agent/config': { status: 200, body: CONFIGURED } })
+    dispatch(withBackup({ '/api/agent/config': { status: 200, body: CONFIGURED } }))
     const { w } = await mountAt(SettingsView)
     expect(w.text()).toContain('已配置')
     expect(w.find('input[type="password"]').attributes('placeholder')).toContain('留空表示不改')

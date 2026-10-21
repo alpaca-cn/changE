@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { getAgentConfig, putAgentConfig, type AgentConfig } from '../api/agent'
+import {
+  backupInfo,
+  createBackup,
+  humanSize,
+  listBackups,
+  type Backup,
+  type BackupInfo,
+} from '../api/backup'
 
 /**
  * 设置页。目前只有一块：模型配置。
@@ -66,8 +74,39 @@ async function save() {
   }
 }
 
+// ── 数据备份 ──────────────────────────────────────────────
+const backups = ref<Backup[]>([])
+const info = ref<BackupInfo | null>(null)
+const backingUp = ref(false)
+const backupError = ref<string | null>(null)
+const justMade = ref<Backup | null>(null)
+
+async function loadBackups() {
+  try {
+    backups.value = await listBackups()
+    info.value = await backupInfo()
+  } catch {
+    // 备份列表读不到不该影响模型配置那块，安静地空着
+    backups.value = []
+  }
+}
+
+async function makeBackup() {
+  backingUp.value = true
+  backupError.value = null
+  try {
+    justMade.value = await createBackup()
+    await loadBackups()
+  } catch (e) {
+    backupError.value = reason(e)
+  } finally {
+    backingUp.value = false
+  }
+}
+
 onMounted(() => {
   void load()
+  void loadBackups()
 })
 </script>
 
@@ -113,6 +152,40 @@ onMounted(() => {
 
       <button class="primary" :disabled="!canSave" @click="save">保存</button>
     </section>
+
+    <section class="block">
+      <h3>数据备份</h3>
+      <p class="hint">
+        这是本地应用——没有云、没有同步。硬盘坏了或文件夹被删，数据就没了。
+        备份是把整个库导出成一个独立文件：<b>导出来之后还要拷到别的地方</b>，留在同一块盘上不算备份。
+      </p>
+
+      <button class="primary" :disabled="backingUp" @click="makeBackup">
+        {{ backingUp ? '正在导出…' : '立即备份' }}
+      </button>
+
+      <p v-if="backupError" class="err">{{ backupError }}</p>
+
+      <div v-if="justMade !== null" class="made">
+        <p class="ok">已导出（{{ humanSize(justMade.bytes) }}）：</p>
+        <code class="path">{{ justMade.path }}</code>
+        <p v-if="!justMade.inDocuments" class="warn">
+          注意：没找到「文档」文件夹，备份落在了数据目录旁边。请把它拷到别处。
+        </p>
+      </div>
+
+      <div v-if="backups.length > 0" class="recent">
+        <p class="label">最近的备份</p>
+        <ul>
+          <li v-for="b in backups.slice(0, 5)" :key="b.path">
+            <span class="mono">{{ humanSize(b.bytes) }}</span>
+            <code>{{ b.path }}</code>
+          </li>
+        </ul>
+      </div>
+
+      <p v-if="info !== null" class="hint restore">{{ info.note }}</p>
+    </section>
   </section>
 </template>
 
@@ -146,4 +219,30 @@ input:focus { outline: none; border-color: var(--accent); }
 .ok { color: var(--ok); font-size: 12px; }
 .warn { color: var(--warn); font-size: 12px; }
 .err { color: var(--danger); font-size: 12px; }
+
+.made { margin-top: var(--gap-md); }
+.path {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg);
+  border: var(--line-width) solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  margin-top: 4px;
+  word-break: break-all;
+}
+.recent { margin-top: var(--gap-md); }
+.recent ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.recent li {
+  display: flex;
+  gap: var(--gap-sm);
+  align-items: baseline;
+  padding: 5px 0;
+  border-bottom: var(--line-width) solid var(--line);
+  font-size: 11px;
+}
+.recent li code { font-family: var(--mono); color: var(--text-dim); word-break: break-all; }
+.restore { margin-top: var(--gap-md); }
 </style>
