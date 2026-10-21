@@ -15,11 +15,17 @@ const emit = defineEmits<{ retry: [] }>()
 /**
  * 超过这个时长补一句解释。
  *
- * 首次启动要导入动作库（实测 12 秒左右），一句「正在启动服务…」撑十几秒
- * 和卡死没有区别。5 秒是「还没到让人想砸键盘」与「别一上来就吓人」的折中：
- * 正常的第二次启动 4 秒内就进去了，那句话根本不会出现。
+ * **原来的假设是错的。** 注释里写着「正常的第二次启动 4 秒内就进去了」，
+ * 于是阈值取了 5 秒。实测（装出来的包，连续三次）是：
+ * 首次 8.0s / 再次 8.5s / 第三次 8.1s —— **启动本来就一直是 8 秒**，
+ * 所以那句提示每次都会出现，而它写的是「首次启动」。用户第二次打开看到
+ * 「首次启动」，当然会问为什么。
+ *
+ * 现在取 12 秒：8 秒是常态，给约 50% 余量，只有真的卡住才提示。
+ * 另外注意 `/api/health` 在 8 秒就 200 了，动作库导入是在那之后后台继续跑的——
+ * 所以「启动门在等导入」这个说法本来也不成立。
  */
-const SLOW_HINT_AFTER_MS = 5000
+const SLOW_HINT_AFTER_MS = 12000
 
 const showSlowHint = ref(false)
 let hintTimer: number | undefined
@@ -68,7 +74,7 @@ const failed = computed(() => props.state.status === 'failed')
       <div class="spinner" aria-hidden="true" />
       <h1 class="title">正在启动服务…</h1>
       <p class="lead">数据服务准备好之后会自动进入，不需要手动操作。</p>
-      <p v-if="showSlowHint" class="hint slow">首次启动需要导入动作库，可能要十几秒。</p>
+      <p v-if="showSlowHint" class="hint slow">启动比平时慢（通常 8 秒左右）。如果一直停在这里，可以退出后重新打开应用。</p>
     </template>
   </section>
 </template>

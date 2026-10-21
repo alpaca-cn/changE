@@ -26,6 +26,8 @@ const srcTauri = join(here, "..", "src-tauri");
 const required = [
   {
     path: join(srcTauri, "resources", "change-backend.jar"),
+    // 瘦 jar 的警戒线，见下面的 MIN_JAR_BYTES。
+    minBytes: 20 * 1024 * 1024,
     hint: "in backend/ run `mvn -B -q -DskipTests package`, then copy backend/target/change-backend-0.1.0-SNAPSHOT.jar to frontend/src-tauri/resources/change-backend.jar",
   },
   {
@@ -34,12 +36,59 @@ const required = [
   },
 ];
 
+/**
+ * jar 的大小警戒线。
+ *
+ * 后端是 Spring Boot **fat jar**，约 80 MB。而 `mvn package` 的 repackage 一步
+ * 一旦失败（最常见的原因：上一次跑起来的 `java -jar` 还占着文件、Windows 上
+ * 改不了名），`target` 里会留下一个 **700 KB 左右的瘦 jar**——只有自己的 class，
+ * 没有任何依赖。
+ *
+ * 那种 jar 会被正常拷进资源目录、构建会成功、安装也会成功，然后在用户的机器上
+ * 一启动就 NoClassDefFoundError。
+ *
+ * **2026-10-21 真的发生过一次**：安装包从 104 MB 缩到 33 MB，而这条脚本
+ * 一声没吭（它当时只检查文件在不在）。所以现在多一道大小检查——
+ * 体积是最难骗过的信号。
+ */
+const MIN_JAR_BYTES = 20 * 1024 * 1024;
+
 function isFile(path) {
   try {
     return statSync(path).isFile();
   } catch {
     return false;
   }
+}
+
+const tooSmall = required
+  .filter((entry) => entry.minBytes !== undefined && isFile(entry.path))
+  .filter((entry) => statSync(entry.path).size < entry.minBytes);
+
+if (tooSmall.length > 0) {
+  console.error("");
+  console.error(
+    "ERROR: a bundled resource is far too small — it is almost certainly a broken build.",
+  );
+  console.error("");
+  for (const entry of tooSmall) {
+    const mb = (statSync(entry.path).size / 1024 / 1024).toFixed(1);
+    console.error(`  ${entry.path}`);
+    console.error(`  is ${mb} MB, expected at least ${entry.minBytes / 1024 / 1024} MB`);
+  }
+  console.error("");
+  console.error(
+    "A few hundred KB means `mvn package` wrote a thin jar: its repackage step failed.",
+  );
+  console.error(
+    "That usually happens because a previous `java -jar` still holds the file.",
+  );
+  console.error(
+    "  fix: kill stray java processes, then in backend/ run `mvn -B -q -DskipTests package`",
+  );
+  console.error("       and copy the jar into frontend/src-tauri/resources/ again.");
+  console.error("");
+  process.exit(1);
 }
 
 const missing = required.filter((entry) => !isFile(entry.path));

@@ -174,13 +174,13 @@ describe('启动门', () => {
     expect(w.find('.status').exists()).toBe(false)
   })
 
-  it('启动超过 5 秒后补一句「首次启动需要导入动作库」', async () => {
+  it('启动超过 5 秒后补一句「启动比平时慢」', async () => {
     const w = await mountApp([STARTING])
     expect(w.text()).not.toContain('首次启动')
 
-    await advance(5100)
+    await advance(12100)
 
-    expect(w.text()).toContain('首次启动需要导入动作库，可能要十几秒')
+    expect(w.text()).toContain('启动比平时慢')
   })
 
   it('失败后点「重试」重新开始轮询，后端起来后进入正常界面', async () => {

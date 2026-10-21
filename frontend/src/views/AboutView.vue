@@ -1,5 +1,13 @@
 <script setup lang="ts">
 import painting from '../assets/about/oil-painting.jpg'
+import { ref } from 'vue'
+import {
+  APP_VERSION,
+  BUILD_TIME,
+  buildTimeText,
+  checkForUpdate,
+  type UpdateCheck,
+} from '../api/version'
 
 /**
  * 关于与致谢。
@@ -10,6 +18,19 @@ import painting from '../assets/about/oil-painting.jpg'
  *   2. 两张用户提供的图 —— 它们会随安装包发给朋友，所以来源要写清楚，
  *      免得下一个维护者以为是从网上扒的。
  */
+/** 版本与更新检查。 */
+const checking = ref(false)
+const check = ref<UpdateCheck | null>(null)
+
+async function runCheck() {
+  checking.value = true
+  try {
+    check.value = await checkForUpdate()
+  } finally {
+    checking.value = false
+  }
+}
+
 const sources = [
   { name: '动作库主体 · 876 条', from: 'yuhonas/free-exercise-db', license: 'Unlicense（公有领域）' },
   { name: '中文说明 · 1,324 条（交叉校验用）', from: 'hasaneyldrm/exercises-dataset', license: 'MIT（仅文本）' },
@@ -42,6 +63,42 @@ const sources = [
           <span class="lic">{{ s.license }}</span>
         </li>
       </ul>
+    </section>
+
+    <section class="block">
+      <h3>版本</h3>
+      <p class="hint">
+        当前 <b class="mono">{{ APP_VERSION }}</b> · 构建于 <span class="mono">{{ buildTimeText(BUILD_TIME) }}</span>
+      </p>
+
+      <button class="primary" :disabled="checking" @click="runCheck">
+        {{ checking ? '正在检查…' : '检查更新' }}
+      </button>
+
+      <div v-if="check !== null" class="check">
+        <p v-if="check.kind === 'no-source'" class="hint">
+          这个发行版还没有配置更新源，所以查不到新版。
+          （构建时把 <code>UPDATE_MANIFEST</code> 填成一个返回
+          <code>{ version, notes?, url? }</code> 的地址即可启用。）
+        </p>
+        <p v-else-if="check.kind === 'up-to-date'" class="ok">
+          已经是最新的（{{ check.current }}）。
+        </p>
+        <p v-else-if="check.kind === 'available'" class="ok">
+          有新版本 <b>{{ check.latest }}</b>（当前 {{ check.current }}）。
+        </p>
+        <p v-else class="err">检查失败：{{ check.message }}</p>
+
+        <template v-if="check.kind === 'available'">
+          <p v-if="check.notes !== ''" class="hint">{{ check.notes }}</p>
+          <code v-if="check.url !== ''" class="path">{{ check.url }}</code>
+        </template>
+      </div>
+
+      <p class="hint tip">
+        想要「装一次就自动更新」还需要一对签名密钥与一个能放清单的地址——
+        那是部署决定，不是代码问题。现在这一步只回答「我是不是最新的」。
+      </p>
     </section>
 
     <section class="block">
@@ -89,4 +146,12 @@ h3 { font-size: 15px; }
 .nm { font-weight: 500; }
 .from { color: var(--text-dim); font-family: var(--mono); font-size: 11px; }
 .lic { grid-column: 2; text-align: right; color: var(--eyebrow); font-size: 11px; }
+
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.check { margin-top: var(--gap-md); }
+.check .ok { color: var(--ok); font-size: 12px; }
+.check .err { color: var(--danger); font-size: 12px; }
+.tip { margin-top: var(--gap-md); color: var(--eyebrow); }
+.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.primary:disabled { border-color: var(--line); color: var(--text-dim); cursor: not-allowed; }
 </style>

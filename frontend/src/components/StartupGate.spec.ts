@@ -35,18 +35,24 @@ describe('启动门', () => {
     expect(w.text()).toContain('正在启动服务…')
     expect(w.find('.spinner').exists()).toBe(true)
     expect(w.find('.retry').exists()).toBe(false)
-    // 一上来不提「首次启动」，否则每次启动都像出了事
-    expect(w.text()).not.toContain('首次启动')
+    // 一上来不挂慢启动提示，否则每次启动都像出了事
+    expect(w.text()).not.toContain('启动比平时慢')
   })
 
-  it('超过 5 秒补一句「首次启动需要导入动作库」', async () => {
+  it('12 秒内不提示；超过之后说「比平时慢」而不是「首次启动」', async () => {
+    // 实测正常启动就是 8 秒左右，所以 8 秒时**不该**有任何提示
     const w = mountGate(STARTING)
 
-    await advance(4999)
-    expect(w.text()).not.toContain('首次启动')
+    await advance(8000)
+    expect(w.text()).not.toContain('启动比平时慢')
+
+    await advance(3999)
+    expect(w.text()).not.toContain('启动比平时慢')
 
     await advance(1)
-    expect(w.text()).toContain('首次启动需要导入动作库，可能要十几秒')
+    expect(w.text()).toContain('启动比平时慢')
+    // **不能**再说「首次启动」：用户第二、第三次打开时也在看这句话
+    expect(w.text()).not.toContain('首次启动')
   })
 
   it('失败态显示错误与重试按钮，且不是启动态的转圈文案', () => {
@@ -60,17 +66,17 @@ describe('启动门', () => {
     // **不能永远转圈**：失败是终态，转圈会让人以为在等
     expect(w.find('.spinner').exists()).toBe(false)
     expect(w.text()).not.toContain('正在启动服务…')
-    expect(w.text()).not.toContain('首次启动')
+    expect(w.text()).not.toContain('启动比平时慢')
   })
 
   it('从启动中变成失败时，收掉慢启动提示并给出错误', async () => {
     const w = mountGate(STARTING)
-    await advance(5000)
-    expect(w.text()).toContain('首次启动需要导入动作库')
+    await advance(12000)
+    expect(w.text()).toContain('启动比平时慢')
 
     await w.setProps({ state: FAILED })
 
-    expect(w.text()).not.toContain('首次启动需要导入动作库')
+    expect(w.text()).not.toContain('启动比平时慢')
     expect(w.text()).toContain('后端启动超时')
     expect(w.find('.spinner').exists()).toBe(false)
   })
@@ -88,11 +94,11 @@ describe('启动门', () => {
     const w = mountGate(FAILED)
     await w.setProps({ state: STARTING })
 
-    await advance(4999)
+    await advance(11999)
     expect(w.text()).not.toContain('首次启动')
 
     await advance(1)
-    expect(w.text()).toContain('首次启动需要导入动作库')
+    expect(w.text()).toContain('启动比平时慢')
   })
 
   it('失败但没有 message 时给一句兜底文案', () => {
