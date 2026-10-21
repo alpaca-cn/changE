@@ -39,7 +39,7 @@ import java.util.stream.Collectors;
 @Service
 public class WorkoutService {
 
-    private static final String ORIGIN = "user";
+    private static final String USER_ORIGIN = "user";
 
     /** 一组要写的数据。除组类型外都允许为 null（「还没记」是一个真实状态）。 */
     public record SetInput(String setType, Double weight, Integer repetitions, Integer durationSeconds,
@@ -94,7 +94,18 @@ public class WorkoutService {
 
     /** 记一次完整训练。 */
     @Transactional
+        /**
+     * 用户来源的写入（老签名，保持不动）。
+     *
+     * <p>转调带 origin 的版本。留这个重载是为了不让现有调用方与测试为了一个
+     * 参数全面改动；语义与以前完全一致。
+     */
     public Result recordSession(SessionInput input) {
+        return recordSession(input, USER_ORIGIN);
+    }
+
+    /** 带来源的版本：智能体写数据时传 "agent"。 */
+    public Result recordSession(SessionInput input, String origin) {
         requireValid(input);
 
         WorkoutSession session = new WorkoutSession();
@@ -105,7 +116,7 @@ public class WorkoutService {
         session.perceivedState = input.perceivedState();
         session.note = input.note();
         sessions.save(session);
-        changeLog.recordInsert("workout_session", session.id, sessionSnapshot(session), ORIGIN, null);
+        changeLog.recordInsert("workout_session", session.id, sessionSnapshot(session), origin, null);
 
         int exerciseCount = 0;
         int setCount = 0;
@@ -118,13 +129,13 @@ public class WorkoutService {
             se.note = ei.note();
             se.supersetGroup = ei.supersetGroup();
             sessionExercises.save(se);
-            changeLog.recordInsert("session_exercise", se.id, sessionExerciseSnapshot(se), ORIGIN, null);
+            changeLog.recordInsert("session_exercise", se.id, sessionExerciseSnapshot(se), origin, null);
             exerciseCount++;
 
             for (int j = 0; j < ei.sets().size(); j++) {
                 WorkoutSet ws = toSet(se.id, j, ei.sets().get(j));
                 sets.save(ws);
-                changeLog.recordInsert("workout_set", ws.id, setSnapshot(ws), ORIGIN, null);
+                changeLog.recordInsert("workout_set", ws.id, setSnapshot(ws), origin, null);
                 setCount++;
             }
         }

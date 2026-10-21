@@ -51,7 +51,7 @@ public class BodyMetricService {
     /** 上限，防止调用方一次把整条历史拉走。 */
     public static final int MAX_LIMIT = 1000;
 
-    private static final String ORIGIN = "user";
+    private static final String USER_ORIGIN = "user";
 
     /** 日期只认 ISO 的纯日期形状（与库里 measured_on 的 GLOB CHECK 逐字对齐）。 */
     private static final String DATE_SHAPE = "YYYY-MM-DD（例 2026-10-19）";
@@ -113,7 +113,18 @@ public class BodyMetricService {
      * 「查不到来源」的记录，而这正是审计网要防的事。
      */
     @Transactional
+        /**
+     * 用户来源的写入（老签名，保持不动）。
+     *
+     * <p>转调带 origin 的版本。留这个重载是为了不让现有调用方与测试为了一个
+     * 参数全面改动；语义与以前完全一致。
+     */
     public Created record(MetricInput input) {
+        return record(input, USER_ORIGIN);
+    }
+
+    /** 带来源的版本：智能体写数据时传 "agent"。 */
+    public Created record(MetricInput input, String origin) {
         if (input == null) {
             throw new IllegalArgumentException("身体数据不能为空");
         }
@@ -133,7 +144,7 @@ public class BodyMetricService {
         metric.note = input.note();
         metrics.save(metric);
 
-        changeLog.recordInsert("body_metric", metric.id, snapshot(metric), ORIGIN, null);
+        changeLog.recordInsert("body_metric", metric.id, snapshot(metric), origin, null);
         return new Created(metric.id);
     }
 

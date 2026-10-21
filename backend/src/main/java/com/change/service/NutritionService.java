@@ -51,7 +51,7 @@ import java.util.stream.Collectors;
 @Service
 public class NutritionService {
 
-    private static final String ORIGIN = "user";
+    private static final String USER_ORIGIN = "user";
 
     /** 一个条目要写的数据。{@code unitName} 为 null（或空）表示 {@code amount} 已经是克。 */
     public record ItemInput(Long foodId, double amount, String unitName) {
@@ -102,7 +102,18 @@ public class NutritionService {
      * 用户以为记好了，其实少了几个条目，而且他不会知道少了哪个。
      */
     @Transactional
+        /**
+     * 用户来源的写入（老签名，保持不动）。
+     *
+     * <p>转调带 origin 的版本。留这个重载是为了不让现有调用方与测试为了一个
+     * 参数全面改动；语义与以前完全一致。
+     */
     public Result recordMeal(MealInput input) {
+        return recordMeal(input, USER_ORIGIN);
+    }
+
+    /** 带来源的版本：智能体写数据时传 "agent"。 */
+    public Result recordMeal(MealInput input, String origin) {
         requireValid(input);
 
         Meal meal = new Meal();
@@ -111,7 +122,7 @@ public class NutritionService {
         meal.eatenAt = input.eatenAt();
         meal.note = input.note();
         meals.save(meal);
-        changeLog.recordInsert("meal", meal.id, mealSnapshot(meal), ORIGIN, null);
+        changeLog.recordInsert("meal", meal.id, mealSnapshot(meal), origin, null);
 
         int count = 0;
         List<Nutrition> perItem = new ArrayList<>();
@@ -131,7 +142,7 @@ public class NutritionService {
             item.grams = grams;
             item.origin = "manual";
             items.save(item);
-            changeLog.recordInsert("meal_item", item.id, itemSnapshot(item), ORIGIN, null);
+            changeLog.recordInsert("meal_item", item.id, itemSnapshot(item), origin, null);
 
             perItem.add(NutritionCalculator.forGrams(per100(food), grams));
             count++;
