@@ -59,4 +59,21 @@ public class ApiErrors {
                 "error", reason == null ? e.getStatusCode().toString() : reason);
         return ResponseEntity.status(e.getStatusCode()).body(body);
     }
+
+    /**
+     * 模型侧失败：没配、key 不对、baseUrl 写错、网络不通、被限流。
+     *
+     * <p>统一给 **400**。不细分成 502/503 的理由：这几类对用户而言都是
+     * 「你去改配置，或者稍后重试」，而前端对它们的反应完全一样——显示那句话。
+     * 多一个状态码只是多一个前端分支，没有任何行为差异。
+     *
+     * <p>例外是真正的 bug（比如工具结果序列化失败）——那些抛的是
+     * IllegalStateException，仍然按 500 暴露，因为它们该被我们看到。
+     */
+    @ExceptionHandler(com.change.agent.LlmClient.LlmException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, Object> llmFailure(com.change.agent.LlmClient.LlmException e) {
+        String message = e.getMessage() == null ? "调用模型失败" : e.getMessage();
+        return Map.of("error", message);
+    }
 }
