@@ -58,7 +58,19 @@ public class WorkoutService {
     public record Result(long sessionId, int exercises, int sets) {}
 
     /** 训练列表里的一行。 */
-    public record SessionSummary(long id, LocalDate sessionDate, String title, String perceivedState) {}
+    public     /**
+     * 首页卡片用的一行。
+     *
+     * <p>`exercises` / `sets` / `topExerciseName` / `topWeight` 是 2026-10-21 加的：
+     * 首页从「最近训练」的文字列表改成卡片网格之后，每一格需要「几个动作、几组、
+     * 最重的一组是什么」。这些数不新增、就只能在前端为每个会话再打一次详情接口——
+     * 5 个会话 5 次请求，为了显示一行字。
+     *
+     * <p>`topWeight` 可以为 null：自重动作没有重量。**不要用 0 代替 null**——
+     * 0 kg 是一个假事实，null 才是「这次没有重量」。
+     */
+    record SessionSummary(long id, LocalDate sessionDate, String title, String perceivedState,
+                          int exercises, int sets, String topExerciseName, Double topWeight) {}
 
     /** 一组（读回用，带 id）。 */
     public record SetDetail(long id, int setIndex, String setType, Double weight, Integer repetitions,
@@ -155,11 +167,50 @@ public class WorkoutService {
         return new Result(session.id, exerciseCount, setCount);
     }
 
-    /** 最近 5 次训练，新的在前（首页用）。 */
+    /**
+     * 最近 5 次训练，新的在前（首页用）。
+     *
+     * <p>每次都顺带算出「几个动作、几组、最重的一组」——见 {@link SessionSummary}。
+     * 5 个会话最多几十次小查询，都走本地 SQLite，比让前端循环打详情接口划算，
+     * 也比加一张汇总表简单（那张表还得跟着写增删改三层）。
+     */
     public List<SessionSummary> recentSessions() {
-        return sessions.findTop5ByOrderBySessionDateDesc().stream()
-                .map(s -> new SessionSummary(s.id, s.sessionDate, s.title, s.perceivedState))
+        List<WorkoutSession> recent = sessions.findTop5ByOrderBySessionDateDesc();
+
+        // 一次把所有涉及的动作名取出来，避免在循环里逐个查
+        List<Long> exerciseIds = recent.stream()
+                .flatMap(s -> sessionExercises.findBySessionIdOrderByOrderIndexAsc(s.id).stream())
+                .map(se -> se.exerciseId)
+                .distinct()
                 .toList();
+        Map<Long, Exercise> byId = exerciseIds.isEmpty()
+                ? Map.of()
+                : exercises.findAllById(exerciseIds).stream()
+                        .collect(Collectors.toMap(e -> e.id, e -> e));
+
+        return recent.stream().map(s -> {
+            List<SessionExercise> ses = sessionExercises.findBySessionIdOrderByOrderIndexAsc(s.id);
+            int setCount = 0;
+            String topName = null;
+            Double topWeight = null;
+
+            for (SessionExercise se : ses) {
+                List<WorkoutSet> list = sets.findBySessionExerciseIdOrderBySetIndexAsc(se.id);
+                setCount += list.size();
+                Exercise e = byId.get(se.exerciseId);
+                for (WorkoutSet ws : list) {
+                    if (ws.weight == null) {
+                        continue;
+                    }
+                    if (topWeight == null || ws.weight > topWeight) {
+                        topWeight = ws.weight;
+                        topName = e == null ? null : (e.nameZh != null ? e.nameZh : e.nameEn);
+                    }
+                }
+            }
+            return new SessionSummary(s.id, s.sessionDate, s.title, s.perceivedState,
+                    ses.size(), setCount, topName, topWeight);
+        }).toList();
     }
 
     /** 一次训练的完整内容；找不到返回 {@link Optional#empty()}（调用方翻译成 404）。 */

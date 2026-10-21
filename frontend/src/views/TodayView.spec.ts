@@ -131,7 +131,7 @@ describe('今日页 · 最近训练', () => {
 describe('今日页 · 开始训练', () => {
   it('starting_a_workout_navigates_to_the_training_page', async () => {
     const { wrapper, router } = await mountToday(okMap())
-    await wrapper.find('.primary').trigger('click')
+    await wrapper.find('.hero-cta').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/training')
   })
@@ -220,7 +220,7 @@ describe('今日页 · 失败不能白屏', () => {
 describe('今日页 · 今天吃了多少', () => {
   it('shows_the_intake_from_the_backend', async () => {
     const { wrapper } = await mountToday(okMap())
-    const intake = wrapper.find('.intake')
+    const intake = wrapper.find('.intake-card')
 
     expect(intake.text()).toContain('421.5')
     expect(intake.text()).toContain('千卡')
@@ -232,7 +232,7 @@ describe('今日页 · 今天吃了多少', () => {
   it('an_empty_day_shows_zeros_rather_than_nothing', async () => {
     // 「今天还没吃」是刚装上时的常态：显示 0，不是空白，也不是错误。
     const { wrapper } = await mountToday(okMap({ '/api/nutrition/daily': { status: 200, body: EMPTY_DAY } }))
-    const intake = wrapper.find('.intake')
+    const intake = wrapper.find('.intake-card')
 
     expect(intake.text()).toContain('0 千卡')
     expect(intake.text()).toContain('0 餐')
@@ -243,7 +243,7 @@ describe('今日页 · 今天吃了多少', () => {
     // 「今天」由后端决定：前端自己算日期会在跨零点/跨时区时和后端不一致。
     const { wrapper } = await mountToday(okMap())
     await flushPromises()
-    expect(wrapper.find('.intake').exists()).toBe(true)
+    expect(wrapper.find('.intake-card').exists()).toBe(true)
     // 断言请求路径里没有 date 参数
     const call = invokeMock.mock.calls.find(
       (c) => (c[1] as { path: string }).path.startsWith('/api/nutrition/daily'),
@@ -254,7 +254,7 @@ describe('今日页 · 今天吃了多少', () => {
   it('an_intake_failure_is_isolated_from_the_training_panels', async () => {
     const { wrapper } = await mountToday(okMap({ '/api/nutrition/daily': 'reject' }))
 
-    expect(wrapper.find('.intake').text()).toContain('连不上')
+    expect(wrapper.find('.intake-card').text()).toContain('连不上')
     // 训练那两块照常
     expect(wrapper.find('.volume').text()).toContain('胸部')
     expect(wrapper.find('.sessions').text()).toContain('胸 + 三头')

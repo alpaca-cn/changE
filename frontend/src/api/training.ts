@@ -52,6 +52,14 @@ export interface SessionSummary {
   sessionDate: string
   title: string | null
   perceivedState: string | null
+  /** 这次训练里有几个动作。首页卡片用。 */
+  exercises: number
+  /** 总共几组（含未完成的）。 */
+  sets: number
+  /** 最重的一组来自哪个动作；全是自重时为 null。 */
+  topExerciseName: string | null
+  /** 最重的一组多少 kg；全是自重时为 null（**不是 0**）。 */
+  topWeight: number | null
 }
 
 export interface SetSnapshot {

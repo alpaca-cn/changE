@@ -16,7 +16,7 @@ export const WEEKLY_17 =
 
 /** `GET /api/sessions/recent` —— 一条（就是上面那次训练）。 */
 export const RECENT =
-  '[{"id":1,"sessionDate":"2026-10-19","title":"胸 + 三头","perceivedState":"睡得好"}]'
+  '[{"id":1,"sessionDate":"2026-10-19","title":"胸 + 三头","perceivedState":"睡得好","exercises":2,"sets":5,"topExerciseName":"杠铃卧推","topWeight":62.5}]'
 
 /** `GET /api/sessions/1` —— 3 组，`setIndex` 0/1/2 升序，最后一组未完成。 */
 export const SESSION_1 =
