@@ -1,58 +1,70 @@
 /*
  * changE 的视觉 token —— 唯一来源。
  *
- * 值来自设计文档「九、界面与视觉方向」。任何组件都不许写死颜色，
- * 一律 var(--xxx)。theme.spec.ts 会把下面这几个值钉住，防止悄悄漂移。
+ * 任何组件都不许写死颜色，一律 var(--xxx)。theme.spec.ts 会把下面这几个值
+ * 钉住，防止悄悄漂移。
  *
- * 只做深色主题：厚重感一半来自深色底与高对比，再维护一套浅色主题
- * 会稀释这个方向，且测试成本翻倍（设计文档已封板）。
+ * **2026-10-21 换过一次方向，原因记在这里**：
+ * 第一版是深色底 + 暖红 #e0453a。用户装机后反馈「纯黑看着太压抑」，
+ * 并给了参考项目 LZheng0411/Lzheng-fitness（它的 :root 本体就是浅色）。
+ * 所以整套翻成暖米白 + 墨色 + 黄铜。
  *
- * **语义色在计划 4 落地了**：本周容量要区分「练少了 / 达标 / 练过量 / 没练 /
- * 没配目标」五种状态，而这五个值必须一致地用在每一处，所以它们是 token。
+ * 换的不只是颜色，是三条原则：
+ *   1. 底色从「深黑」变成「暖米白 #f4f2ed」——不是纯白，纯白会发冷
+ *   2. 深色不再是大面积底色，只保留一块 --hero（参考项目的 --hero:#161616）
+ *   3. 强调色从暖红变黄铜 #b5893a——它也只做一件事：数值与选中
  *
- * **仍然没有、而且刻意不加的 token 类别**：正文 400 字重、肌肉色阶（人体图的
- * 逐肌群着色，计划 6 才需要）、比 --gap-xl 更大的一档留白、把 --line 拆成
- * divider / border 两个。
- *
- * 加它们的时机仍然是**消费它们的界面出现时**——那时才知道要几档、该叫什么名字。
- * 提前定义就是一堆没人用的死值，而且每一个都要被 theme.spec.ts 钉住，
- * 成本不是零。
+ * **语义色与强调色现在分开了**：--danger（练过量）不再等于 --accent。
+ * 以前两者同值是刻意的（红既是强调又是告警），现在强调色是中性的黄铜，
+ * 告警必须自己有色相，否则「练过量」和「这是你的数」长得一模一样。
  */
 :root {
-  /* 背景三层 */
-  --bg: #0d0f12;
-  --panel: #14171b;
-  --line: #262b31;
+  /* 表面：暖米白打底。--panel 是抬起来的那一层（卡片、按钮），
+     --sidebar 单独给侧栏，因为它比卡片再暗一档。 */
+  --bg: #f4f2ed;
+  --panel: #ffffff;
+  --sidebar: #efece3;
+  --line: #e3dfd5;
+  --line-soft: #eceae1;
 
-  /* 唯一强调色：肌肉高亮、主按钮、进度条都用它 */
-  --accent: #e0453a;
+  /* 深色只出现在这里：今日页的 hero、封面类区块 */
+  --hero: #161412;
 
-  /* 语义色。设计文档只给了**一个**强调色，但「本周容量」必须区分五种状态，
+  /* 唯一强调色：黄铜。数值、选中、进度条都用它 */
+  --accent: #b5893a;
+  --accent-soft: rgba(181, 137, 58, 0.1);
+
+  /* 导航选中态：反色深底药丸（浅色页面上比浅色药丸稳重得多） */
+  --pill: #1a1a1a;
+  --pill-ink: #f6f4ef;
+
+  /* 语义色。设计文档只给了一个强调色，但「本周容量」必须区分五种状态，
      否则「练少了」和「练过量」在界面上一模一样——那比不显示更难看出问题。
 
-     --danger 与 --accent 同值，但**是两个变量**：语义不同，将来完全可能分叉
-     （比如主按钮改成中性色）。合成一个会把这个可能性堵死，而保留的成本是零。 */
-  --ok: #4f9d5d;             /* IN_RANGE：达标 */
-  --warn: #d99a2b;           /* BELOW：练少了 */
-  --danger: #e0453a;         /* ABOVE：练过量（与 --accent 同值，刻意） */
-  --muted-strong: #3a424b;   /* UNTRAINED：0 组，未练。比 --line 亮、比 --text-dim 暗 */
+     这四个现在是**暖色系里挑出来的**，与黄铜同族但各自有色相，
+     在米白底上都能读。 */
+  --ok: #5c7a3a;             /* IN_RANGE：达标（橄榄绿） */
+  --warn: #a8792c;           /* BELOW：练少了（暗琥珀） */
+  --danger: #a8482e;         /* ABOVE：练过量（赭红。不再等于 --accent） */
+  --muted-strong: #b6b0a2;   /* UNTRAINED：0 组，未练。比 --line 暗、比 --text-dim 淡 */
 
   /* 文字 */
-  --text: #d8dee6;
-  /* --text-dim 与 --eyebrow 今天同值（#6b7480），但语义不同、不要合并：
+  --text: #1a1a1a;
+  /* --text-dim 与 --eyebrow 语义不同、不要合并：
      --text-dim 是正文里的次要文字，--eyebrow 是全大写小标签。两者将来完全
-     可能分叉（比如小标签要更暗一点），合成一个会把这个可能性堵死，
-     而保留两个的成本是零。 */
-  --text-dim: #6b7480;
-  --eyebrow: #6b7480;
+     可能分叉，合成一个会把这个可能性堵死，而保留两个的成本是零。 */
+  --text-dim: #6b6559;
+  --eyebrow: #9c968a;
 
-  /* 排版 */
-  --title-weight: 800;
+  /* 排版。字重 600 不是 800：粗体让界面显得吵，轻一点才有编辑感。
+     字距沿用第一版的值——它们与参考项目几乎一致，没必要动。 */
+  --title-weight: 600;
   --title-tracking: -0.015em;
   --eyebrow-tracking: 0.16em;
 
-  /* 形状：靠描边与间距分层，不用阴影 */
-  --radius: 5px;
+  /* 形状：靠 1px 发丝线与大圆角分层，仍然不用阴影 */
+  --radius: 16px;
+  --radius-sm: 10px;
   --line-width: 1px;
 
   /* 间距：留白放宽，用空白而不是卡片边框分组 */
@@ -63,6 +75,8 @@
   --gap-xl: 44px;
 
   --font: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --serif: "Songti SC", "Noto Serif SC", "SimSun", STSong, serif;
+  --mono: ui-monospace, "Consolas", "Cascadia Mono", monospace;
 }
 
 * { box-sizing: border-box; }
@@ -101,7 +115,7 @@ button {
   color: inherit;
   background: var(--panel);
   border: var(--line-width) solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   padding: 6px 12px;
   cursor: pointer;
 }

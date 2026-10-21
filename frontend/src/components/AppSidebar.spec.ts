@@ -53,4 +53,35 @@ describe('侧边栏', () => {
     const groups = w.findAll('.nav-group')
     expect(groups[groups.length - 1].classes()).toContain('pinned')
   })
+
+  it('每个入口都渲染「编号 + 中文 + 小字母英文」三件套', () => {
+    // 2026-10-21 换语言：单字图标（今/训/食…）换成 01..09 编号 + 英文副名。
+    // 编号是跨分组连续的，不是每组从 01 重开——那样会出现两个 01。
+    const w = mountWithRouter()
+    const items = w.findAll('.nav-item')
+    expect(items.map((n) => n.find('.no').text())).toEqual([
+      '01', '02', '03', '04', '05', '06', '07', '08', '09',
+    ])
+    const ens = items.map((n) => n.find('.tw em').text())
+    expect(ens).toEqual([
+      'Today', 'Training', 'Nutrition', 'Body Map', 'Progress', 'Body',
+      'Agent', 'Settings', 'About',
+    ])
+    // 中文名仍然在（编号不能替代它）
+    expect(items.map((n) => n.find('.tw b').text())).toEqual(
+      allRoutes().map((r) => r.label),
+    )
+  })
+
+  it('编号跨分组唯一（不是每组 01 重开）', () => {
+    const w = mountWithRouter()
+    const nos = w.findAll('.no').map((n) => n.text())
+    expect(new Set(nos).size).toBe(nos.length)
+  })
+
+  it('品牌块有英文全大写副标（视觉方向的一半靠这行 8px 小字）', () => {
+    const w = mountWithRouter()
+    expect(w.find('.brand .nm').text().replace(/\s/g, '')).toBe('changE')
+    expect(w.find('.brand .cap').text()).toBe('Personal Training System')
+  })
 })

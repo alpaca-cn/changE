@@ -22,10 +22,19 @@ const title = computed(
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  height: 46px;
-  padding: 0 var(--gap-lg);
+  height: 66px;
+  padding: 0 30px;
   border-bottom: var(--line-width) solid var(--line);
 }
 
+/* 面包屑前缀用 ::before 而不是再写一个节点：
+   h1 的文本必须保持「就是页名」，否则工具条的测试与读屏都会多出一个产品名。 */
 h1 { font-size: 15px; }
+
+h1::before {
+  content: 'changE / ';
+  color: var(--eyebrow);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
 </style>

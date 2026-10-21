@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { WeeklyVolume } from '../api/training'
 import { setsText, statusClass, statusLabel, targetText } from './volume-status'
+import MuscleStrip from './MuscleStrip.vue'
+import WeekRing from './WeekRing.vue'
 
 // 只读展示：数据由调用方（今日页）取好传进来，组件自己不发起请求。
 // 这样它的测试不需要 mock invoke，专注在「渲染成什么样」上。
@@ -16,6 +18,17 @@ defineProps<{ volume: WeeklyVolume | null; error: string | null }>()
 
     <template v-else>
       <p class="span">{{ volume.weekStart }} → {{ volume.weekEnd }}</p>
+
+      <!-- 图在表前：先「一眼看出」，再细看每一块。两者用同一份数据，不会打架。 -->
+      <div class="charts">
+        <WeekRing :muscles="volume.muscles" />
+        <div class="strip-wrap">
+          <p class="eyebrow">MUSCLE STRIP · 17</p>
+          <MuscleStrip :muscles="volume.muscles" />
+          <p class="legend">颜色越深 = 本周折算组数越多 · 10 组封顶</p>
+        </div>
+      </div>
+
       <!--
         **17 块全部渲染**，包括 0 组的：设计文档要求「腹/核心本周 0 组」这类提醒
         躲不掉才有用，把 0 组过滤掉就等于把它藏起来了。顺序**保持后端给的顺序**
@@ -42,6 +55,19 @@ defineProps<{ volume: WeeklyVolume | null; error: string | null }>()
 .volume { margin-top: var(--gap-lg); }
 h3 { font-size: 15px; }
 .span { color: var(--text-dim); font-size: 12px; margin: var(--gap-xs) 0 var(--gap-md); }
+
+.charts {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-lg);
+  padding-bottom: var(--gap-md);
+  margin-bottom: var(--gap-md);
+  border-bottom: var(--line-width) solid var(--line);
+}
+
+.strip-wrap { flex: 1 1 auto; min-width: 0; }
+
+.legend { margin: var(--gap-sm) 0 0; color: var(--eyebrow); font-size: 10px; }
 
 .muscles {
   list-style: none;
