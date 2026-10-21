@@ -161,6 +161,7 @@ function closePanel() {
           </button>
         </div>
         <p class="hint">{{ modeHint }}</p>
+        <p class="note">关节与头面等 24 个区域不可点击 —— 它们不对应具体肌群。</p>
 
         <p v-if="loading" class="dim">正在读取本周容量…</p>
         <p v-else-if="error !== null" class="err">{{ error }}</p>
@@ -225,6 +226,8 @@ h2 {
   color: var(--text);
   border-color: var(--accent);
 }
+
+.note { color: var(--eyebrow); font-size: 11px; margin: calc(-1 * var(--gap-sm)) 0 var(--gap-md); }
 
 .hint {
   color: var(--text-dim);

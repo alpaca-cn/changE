@@ -23,23 +23,46 @@ import java.util.List;
  */
 public interface LlmClient {
 
-    /** 一条消息。`toolCalls` 只在 assistant 上出现，`toolCallId` 只在 tool 上出现。 */
-    record Turn(String role, String content, List<ToolCall> toolCalls, String toolCallId) {
+    /**
+     * 一条消息。
+     *
+     * `toolCalls` 只在 assistant 上出现，`toolCallId` 只在 tool 上出现，
+     * `images` 只在 user 上出现（base64 data URL：`data:image/jpeg;base64,...`）。
+     *
+     * 为什么图片挂在 user 上而不是单独一种 message 类型：OpenAI 兼容协议里
+     * 图片就是 user 消息 content 的一部分（一个 parts 数组），没有独立的图片消息。
+     * 照着协议的形状建模，序列化时不用做转换。
+     */
+    record Turn(String role, String content, List<ToolCall> toolCalls, String toolCallId,
+                List<String> images) {
+
+        public Turn {
+            images = images == null ? List.of() : List.copyOf(images);
+        }
 
         public static Turn system(String content) {
-            return new Turn("system", content, List.of(), null);
+            return new Turn("system", content, List.of(), null, List.of());
         }
 
         public static Turn user(String content) {
-            return new Turn("user", content, List.of(), null);
+            return new Turn("user", content, List.of(), null, List.of());
+        }
+
+        /** 带图片的一条用户消息。`imageDataUrl` 必须以 `data:image/` 开头。 */
+        public static Turn userWithImage(String content, List<String> images) {
+            return new Turn("user", content, List.of(), null, images);
         }
 
         public static Turn assistant(String content, List<ToolCall> toolCalls) {
-            return new Turn("assistant", content, toolCalls, null);
+            return new Turn("assistant", content, toolCalls, null, List.of());
         }
 
         public static Turn tool(String toolCallId, String content) {
-            return new Turn("tool", content, List.of(), toolCallId);
+            return new Turn("tool", content, List.of(), toolCallId, List.of());
+        }
+
+        public boolean hasImages() {
+            return !images.isEmpty();
         }
     }
 

@@ -44,8 +44,15 @@ export function putAgentConfig(input: AgentConfigInput): Promise<AgentConfig> {
   return callApi('POST', '/api/agent/config', input) as Promise<AgentConfig>
 }
 
-export function chat(message: string): Promise<AgentChatResult> {
-  return callApi('POST', '/api/agent/chat', { message }) as Promise<AgentChatResult>
+/**
+ * 一轮对话。`imageDataUrl` 可选，必须是 `data:image/...;base64,...`
+ * （由 `lib/image.ts` 压好再传）。
+ */
+export function chat(message: string, imageDataUrl?: string): Promise<AgentChatResult> {
+  return callApi('POST', '/api/agent/chat', {
+    message,
+    imageDataUrl,
+  }) as Promise<AgentChatResult>
 }
 
 export function history(): Promise<AgentMessage[]> {

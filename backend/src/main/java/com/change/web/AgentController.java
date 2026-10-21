@@ -61,10 +61,19 @@ public class AgentController {
     /** 一轮对话。 */
     @PostMapping("/chat")
     public AgentService.ChatResult chat(@RequestBody ChatInput input) {
-        return agent.chat(input == null ? null : input.message());
+        return input == null
+                ? agent.chat(null)
+                : agent.chat(input.message(), input.imageDataUrl());
     }
 
-    public record ChatInput(String message) {}
+    /**
+     * 请求体。`imageDataUrl` 是可选的 `data:image/...;base64,...`。
+     *
+     * <p>图片走 JSON 字段而不是 multipart：前端已经压过（最长边 1024px、JPEG 0.8），
+     * 通常 100-300 KB，base64 后也在 Spring 默认的 2 MB 请求体上限之内。
+     * 用 multipart 要多一套解析与临时文件，而这里没有任何好处。
+     */
+    public record ChatInput(String message, String imageDataUrl) {}
 
     /** 最近一个会话的消息（打开页面时恢复上下文用）。 */
     @GetMapping("/history")

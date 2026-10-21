@@ -163,6 +163,72 @@ class AgentFoundationTest {
     }
 
     @Test
+    void 带图片的消息用_parts_数组_而不是字符串() throws IOException {
+        // OpenAI 兼容协议里图片就是 user content 的一部分。形状写错的话
+        // 提供方会回一个「content 必须是 string 或 array」之类很难懂的错。
+        AtomicReference<String> body = new AtomicReference<>();
+        HttpServer server = stub(200, "{\"choices\":[{\"message\":{\"content\":\"图里是一碗米饭\"}}]}",
+                body, new AtomicReference<>());
+        try {
+            new OpenAiCompatibleClient(json).complete(
+                    pointingAt(server),
+                    List.of(LlmClient.Turn.userWithImage("看看这张",
+                            List.of("data:image/jpeg;base64,AAAA"))),
+                    List.of());
+
+            String sent = body.get();
+            // content 是数组，含 text 与 image_url 两种 part
+            assertThat(sent).contains("\"type\":\"text\"");
+            assertThat(sent).contains("\"text\":\"看看这张\"");
+            assertThat(sent).contains("\"type\":\"image_url\"");
+            assertThat(sent).contains("data:image/jpeg;base64,AAAA");
+            // 文字在前、图片在后（顺序对某些提供方有意义）
+            assertThat(sent.indexOf("\"type\":\"text\"")).isLessThan(sent.indexOf("\"image_url\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void 只有图片没有文字时也能发出去() throws IOException {
+        AtomicReference<String> body = new AtomicReference<>();
+        HttpServer server = stub(200, "{\"choices\":[{\"message\":{\"content\":\"好\"}}]}",
+                body, new AtomicReference<>());
+        try {
+            new OpenAiCompatibleClient(json).complete(
+                    pointingAt(server),
+                    List.of(LlmClient.Turn.userWithImage("", List.of("data:image/png;base64,BBBB"))),
+                    List.of());
+            assertThat(body.get()).contains("data:image/png;base64,BBBB");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void 不是_data_url_的图片被挡在最前面() {
+        // 一个随便的字符串塞进 messages 会让提供方回一个很难懂的错，
+        // 而问题其实在调用方。挡在这里，报错能指出该改什么。
+        AgentService svc = new AgentService(null, null,
+                new AgentSettingsStore(System.getProperty("java.io.tmpdir"), json),
+                null, null, json);
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> svc.chat("看看", "https://example.com/a.jpg"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("data:image/");
+    }
+
+    @Test
+    void 空消息加空图是_400_级别的问题() {
+        AgentService svc = new AgentService(null, null,
+                new AgentSettingsStore(System.getProperty("java.io.tmpdir"), json),
+                null, null, json);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> svc.chat("   ", null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("说点什么");
+    }
+
+    @Test
     void 解析出工具调用() throws IOException {
         String reply = """
                 {"choices":[{"message":{"content":null,"tool_calls":[

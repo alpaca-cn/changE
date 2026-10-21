@@ -111,7 +111,7 @@ describe('智能体对话页', () => {
     })
     const { w } = await mountAt(AgentView)
 
-    await w.find('.inbox input').setValue('今天卧推 60 公斤 3 组')
+    await w.find('.inbox input[type="text"]').setValue('今天卧推 60 公斤 3 组')
     await w.find('.inbox .primary').trigger('click')
     await flushPromises()
 
@@ -131,7 +131,7 @@ describe('智能体对话页', () => {
     })
     const { w } = await mountAt(AgentView)
 
-    await w.find('.inbox input').setValue('你好')
+    await w.find('.inbox input[type="text"]').setValue('你好')
     await w.find('.inbox .primary').trigger('click')
     await flushPromises()
 

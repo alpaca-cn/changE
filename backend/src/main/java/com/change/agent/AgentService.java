@@ -103,8 +103,26 @@ public class AgentService {
      * @throws IllegalArgumentException 参数问题
      */
     public ChatResult chat(String userMessage) {
-        if (userMessage == null || userMessage.isBlank()) {
-            throw new IllegalArgumentException("说点什么吧");
+        return chat(userMessage, null);
+    }
+
+    /**
+     * 带图片的一轮对话（拍照记录饮食走这条）。
+     *
+     * <p>`imageDataUrl` 必须是 `data:image/...;base64,...`。**为什么由前端压好再传**：
+     * 手机原图 3-5 MB，base64 之后更大，而且模型看 1024px 就够了。压缩放在前端
+     * 意味着传上来的就是能直接发给模型的形状，后端不用再解码、缩放、重编码一遍。
+     */
+    public ChatResult chat(String userMessage, String imageDataUrl) {
+        if ((userMessage == null || userMessage.isBlank())
+                && (imageDataUrl == null || imageDataUrl.isBlank())) {
+            throw new IllegalArgumentException("说点什么，或者发张图");
+        }
+        if (imageDataUrl != null && !imageDataUrl.isBlank()
+                && !imageDataUrl.startsWith("data:image/")) {
+            // 挡在最前面：一个非 data URL 的字符串塞进 messages 会让提供方回一个
+            // 很难懂的错误，而问题其实在调用方
+            throw new IllegalArgumentException("图片必须是 data:image/... 的 data URL");
         }
         var cfg = settings.read();
         if (!cfg.configured()) {
@@ -112,9 +130,19 @@ public class AgentService {
         }
 
         long sessionId = currentSession();
-        appendMessage(sessionId, "user", userMessage, List.of());
+        String text = userMessage == null ? "" : userMessage;
+        if (imageDataUrl != null && !imageDataUrl.isBlank() && text.isBlank()) {
+            text = "看看这张图";   // 只发图不说话时给模型一个锚点，否则它可能回一句空话
+        }
+        appendMessage(sessionId, "user", text, List.of());
 
         List<LlmClient.Turn> turns = new ArrayList<>(turnsFor(sessionId));
+        if (imageDataUrl != null && !imageDataUrl.isBlank()) {
+            // 历史里只有文字，图片只挂在**这一轮**上：把上一张图一直带进上下文
+            // 会让每一轮都多消耗一份图片 token，而它对当前问题通常没用。
+            turns.set(turns.size() - 1,
+                    LlmClient.Turn.userWithImage(text, List.of(imageDataUrl)));
+        }
         List<LlmClient.ToolSpec> specs = tools.specs();
         List<String> executed = new ArrayList<>();
 
@@ -122,9 +150,9 @@ public class AgentService {
             LlmClient.Reply reply = llm.complete(cfg, turns, specs);
 
             if (!reply.wantsTools()) {
-                String text = reply.content() == null ? "" : reply.content();
-                appendMessage(sessionId, "assistant", text, executed);
-                return new ChatResult(text, executed, sessionId);
+                String answer = reply.content() == null ? "" : reply.content();
+                appendMessage(sessionId, "assistant", answer, executed);
+                return new ChatResult(answer, executed, sessionId);
             }
 
             // 把模型的"要调工具"原样记进对话，再把每个工具的结果喂回去。

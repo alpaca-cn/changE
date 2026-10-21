@@ -2,6 +2,7 @@ package com.change.agent;
 
 import com.change.service.BodyMetricService;
 import com.change.service.ExerciseQueryService;
+import com.change.service.FoodQueryService;
 import com.change.service.NutritionService;
 import com.change.service.WeeklyVolumeService;
 import com.change.service.WorkoutService;
@@ -57,7 +58,7 @@ public class AgentTools {
 
     public AgentTools(WeeklyVolumeService volume, WorkoutService workouts,
                       NutritionService nutrition, ExerciseQueryService exercises,
-                      BodyMetricService metrics, ObjectMapper json) {
+                      FoodQueryService foods, BodyMetricService metrics, ObjectMapper json) {
         this.json = json;
         Map<String, Tool> m = new LinkedHashMap<>();
 
@@ -77,6 +78,13 @@ public class AgentTools {
         put(m, "search_exercises", "按中英文名搜动作，返回 id 与名字。写训练前先用它拿到 exerciseId。",
                 schema(Map.of("query", stringProp("中文名或英文名的一部分，例如 卧推 / bench"))),
                 a -> write(exercises.search(null, text(a, "query"), null, 8)));
+
+        // 这一条是「说话就是录入」能不能成立的关键：record_meal 要 foodId，
+        // 而没有搜食物的工具时，模型只能猜 id —— 猜出来的必然是别人的食物。
+        put(m, "search_foods", "按名称搜食物，返回 id、每 100 克营养值与份量单位。"
+                        + "写饮食前**必须**先用它拿到 foodId，不要猜。",
+                schema(Map.of("query", stringProp("食物名的一部分，例如 鸡胸 / 米饭 / 酸奶"))),
+                a -> write(foods.search(text(a, "query"), 8)));
 
         put(m, "body_metrics", "查身体数据每种指标的最新值（体重、体脂、各围度）。",
                 schema(Map.of()),

@@ -32,11 +32,23 @@ class AgentToolsTest {
     @Autowired ObjectMapper json;
 
     @Test
-    void 白名单是固定的那八个() {
+    void 白名单是固定的那九个() {
         assertThat(tools.names()).containsExactlyInAnyOrder(
                 "weekly_volume", "recent_sessions", "today_nutrition",
-                "search_exercises", "body_metrics",
+                "search_exercises", "search_foods", "body_metrics",
                 "record_workout", "record_meal", "record_body_metric");
+    }
+
+    @Test
+    void 能搜到食物_否则记饮食这条路是断的() throws Exception {
+        // record_meal 要 foodId，而模型不能猜。没有搜食物的工具时，
+        // 「说一句话记饮食」这个旗舰用例根本走不通 —— 这是我自己造出来的缺陷。
+        String out = tools.execute("search_foods", "{\"query\":\"鸡\"}");
+        var node = json.readTree(out);
+        assertThat(node.isArray()).isTrue();
+        assertThat(node.size()).isGreaterThan(0);
+        assertThat(node.get(0).has("id")).isTrue();
+        assertThat(node.get(0).path("nameZh").asText()).isNotBlank();
     }
 
     @Test
@@ -67,7 +79,7 @@ class AgentToolsTest {
     @Test
     void 每个工具的定义都带合法_JSON_Schema() throws Exception {
         var specs = tools.specs();
-        assertThat(specs).hasSize(8);
+        assertThat(specs).hasSize(9);
         for (var s : specs) {
             assertThat(s.name()).isNotBlank();
             assertThat(s.description()).isNotBlank();

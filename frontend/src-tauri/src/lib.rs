@@ -161,6 +161,18 @@ fn locate_jar(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例守卫。首次启动有约 12 秒的导入期，用户很可能在这期间双击第二次；
+        // 没有这道守卫时，第二个实例会在另一个端口起第二个后端，两个进程打开同一个
+        // SQLite 并各自跑一遍导入。启动门缓解了症状，但那是前端的事。
+        //
+        // 第二次启动时聚焦已有窗口，然后让新进程退出。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            use tauri::Manager;
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         // 单行：下面的 `every_command_is_registered_in_the_invoke_handler`
         // 按「一行」读注册表（`lines().find(...)`）。改成多行会让它读不到命令名。
         .invoke_handler(tauri::generate_handler![get_backend_status, get_health, api_request])

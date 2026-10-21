@@ -2,19 +2,26 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { chat, getAgentConfig, history, undo, type AgentConfig, type AgentMessage } from '../api/agent'
+import { toImageDataUrl } from '../lib/image'
 
 const router = useRouter()
 
 const config = ref<AgentConfig | null>(null)
 const messages = ref<AgentMessage[]>([])
 const draft = ref('')
+/** 已选好、已压好的图片（data URL）。发出去之后清空。 */
+const image = ref<string | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
 const sending = ref(false)
 const error = ref<string | null>(null)
 const undoNote = ref<string | null>(null)
 const scroller = ref<HTMLElement | null>(null)
 
 const configured = computed(() => config.value?.configured === true)
-const canSend = computed(() => configured.value && draft.value.trim() !== '' && !sending.value)
+/** 有图时允许不发文字——「拍一张，说一句『记一下』」甚至只说图都该能发。 */
+const canSend = computed(
+  () => configured.value && (draft.value.trim() !== '' || image.value !== null) && !sending.value,
+)
 
 function reason(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
@@ -51,21 +58,26 @@ async function load() {
 
 async function send() {
   const text = draft.value.trim()
-  if (text === '' || sending.value) return
+  const attached = image.value
+  if ((text === '' && attached === null) || sending.value) return
 
   // 先把用户这句放上屏（后端也会存一条），再等回答。
   // 不做乐观更新的坏处是空白等两秒，不知道有没有发出去。
   messages.value.push({
-    role: 'user', content: text, tool_calls: null, created_at: new Date().toISOString(),
+    role: 'user',
+    content: attached === null ? text : (text === '' ? '（图片）' : `${text}（图片）`),
+    tool_calls: null,
+    created_at: new Date().toISOString(),
   })
   draft.value = ''
+  image.value = null
   sending.value = true
   error.value = null
   undoNote.value = null
   await scrollToBottom()
 
   try {
-    const r = await chat(text)
+    const r = await chat(text, attached ?? undefined)
     messages.value.push({
       role: 'assistant',
       content: r.reply,
@@ -82,6 +94,20 @@ async function send() {
   } finally {
     sending.value = false
     await scrollToBottom()
+  }
+}
+
+/** 选了一张图：立刻压好并预览。压失败（不是图 / 太大）就把原因说出来。 */
+async function pickImage(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''   // 清掉，否则选同一张图不会再触发 change
+  if (!file) return
+  error.value = null
+  try {
+    image.value = await toImageDataUrl(file)
+  } catch (err) {
+    error.value = reason(err)
   }
 }
 
@@ -137,7 +163,21 @@ onMounted(() => {
       <p v-if="error" class="err">{{ error }}</p>
       <p v-if="undoNote" class="ok">{{ undoNote }}</p>
 
+      <!-- 选好的图片先给个预览：发出去之前用户要能确认是不是这张 -->
+      <div v-if="image !== null" class="preview">
+        <img :src="image" alt="待发送的图片" />
+        <button class="drop" @click="image = null">移除</button>
+      </div>
+
       <div class="inbox">
+        <input
+          ref="fileInput"
+          type="file"
+          accept="image/*"
+          class="file"
+          @change="pickImage"
+        />
+        <button class="pick" title="选一张照片" @click="fileInput?.click()">拍照</button>
         <input
           v-model="draft"
           type="text"
@@ -196,6 +236,22 @@ h2 { font-size: 26px; margin: var(--gap-sm) 0 var(--gap-md); }
 }
 .inbox input:focus { outline: none; border-color: var(--accent); }
 .undo { color: var(--text-dim); }
+.pick { white-space: nowrap; }
+.file { display: none; }
+
+.preview {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm) 0;
+}
+.preview img {
+  max-height: 96px;
+  max-width: 160px;
+  border-radius: var(--radius-sm);
+  border: var(--line-width) solid var(--line);
+}
+.drop { font-size: 11px; color: var(--text-dim); }
 
 .err { color: var(--danger); font-size: 12px; margin: var(--gap-sm) 0 0; }
 .ok { color: var(--ok); font-size: 12px; margin: var(--gap-sm) 0 0; }

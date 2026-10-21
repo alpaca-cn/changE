@@ -76,8 +76,21 @@ public class OpenAiCompatibleClient implements LlmClient {
         for (Turn t : turns) {
             ObjectNode m = msgs.addObject();
             m.put("role", t.role());
-            // assistant 带 tool_calls 时 content 可以是 null（协议允许，且有些提供方要求）
-            if (t.content() != null) {
+            if (t.hasImages()) {
+                // 多模态：content 是一个 parts 数组。文字在前、图片在后——
+                // 有些提供方对顺序敏感，文字在前更稳。
+                ArrayNode parts = m.putArray("content");
+                if (t.content() != null && !t.content().isBlank()) {
+                    ObjectNode tp = parts.addObject();
+                    tp.put("type", "text");
+                    tp.put("text", t.content());
+                }
+                for (String url : t.images()) {
+                    ObjectNode ip = parts.addObject();
+                    ip.put("type", "image_url");
+                    ip.putObject("image_url").put("url", url);
+                }
+            } else if (t.content() != null) {
                 m.put("content", t.content());
             } else if (!"assistant".equals(t.role())) {
                 m.put("content", "");
