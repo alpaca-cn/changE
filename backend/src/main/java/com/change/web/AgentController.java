@@ -4,7 +4,6 @@ import com.change.agent.AgentService;
 import com.change.agent.AgentSettingsStore;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -44,10 +43,14 @@ public class AgentController {
     /**
      * 写配置。三个字段都可省略：省略 = 这项不动。
      *
+     * <p>用 POST 不用 PUT：外壳的 api_request 只放行 GET/POST（src-tauri/src/http.rs
+     * 里那条白名单是有测试钉着的），为了一个 PUT 去放宽它，等于用一个安全边界换一个
+     * 语义更漂亮的动词。
+     *
      * <p>{@code apiKey} 传空串表示清除（界面上的「清除」按钮），传 null 表示不动。
      * 这两种意图在界面上是不同的操作，不能合并。
      */
-    @PutMapping("/config")
+    @PostMapping("/config")
     public Map<String, Object> updateConfig(@RequestBody ConfigInput input) {
         return settings.update(input.baseUrl(), input.model(), input.apiKey()).redacted();
     }
