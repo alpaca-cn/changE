@@ -137,12 +137,68 @@ describe('今日页 · 开始训练', () => {
   })
 })
 
+describe('今日页 · hero', () => {
+  // hero 是整页唯一不依赖网络的一块。它同时承担两件事：给页面一个身份、
+  // 给一块「今天该练了吗」的入口。所以它自己也要被钉住。
+
+  it('三个端点全挂时 hero 照常渲染（它不发请求）', async () => {
+    const { wrapper } = await mountToday(
+      okMap({
+        '/api/volume/weekly': 'reject',
+        '/api/sessions/recent': 'reject',
+        '/api/nutrition/daily': 'reject',
+      }),
+    )
+    const hero = wrapper.find('.hero')
+    expect(hero.exists()).toBe(true)
+    expect(hero.find('h2').text()).toBe('今天你健身了吗')
+    // 图片走 Vite 资源管线，渲染成 background-image
+    expect(hero.attributes('style')).toContain('background-image')
+  })
+
+  it('副标题给本周次数（按周区间过滤，不是「最近 N 次」的全量）', async () => {
+    // RECENT 里只有 2026-10-19 一条，正好落在 WEEKLY_17 的 10-19..10-25 区间内。
+    const { wrapper } = await mountToday(okMap())
+    expect(wrapper.find('.hero-sub').text()).toBe('本周 1 次训练')
+  })
+
+  it('区间外的训练不算进本周', async () => {
+    const outOfWeek = JSON.stringify([
+      { id: 9, sessionDate: '2026-10-11', title: '上上周', perceivedState: null },
+    ])
+    const { wrapper } = await mountToday(
+      okMap({ '/api/sessions/recent': { status: 200, body: outOfWeek } }),
+    )
+    // 区间外的那条不算，于是本周 0 次
+    expect(wrapper.find('.hero-sub').text()).toContain('还没有训练')
+  })
+
+  it('还没读到周区间时说「正在读取」，不说「0 次」', async () => {
+    // 「还没读到」与「真的是 0 次」是两件事。把前者显示成 0 会让用户以为这周白练了。
+    const { wrapper } = await mountToday(okMap({ '/api/volume/weekly': 'reject' }))
+    expect(wrapper.find('.hero-sub').text()).toBe('正在读取本周数据…')
+  })
+
+  it('本周一次都没有时给一句可行的下一步，不是空白', async () => {
+    const { wrapper } = await mountToday(
+      okMap({ '/api/sessions/recent': { status: 200, body: '[]' } }),
+    )
+    const sub = wrapper.find('.hero-sub').text()
+    expect(sub).toContain('还没有训练')
+    expect(sub).toContain('练一次也算')
+  })
+})
+
+
 describe('今日页 · 失败不能白屏', () => {
   it('a_transport_failure_shows_the_reason_instead_of_a_blank_page', async () => {
     const { wrapper } = await mountToday(okMap({ '/api/volume/weekly': 'reject' }))
     expect(wrapper.text()).toContain('连不上')
-    // 页面骨架还在（没白屏）
-    expect(wrapper.find('h2').text()).toBe('今日')
+    // 页面骨架还在（没白屏）。2026-10-21 换视觉语言后，页面的 h2 是 hero 里那句
+    // 「今天你健身了吗」——原来那个「今日」页标题被 hero 取代，「今日」移到 eyebrow 与
+    // 顶部工具条。这条断言守的不变量没变：**数据全挂时，页面仍然有身份**。
+    expect(wrapper.find('.hero h2').text()).toBe('今天你健身了吗')
+    expect(wrapper.find('.hero .eyebrow').text()).toBe('今日')
   })
 
   it('a_400_from_the_backend_shows_the_server_message', async () => {
