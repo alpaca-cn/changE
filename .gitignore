@@ -92,3 +92,8 @@ _healthcheck/
 # 位置：artifacts/（从 frontend/src-tauri/target/release/bundle/nsis/ 复制过来，
 # 因为 cargo clean 会删掉 target/）。
 artifacts/
+
+# 更新签名私钥。泄露 = 任何人都能发布「官方更新」。
+# 公钥（.pub）要提交：它只是用来验签的，写进了 tauri.conf.json。
+keys/*.key
+!keys/*.key.pub

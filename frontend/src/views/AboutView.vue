@@ -1,33 +1,89 @@
 <script setup lang="ts">
 import painting from '../assets/about/oil-painting.jpg'
-import { ref } from 'vue'
-import {
-  APP_VERSION,
-  BUILD_TIME,
-  buildTimeText,
-  checkForUpdate,
-  type UpdateCheck,
-} from '../api/version'
+import { computed, ref } from 'vue'
+import { APP_VERSION, BUILD_TIME, buildTimeText } from '../api/version'
 
 /**
- * 关于与致谢。
+ * 检查更新。
  *
- * 两件事在这里交代：
- *   1. 数据源的许可证署名 —— 设计文档「七、数据源与许可证」要求，而且这些数据真的
- *      随安装包发出去，不署名是违约。
- *   2. 两张用户提供的图 —— 它们会随安装包发给朋友，所以来源要写清楚，
- *      免得下一个维护者以为是从网上扒的。
+ * ## 为什么用 Tauri 的 updater 插件，而不是自己 fetch 清单
+ *
+ * 自己 fetch 只能回答「有没有新版」；而**装**这一步要：下载 exe、
+ * 用公钥验证签名、静默运行安装包、重启应用。这些都在 Rust 侧，
+ * 前端碰不到（也不需要碰）。
+ *
+ * 所以这里调 `check()` → 有新版就 `downloadAndInstall()` → `relaunch()`。
+ * 公钥与清单地址在 `tauri.conf.json` 的 `plugins.updater` 里，
+ * 私钥在 `keys/`（已被 gitignore）。
+ *
+ * ## 为什么用动态 import
+ *
+ * 插件在非 Tauri 环境（单元测试的 jsdom）里 import 就会抛。
+ * 放在事件处理里，组件挂载时不会碰到它，测试也就不必为它搭桩。
  */
-/** 版本与更新检查。 */
-const checking = ref(false)
-const check = ref<UpdateCheck | null>(null)
+type Phase = 'idle' | 'checking' | 'uptodate' | 'available' | 'downloading' | 'ready' | 'failed'
+
+const phase = ref<Phase>('idle')
+const message = ref('')
+const latest = ref('')
+const progress = ref(0)
+
+/** 有没有新版。**null 表示还不知道**（没查过，或查询失败）。 */
+const hasUpdate = computed(() => phase.value === 'available' || phase.value === 'downloading')
 
 async function runCheck() {
-  checking.value = true
+  if (phase.value === 'checking' || phase.value === 'downloading') return
+  phase.value = 'checking'
+  message.value = ''
   try {
-    check.value = await checkForUpdate()
-  } finally {
-    checking.value = false
+    const { check } = await import('@tauri-apps/plugin-updater')
+    const update = await check()
+    if (update === null) {
+      phase.value = 'uptodate'
+      return
+    }
+    latest.value = update.version
+    phase.value = 'available'
+    message.value = update.body ?? ''
+  } catch (e) {
+    // 连不上更新源、清单还没有发布过、网络被墙 —— 都落在这里。
+    // **不能说成「已是最新」**：那会让人以为不用更新。
+    phase.value = 'failed'
+    message.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function installUpdate() {
+  if (phase.value !== 'available') return
+  phase.value = 'downloading'
+  progress.value = 0
+  try {
+    const { check } = await import('@tauri-apps/plugin-updater')
+    const { relaunch } = await import('@tauri-apps/plugin-process')
+    const update = await check()
+    if (update === null) {
+      phase.value = 'uptodate'
+      return
+    }
+    let total = 0
+    let got = 0
+    await update.downloadAndInstall((event) => {
+      if (event.event === 'Started') {
+        total = event.data.contentLength ?? 0
+      } else if (event.event === 'Progress') {
+        got += event.data.chunkLength
+        progress.value = total > 0 ? Math.round((got / total) * 100) : 0
+      } else if (event.event === 'Finished') {
+        progress.value = 100
+      }
+    })
+    phase.value = 'ready'
+    // 装完了要重启才生效。给用户一句话，而不是替他重启。
+    message.value = '更新已安装。点下面的按钮重启应用。'
+    await relaunch()
+  } catch (e) {
+    phase.value = 'failed'
+    message.value = e instanceof Error ? e.message : String(e)
   }
 }
 
@@ -71,28 +127,32 @@ const sources = [
         当前 <b class="mono">{{ APP_VERSION }}</b> · 构建于 <span class="mono">{{ buildTimeText(BUILD_TIME) }}</span>
       </p>
 
-      <button class="primary" :disabled="checking" @click="runCheck">
-        {{ checking ? '正在检查…' : '检查更新' }}
+      <button class="primary" :disabled="phase === 'checking' || phase === 'downloading'" @click="runCheck">
+        {{ phase === 'checking' ? '正在检查…' : '检查更新' }}
       </button>
 
-      <div v-if="check !== null" class="check">
-        <p v-if="check.kind === 'no-source'" class="hint">
-          这个发行版还没有配置更新源，所以查不到新版。
-          （构建时把 <code>UPDATE_MANIFEST</code> 填成一个返回
-          <code>{ version, notes?, url? }</code> 的地址即可启用。）
-        </p>
-        <p v-else-if="check.kind === 'up-to-date'" class="ok">
-          已经是最新的（{{ check.current }}）。
-        </p>
-        <p v-else-if="check.kind === 'available'" class="ok">
-          有新版本 <b>{{ check.latest }}</b>（当前 {{ check.current }}）。
-        </p>
-        <p v-else class="err">检查失败：{{ check.message }}</p>
+      <div v-if="phase !== 'idle'" class="check">
+        <p v-if="phase === 'uptodate'" class="ok">已经是最新的（{{ APP_VERSION }}）。</p>
 
-        <template v-if="check.kind === 'available'">
-          <p v-if="check.notes !== ''" class="hint">{{ check.notes }}</p>
-          <code v-if="check.url !== ''" class="path">{{ check.url }}</code>
-        </template>
+        <p v-else-if="hasUpdate" class="ok">
+          有新版本 <b>{{ latest }}</b>（当前 {{ APP_VERSION }}）。
+        </p>
+
+        <p v-if="phase === 'downloading'" class="hint">
+          正在下载并安装… {{ progress }}%
+        </p>
+
+        <button
+          v-if="phase === 'available'"
+          class="install"
+          @click="installUpdate"
+        >
+          下载并安装
+        </button>
+
+        <p v-if="phase === 'ready'" class="ok">{{ message }}</p>
+        <p v-if="phase === 'failed'" class="err">检查失败：{{ message }}</p>
+        <p v-else-if="message !== '' && phase === 'available'" class="hint">{{ message }}</p>
       </div>
 
       <p class="hint tip">
@@ -154,4 +214,5 @@ h3 { font-size: 15px; }
 .tip { margin-top: var(--gap-md); color: var(--eyebrow); }
 .primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .primary:disabled { border-color: var(--line); color: var(--text-dim); cursor: not-allowed; }
+.install { margin-top: 6px; border-color: var(--accent); color: #fff; background: var(--accent); font-weight: 600; }
 </style>

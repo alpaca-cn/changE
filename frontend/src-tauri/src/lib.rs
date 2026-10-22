@@ -166,6 +166,9 @@ pub fn run() {
         // SQLite 并各自跑一遍导入。启动门缓解了症状，但那是前端的事。
         //
         // 第二次启动时聚焦已有窗口，然后让新进程退出。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // 更新装完之后要能重启自己
+.plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             use tauri::Manager;
             if let Some(w) = app.get_webview_window("main") {
