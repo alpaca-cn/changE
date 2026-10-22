@@ -113,8 +113,12 @@ if SKIN_OBJ and os.path.isfile(SKIN_OBJ):
         # 判据：**最长的那一维就是身高**。它不在 Z 上就先转过来。
         if raw_size.y > raw_size.z * 1.2:
             import math
-            # 绕 X 轴 +90°：(x, y, z) -> (x, -z, y)，Y 变 Z
-            skin.data.transform(Matrix.Rotation(math.radians(90), 4, 'X'))
+            # 绕 X 轴 **-90°**：(x, y, z) -> (x, z, -y)。
+            #
+            # 为什么是 -90 而不是 +90：BP3D 的 obj 虽然是 Y-up，但 **+Y 朝下**。
+            # 用 +90（y -> z）会把皮肤整个倒过来 —— 2026-10-22 实测截图里
+            # 就是头在下、脚在上，而肌肉是正的。用 -90 才能让它的头朝上。
+            skin.data.transform(Matrix.Rotation(math.radians(-90), 4, 'X'))
             skin.data.update()
             raw_size, _, _ = size_of([skin])
             print("  已把 Y-up 转成 Z-up，现在是 X={:.2f} Y={:.2f} Z={:.2f}".format(
