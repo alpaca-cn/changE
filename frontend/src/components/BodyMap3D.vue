@@ -34,6 +34,14 @@ const emit = defineEmits<{
 
 const host = ref<HTMLElement | null>(null)
 const status = ref<'loading' | 'ready' | 'failed'>('loading')
+/**
+ * 点击诊断。**这是刻意的可见探针**，不是临时调试代码。
+ *
+ * 用户两次报「点不了」，而我看不到他的屏幕。这条路有三个可能断的地方：
+ * pointerup 没到、射线没打中、命中了但名字不在肌群表里 —— 它们在界面上
+ * 长得一模一样（都没反应）。这行字把三者分开。
+ */
+const probe = ref('')
 const message = ref('')
 
 const scene = shallowRef<unknown>(null)
@@ -161,26 +169,40 @@ async function build() {
     }
 
     function onUp(ev: PointerEvent) {
+      if (ev.button !== 0) return   // 只认左键；右键/中键留给以后
+
       // 拖动超过 6px 就是「转视角」，不是「点选」。
       // 没有这个判断，每次拖完都会顺带选中一块肌肉。
-      if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 6) return
+      const moved = Math.hypot(ev.clientX - downX, ev.clientY - downY)
+      if (moved > 6) {
+        probe.value = '拖动识别为旋转，不是点击'
+        return
+      }
 
       const rect = renderer.domElement.getBoundingClientRect()
       pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1
       raycaster.setFromCamera(pointer, camera)
       const hits = raycaster.intersectObjects(root.children, true)
+      if (hits.length === 0) {
+        probe.value = '射线没打中任何东西'
+        return
+      }
+
       // **必须跳过皮肤**：它是半透明的外壳，射线第一个打到的总是它。
-      // 不跳过的话每次点击都会命中 `skin`，然后走「不在肌群表里」那条分支。
       const muscleHit = hits.find((h) => h.object.name !== SKIN)
-      if (muscleHit === undefined) return
+      if (muscleHit === undefined) {
+        probe.value = '只打中了皮肤，没打到肌肉'
+        return
+      }
 
       const name = muscleHit.object.name
       if (!materials.has(name)) {
-        // 点到了但名字不在肌群表里：告诉上层，别静默忽略
+        probe.value = '命中「' + name + '」，但它不在肌群表里'
         emit('unknown-hit', name)
         return
       }
+      probe.value = '命中 ' + name + '（共 ' + hits.length + ' 个交点）'
       emit('muscle-click', name)
     }
 
@@ -260,7 +282,9 @@ defineExpose({ status, message })
   <div class="wrap">
     <div ref="host" class="canvas" />
     <p v-if="status === 'loading'" class="hint">正在加载 3D 模型…</p>
-    <p v-if="status === 'ready'" class="tip">拖动旋转 · 滚轮缩放 · 点肌肉看动作</p>
+    <p v-if="status === 'ready'" class="tip">
+      {{ probe === '' ? '拖动旋转 · 滚轮缩放 · 点肌肉看动作' : probe }}
+    </p>
     <p v-if="status === 'failed'" class="err">
       3D 渲染不可用（{{ message }}）。切回 2D 看本周容量。
     </p>

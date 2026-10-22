@@ -61,6 +61,34 @@ const meals = ref<MealDetail[]>([])
 
 const preview = computed(() => draftTotal(draft.value))
 
+/**
+ * 把这一天已记录的餐按**餐次**分组，并按固定顺序排列。
+ *
+ * 为什么按餐次而不是按时间：一天里最重要的判断是「哪一餐还没记」，
+ * 而时段顺序（早→午→晚→加餐）就是用户脑子里的顺序。缺的餐次也要占一行，
+ * 否则「晚餐没记」这件事在界面上不存在。
+ */
+const mealsBySlot = computed(() => {
+  return MEAL_SLOTS.map((s) => {
+    const rows = meals.value.filter((m) => m.slot === s)
+    return {
+      slot: s,
+      label: slotLabel(s),
+      meals: rows,
+      kcal: rows.reduce((n, m) => n + m.nutrition.kcal, 0),
+      protein: round1(rows.reduce((n, m) => n + m.nutrition.protein, 0)),
+      fat: round1(rows.reduce((n, m) => n + m.nutrition.fat, 0)),
+      carb: round1(rows.reduce((n, m) => n + m.nutrition.carb, 0)),
+      count: rows.reduce((n, m) => n + m.items.length, 0),
+    }
+  })
+})
+
+/** 一位小数。宏量营养的显示精度，与参考图那种 `141.5` 一致。 */
+function round1(v: number): number {
+  return Math.round(v * 10) / 10
+}
+
 const macrosText = computed(() => {
   const n = daily.value?.nutrition
   if (n === undefined) return '—'
@@ -197,6 +225,27 @@ onMounted(() => {
       </template>
     </div>
 
+    <!--
+      顶部信息带：一天的「总量」放最显眼。参考图里那一大块就是这个作用——
+      用户打开饮食页只想知道两件事：今天吃了多少、还差多少。
+      （我们没有「目标热量」这个概念，所以只给已吃与构成，不编一个目标出来。）
+    -->
+    <div class="stat-band">
+      <div class="stat-main">
+        <div class="kcal">
+          {{ round1(daily?.nutrition.kcal ?? 0) }}<small>千卡</small>
+        </div>
+        <div class="sub">
+          {{ daily?.meals ?? 0 }} 餐 · {{ daily?.items ?? 0 }} 条目
+        </div>
+      </div>
+      <div class="stat-macros">
+        <div class="macro"><b>{{ round1(daily?.nutrition.protein ?? 0) }}</b><span>蛋白 g</span></div>
+        <div class="macro"><b>{{ round1(daily?.nutrition.fat ?? 0) }}</b><span>脂肪 g</span></div>
+        <div class="macro"><b>{{ round1(daily?.nutrition.carb ?? 0) }}</b><span>碳水 g</span></div>
+      </div>
+    </div>
+
     <div class="fields">
       <label class="field">
         <span class="label">日期</span>
@@ -285,13 +334,45 @@ onMounted(() => {
 
     <h3>这一天的记录</h3>
     <p v-if="meals.length === 0" class="dim">这一天还没有记录</p>
-    <ul v-else class="meals">
-      <li v-for="meal in meals" :key="meal.id" class="meal">
-        <span class="slot-label">{{ slotLabel(meal.slot) }}</span>
-        <span class="meal-kcal">{{ meal.nutrition.kcal }} 千卡</span>
-        <span class="meal-items">{{ meal.items.map((i) => i.nameZh).join('、') }}</span>
-      </li>
-    </ul>
+
+    <!--
+      四个餐次**全部渲染**，没记的那一餐也占一行并注明「还没记」。
+      只列出有数据的餐次，等于把「晚餐忘了记」这件事从界面上抹掉 ——
+      而那正是记饮食最需要被提醒的一类事实。
+    -->
+    <div v-else class="slots">
+      <section
+        v-for="g in mealsBySlot"
+        :key="g.slot"
+        class="slot-card"
+        :class="{ empty: g.count === 0 }"
+      >
+        <header class="slot-head">
+          <span class="slot-name">{{ g.label }}</span>
+          <span v-if="g.count > 0" class="chips">
+            <span class="chip-m">P {{ g.protein }}</span>
+            <span class="chip-m">F {{ g.fat }}</span>
+            <span class="chip-m">C {{ g.carb }}</span>
+            <span class="chip-kcal">{{ round1(g.kcal) }} kcal</span>
+          </span>
+          <span v-else class="not-yet">还没记</span>
+        </header>
+
+        <ul v-if="g.count > 0" class="items">
+          <template v-for="meal in g.meals" :key="meal.id">
+            <li v-for="it in meal.items" :key="it.mealItemId" class="item">
+              <span class="i-name">{{ it.nameZh }}</span>
+              <span class="i-amount">{{ it.grams }} 克</span>
+              <span class="i-macros">
+                P {{ round1(it.nutrition.protein) }} · F {{ round1(it.nutrition.fat) }} ·
+                C {{ round1(it.nutrition.carb) }}
+              </span>
+              <span class="i-kcal">{{ round1(it.nutrition.kcal) }}</span>
+            </li>
+          </template>
+        </ul>
+      </section>
+    </div>
   </section>
 </template>
 
@@ -352,6 +433,74 @@ select, input {
 .slot-label { color: var(--text-dim); }
 .meal-kcal { font-variant-numeric: tabular-nums; font-weight: 600; }
 .meal-items { color: var(--text-dim); font-size: 12px; }
+
+.stat-band {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--gap-lg);
+  margin: var(--gap-md) 0 var(--gap-lg);
+  padding-bottom: var(--gap-md);
+  border-bottom: var(--line-width) solid var(--line);
+}
+.kcal {
+  font-size: 44px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.kcal small { font-size: 13px; font-weight: 400; color: var(--eyebrow); margin-left: 6px; }
+.sub { margin-top: 6px; font-size: 11px; color: var(--text-dim); }
+.stat-macros { display: flex; gap: var(--gap-lg); margin-left: auto; }
+.macro { text-align: right; }
+.macro b {
+  display: block;
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.macro span { font-size: 10px; color: var(--eyebrow); }
+
+.slots { display: flex; flex-direction: column; gap: var(--gap-sm); }
+.slot-card {
+  border: var(--line-width) solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+}
+.slot-card.empty { border-style: dashed; }
+.slot-head { display: flex; align-items: baseline; gap: var(--gap-sm); }
+.slot-name { font-weight: 600; font-size: 13px; }
+.chips { display: flex; gap: 6px; margin-left: auto; align-items: baseline; }
+.chip-m {
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
+}
+.chip-kcal {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.not-yet { margin-left: auto; font-size: 11px; color: var(--eyebrow); }
+
+.items { list-style: none; margin: 8px 0 0; padding: 0; }
+.item {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: var(--gap-md);
+  align-items: baseline;
+  padding: 4px 0;
+  font-size: 12px;
+  border-top: var(--line-width) solid var(--line-soft);
+}
+.i-name { font-weight: 500; }
+.i-amount { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.i-macros { color: var(--eyebrow); font-size: 10px; font-variant-numeric: tabular-nums; }
+.i-kcal { color: var(--text); font-variant-numeric: tabular-nums; }
 
 .err { color: var(--danger); }
 .no-hit {

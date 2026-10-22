@@ -109,9 +109,12 @@ describe('饮食记录页 · 那一天的合计', () => {
 
   it('lists_the_meals_of_that_day', async () => {
     const wrapper = await mountDiet()
-    expect(wrapper.find('.meals').text()).toContain('午餐')
-    expect(wrapper.find('.meals').text()).toContain('421.5')
-    expect(wrapper.find('.meals').text()).toContain('白米饭')
+    // 2026-10-22 改版：记录区从单行列表改成按餐次分组（.slots / .slot-card）。
+    // 断言的内容没变 —— 餐次名、这一餐的热量、条目名。」
+    const slots = wrapper.find('.slots')
+    expect(slots.text()).toContain('午餐')
+    expect(slots.text()).toContain('421.5')
+    expect(slots.text()).toContain('白米饭')
   })
 
   it('changing_the_date_reloads_that_days_totals', async () => {
