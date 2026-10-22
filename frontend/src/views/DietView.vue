@@ -89,12 +89,6 @@ function round1(v: number): number {
   return Math.round(v * 10) / 10
 }
 
-const macrosText = computed(() => {
-  const n = daily.value?.nutrition
-  if (n === undefined) return '—'
-  return `蛋白 ${n.protein} · 碳水 ${n.carb} · 脂肪 ${n.fat} 克`
-})
-
 function slotLabel(value: string): string {
   // 不做模板里的 `as` 断言：模板对 TS 语法的支持比脚本窄，一个字符串到远点更稳。
   return (SLOT_LABELS as Record<string, string>)[value] ?? value
@@ -215,25 +209,16 @@ onMounted(() => {
     <p class="eyebrow">记录</p>
     <h2>饮食记录</h2>
 
-    <!-- 选中那天的合计 -->
-    <div class="daily">
-      <p v-if="dailyError" class="err">{{ dailyError }}</p>
-      <template v-else>
-        <span class="kcal">{{ daily?.nutrition.kcal ?? 0 }} 千卡</span>
-        <span class="macros">{{ macrosText }}</span>
-        <span class="counts">{{ daily?.meals ?? 0 }} 餐 · {{ daily?.items ?? 0 }} 条目</span>
-      </template>
-    </div>
-
     <!--
       顶部信息带：一天的「总量」放最显眼。参考图里那一大块就是这个作用——
       用户打开饮食页只想知道两件事：今天吃了多少、还差多少。
       （我们没有「目标热量」这个概念，所以只给已吃与构成，不编一个目标出来。）
     -->
-    <div class="stat-band">
+    <p v-if="dailyError" class="err">{{ dailyError }}</p>
+    <div v-if="!dailyError" class="stat-band">
       <div class="stat-main">
         <div class="kcal">
-          {{ round1(daily?.nutrition.kcal ?? 0) }}<small>千卡</small>
+          {{ round1(daily?.nutrition.kcal ?? 0) }} <small>千卡</small>
         </div>
         <div class="sub">
           {{ daily?.meals ?? 0 }} 餐 · {{ daily?.items ?? 0 }} 条目

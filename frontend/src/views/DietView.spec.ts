@@ -90,27 +90,30 @@ describe('饮食记录页 · 那一天的合计', () => {
   it('shows_the_days_total_from_the_backend', async () => {
     const wrapper = await mountDiet()
 
-    const daily = wrapper.find('.daily')
-    expect(daily.text()).toContain('421.5')
-    expect(daily.text()).toContain('千卡')
-    expect(wrapper.find('.macros').text()).toContain('50.4')
-    expect(wrapper.find('.counts').text()).toContain('1 餐')
-    expect(wrapper.find('.counts').text()).toContain('2 条目')
+    // 2026-10-22 改版：合计从 .daily 一行改成 .stat-band 信息带（大数字 + 三条宏量）。
+    // 断言的内容没变 —— 热量、千卡、蛋白、餐数、条目数。
+    const band = wrapper.find('.stat-band')
+    expect(band.text()).toContain('421.5')
+    expect(band.text()).toContain('千卡')
+    expect(band.text()).toContain('50.4')
+    expect(band.text()).toContain('1 餐')
+    expect(band.text()).toContain('2 条目')
   })
 
   it('an_empty_day_shows_zeros_rather_than_an_error', async () => {
     // 「今天还没吃」是刚装上时的常态，不是错误。
     const wrapper = await mountDiet(baseRules([[on('GET', '/api/nutrition/daily'), { status: 200, body: EMPTY_DAY }]]))
 
-    expect(wrapper.find('.daily').text()).toContain('0 千卡')
-    expect(wrapper.find('.daily').text()).toContain('0 餐')
+    const band = wrapper.find('.stat-band')
+    expect(band.text()).toContain('0')
+    expect(band.text()).toContain('0 餐')
     expect(wrapper.find('.err').exists()).toBe(false)
   })
 
   it('lists_the_meals_of_that_day', async () => {
     const wrapper = await mountDiet()
     // 2026-10-22 改版：记录区从单行列表改成按餐次分组（.slots / .slot-card）。
-    // 断言的内容没变 —— 餐次名、这一餐的热量、条目名。」
+    // 断言的内容没变 —— 餐次名、这一餐的热量、条目名。
     const slots = wrapper.find('.slots')
     expect(slots.text()).toContain('午餐')
     expect(slots.text()).toContain('421.5')
@@ -123,18 +126,19 @@ describe('饮食记录页 · 那一天的合计', () => {
         [(r) => r.path === '/api/nutrition/daily?date=2026-08-20', { status: 200, body: EMPTY_DAY }],
       ]),
     )
-    expect(wrapper.find('.daily').text()).toContain('421.5')
+    expect(wrapper.find('.stat-band').text()).toContain('421.5')
 
     await wrapper.find('.meal-date').setValue('2026-08-20')
     await flushPromises()
 
-    expect(wrapper.find('.daily').text()).toContain('0 千卡')
+    expect(wrapper.find('.stat-band').text()).toContain('0 千卡')
     expect(reqs().some((r) => r.path === '/api/nutrition/daily?date=2026-08-20')).toBe(true)
   })
 
   it('a_failed_total_shows_the_reason_instead_of_a_blank_page', async () => {
     const wrapper = await mountDiet(baseRules([[on('GET', '/api/nutrition/daily'), 'reject']]))
-    expect(wrapper.find('.daily').text()).toContain('连不上')
+    // 改版后：出错时 stat-band 不渲染，原因走 .err
+    expect(wrapper.find('.err').text()).toContain('连不上')
     expect(wrapper.find('h2').text()).toBe('饮食记录')
   })
 })

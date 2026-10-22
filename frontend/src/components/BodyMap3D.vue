@@ -50,6 +50,25 @@ let dispose: (() => void) | null = null
 /** 皮肤对象名。见 build() 里的说明。 */
 const SKIN = 'skin'
 
+/**
+ * 名称规范化。**这一条是 2026-10-22 实测踩出来的。**
+ *
+ * glb 里每个肌群是一个 mesh，但一个 mesh 可以有多个 primitive（Blender join 之后
+ * 多个材质槽就会这样）：`chest` 有 3 个，`forearms` 有 10 个。
+ * three.js 会为每个 primitive 建一个 Mesh，并把名字加后缀 —— 于是点到的对象名是
+ * `chest_3` 而不是 `chest`，`materials.has('chest_3')` 为 false，
+ * 界面上就显示「点到了 chest_3，但它不在肌群表里」。
+ *
+ * 另外 `middle back` / `lower back` 带空格，three 的 sanitize 会改掉它们。
+ * 所以两边都按「只留字母、转小写」比较，后缀、空格、下划线一律忽略。
+ */
+function canon(s: string): string {
+  return s.toLowerCase().replace(/[^a-z]/g, '')
+}
+
+/** canonical 名 -> glb 里的原始组名（`chest` / `middle back` / …）。 */
+const groupOf = new Map<string, string>()
+
 /** 与 2D 的色阶同源：未练是暗暖灰，练得越多越接近铜色。 */
 const UNTRAINED = 0x3a342c
 
@@ -139,23 +158,42 @@ async function build() {
       depthWrite: false,
     })
 
-    const materials = new Map<string, InstanceType<typeof THREE.MeshStandardMaterial>>()
+    // 第一遍：把「canonical 名 -> glb 原始名」记下来。
+    // 原始名取自**第一个** primitive（`chest`），后面的 `chest_1/_2` 归到同一个组。
+    groupOf.clear()
     root.traverse((o: { isMesh?: boolean; name?: string }) => {
       if (o.isMesh !== true) return
       const name = o.name ?? ''
-      if (name === SKIN) {
+      const c = canon(name)
+      if (c === SKIN) return
+      if (!groupOf.has(c)) groupOf.set(c, name)
+    })
+
+    // 第二遍：同组的所有 primitive **共用一个材质实例**。
+    // 不共用的话，一组有 3 个 primitive 时颜色可能只上到第一块上，其余是默认白。
+    const materialByGroup = new Map<string, InstanceType<typeof THREE.MeshStandardMaterial>>()
+
+    root.traverse((o: { isMesh?: boolean; name?: string }) => {
+      if (o.isMesh !== true) return
+      const name = o.name ?? ''
+      const c = canon(name)
+      if (c === SKIN) {
         ;(o as { material: unknown }).material = skinMat
         return
       }
-      const mat = new THREE.MeshStandardMaterial({
-        color: toneFor(props.volumeByMuscle[name] ?? 0),
-        roughness: 0.68,
-        metalness: 0.1,
-        // 双面：导出的网格里有些是单面壳，背面剔除会露出空洞
-        side: THREE.DoubleSide,
-      })
+      const group = groupOf.get(c) ?? name
+      let mat = materialByGroup.get(group)
+      if (mat === undefined) {
+        mat = new THREE.MeshStandardMaterial({
+          color: toneFor(props.volumeByMuscle[group] ?? 0),
+          roughness: 0.68,
+          metalness: 0.1,
+          // 双面：导出的网格里有些是单面壳，背面剔除会露出空洞
+          side: THREE.DoubleSide,
+        })
+        materialByGroup.set(group, mat)
+      }
       ;(o as { material: unknown }).material = mat
-      materials.set(name, mat)
     })
 
     const raycaster = new THREE.Raycaster()
@@ -196,14 +234,16 @@ async function build() {
         return
       }
 
-      const name = muscleHit.object.name
-      if (!materials.has(name)) {
-        probe.value = '命中「' + name + '」，但它不在肌群表里'
-        emit('unknown-hit', name)
+      const raw = muscleHit.object.name
+      // `chest_3` -> `chest`：同组多 primitive 时 three 会加后缀（见 canon 的注释）
+      const group = groupOf.get(canon(raw))
+      if (group === undefined) {
+        probe.value = '命中「' + raw + '」，但它不在肌群表里'
+        emit('unknown-hit', raw)
         return
       }
-      probe.value = '命中 ' + name + '（共 ' + hits.length + ' 个交点）'
-      emit('muscle-click', name)
+      probe.value = '命中 ' + group + '（' + raw + '，共 ' + hits.length + ' 个交点）'
+      emit('muscle-click', group)
     }
 
     renderer.domElement.addEventListener('pointerdown', onDown)
@@ -257,10 +297,12 @@ function repaint() {
       material?: { color?: { setHex: (n: number) => void }; emissive?: { setHex: (n: number) => void } }
     }
     if (mesh.isMesh !== true || mesh.material === undefined) return
-    const name = mesh.name ?? ''
-    if (name === SKIN) return   // 皮肤不随组数变色
-    mesh.material.color?.setHex(toneFor(props.volumeByMuscle[name] ?? 0))
-    mesh.material.emissive?.setHex(name === selected ? 0x5a3d12 : 0x000000)
+    const c = canon(mesh.name ?? '')
+    if (c === SKIN) return   // 皮肤不随组数变色
+    const group = groupOf.get(c)
+    if (group === undefined) return
+    mesh.material.color?.setHex(toneFor(props.volumeByMuscle[group] ?? 0))
+    mesh.material.emissive?.setHex(group === selected ? 0x5a3d12 : 0x000000)
   })
 }
 
@@ -293,7 +335,15 @@ defineExpose({ status, message })
 
 <style scoped>
 .wrap { position: relative; width: 100%; }
-.canvas { width: 100%; height: 620px; }
+.canvas {
+  width: 100%;
+  height: 620px;
+  /* 可见边框：没有边界时用户分不清滚轮是在缩放模型还是在滚页面 */
+  border: var(--line-width) solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
 .hint {
   position: absolute; inset: 0 0 auto; text-align: center;
   color: var(--text-dim); font-size: 12px; padding-top: 40px;
