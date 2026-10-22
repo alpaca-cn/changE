@@ -10,6 +10,11 @@ import {
   MEAL_DETAIL,
 } from '../api/__fixtures__/nutrition-responses'
 
+// jsdom 没有 canvas；这个桩让「选图」这一步在测试里可走通。
+vi.mock('../lib/image', () => ({
+  toImageDataUrl: vi.fn(async () => 'data:image/png;base64,AAAA'),
+}))
+
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
 import { invoke } from '@tauri-apps/api/core'
@@ -430,5 +435,77 @@ describe('饮食记录页 · 从其他日期复制', () => {
     await flushPromises()
 
     expect(wrapper.find('.copy-notice').text()).toContain('同一天')
+  })
+})
+
+describe('饮食记录页 · 拍照记这一餐', () => {
+  /** 模拟用户选了一张图。jsdom 的 input.files 是只读的，只能重定义。 */
+  async function pick(wrapper: Awaited<ReturnType<typeof mountDiet>>) {
+    const input = wrapper.find('.photo-input')
+    const file = new File(['x'], 'meal.png', { type: 'image/png' })
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+    await flushPromises()
+  }
+
+  it('sends_the_photo_with_the_date_and_slot_nailed_into_the_prompt', async () => {
+    // 模型看不到页面状态。不把日期与餐次写进提示词，它会记到「今天」
+    // 或者自己猜一个餐次 —— 而用户明明选的是某天的晚餐。
+    const wrapper = await mountDiet(
+      baseRules([
+        [on('POST', '/api/agent/chat'), {
+          status: 200,
+          body: { reply: '已记：黄焖鸡米饭 1 份，约 780 千卡。', tools: ['create_food', 'record_meal'], sessionId: 1 },
+        }],
+      ]),
+    )
+
+    await wrapper.find('.meal-date').setValue('2026-10-21')
+    await wrapper.find('select').setValue('dinner')
+    await flushPromises()
+
+    await pick(wrapper)
+
+    const call = reqs().find((r) => r.method === 'POST' && r.path === '/api/agent/chat')
+    expect(call).toBeTruthy()
+    // chat() 发的字段是 message / imageDataUrl
+    const sent = JSON.parse(call!.body ?? '{}') as { message: string; imageDataUrl?: string }
+    expect(sent.imageDataUrl).toContain('data:image/png')
+    expect(sent.message).toContain('2026-10-21')
+    expect(sent.message).toContain('晚餐')
+    // 提示词必须点名这两条工具，否则模型可能拿近似食物顶替
+    expect(sent.message).toContain('create_food')
+    expect(sent.message).toContain('record_meal')
+  })
+
+  it('shows_the_agents_reply_inline_and_refreshes_the_day', async () => {
+    const wrapper = await mountDiet(
+      baseRules([
+        [on('POST', '/api/agent/chat'), {
+          status: 200,
+          body: { reply: '已记：黄焖鸡米饭 1 份，约 780 千卡。', tools: [], sessionId: 1 },
+        }],
+      ]),
+    )
+    await pick(wrapper)
+
+    expect(wrapper.find('.photo-reply').text()).toContain('780')
+    // 记完之后当天合计要重新拉一次
+    expect(reqs().filter((r) => r.path.startsWith('/api/nutrition/daily')).length).toBeGreaterThan(1)
+  })
+
+  it('an_unconfigured_model_shows_the_reason_instead_of_silence', async () => {
+    const wrapper = await mountDiet(
+      baseRules([
+        [on('POST', '/api/agent/chat'), {
+          status: 400,
+          body: { error: '还没有配置模型。去「设置」里填 baseUrl / model / API key。' },
+        }],
+      ]),
+    )
+    await pick(wrapper)
+
+    expect(wrapper.find('.err').text()).toContain('配置')
+    expect(wrapper.find('.photo-reply').exists()).toBe(false)
   })
 })

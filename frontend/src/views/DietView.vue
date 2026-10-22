@@ -13,6 +13,8 @@ import {
   type MealSlot,
 } from '../api/nutrition'
 import CustomFoodForm from '../components/CustomFoodForm.vue'
+import { toImageDataUrl } from '../lib/image'
+import { chat } from '../api/agent'
 import { todayIso } from './training-form'
 import {
   draftGrams,
@@ -106,6 +108,51 @@ async function copyDay() {
     copyNotice.value = '复制失败：' + reason(e)
   } finally {
     copying.value = false
+  }
+}
+
+/**
+ * 拍照记这一餐。
+ *
+ * 流程：选图 → 压缩 → 发给智能体 → 它用 search_foods 查、查不到用 create_food 建、
+ * 最后 record_meal 记进当前日期与餐次 → 回到本页刷新。
+ *
+ * 为什么走智能体而不是本地写一套识别：识别是模型的事，落库已经有 10 个工具了。
+ * 前端再实现一遍「找食物 → 算克数 → 写库」只会多一套要维护的换算，
+ * 而那一套正是最容易与后端算得不一样的。
+ *
+ * 提示词里**把日期与餐次钉进去**：模型看不到本页的状态，不写死它会记到「今天」
+ * 或者自己猜一个餐次，而用户明明选的是 2026-10-21 的晚餐。
+ */
+const photoPick = ref<HTMLInputElement | null>(null)
+const photoBusy = ref(false)
+const photoReply = ref<string | null>(null)
+const photoError = ref<string | null>(null)
+
+async function onPhotoPicked(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 允许连续选同一张图
+  if (file === undefined) return
+
+  photoBusy.value = true
+  photoReply.value = null
+  photoError.value = null
+  try {
+    const dataUrl = await toImageDataUrl(file)
+    const prompt =
+      '这是我这顿饭的照片。请：\n' +
+      '1) 识别里面的食物与大致克数；\n' +
+      '2) 每种食物先用 search_foods 查，**查不到才**用 create_food 新建（按你估计的份量填）；\n' +
+      '3) 用 record_meal 记进 ' + mealDate.value + ' 的「' + slotLabel(slot.value) + '」；\n' +
+      '4) 最后用一句话告诉我记了什么、一共多少千卡。'
+    const result = await chat(prompt, dataUrl)
+    photoReply.value = result.reply
+    await loadDay()
+  } catch (e) {
+    photoError.value = reason(e)
+  } finally {
+    photoBusy.value = false
   }
 }
 
@@ -400,6 +447,23 @@ onMounted(() => {
     </div>
     <CustomFoodForm v-if="showNewFood" @created="onFoodCreated" />
 
+    <!-- 拍照记这一餐：外卖没有包装、也没有标签，但有一张照片 -->
+    <div class="photo-row">
+      <button type="button" class="photo-btn" :disabled="photoBusy" @click="photoPick?.click()">
+        {{ photoBusy ? '正在识别…' : '拍照 / 选图记这一餐' }}
+      </button>
+      <input
+        ref="photoPick"
+        class="photo-input"
+        type="file"
+        accept="image/*"
+        @change="onPhotoPicked"
+      />
+      <span class="photo-hint">拍一张，模型自己找食物、建食物、记进「{{ slotLabel(slot) }}」</span>
+    </div>
+    <p v-if="photoError !== null" class="err">{{ photoError }}</p>
+    <div v-else-if="photoReply !== null" class="photo-reply">{{ photoReply }}</div>
+
     <!-- 从其他日期复制：早餐与工作日午餐高度重复，这是最省事的一条路 -->
     <div class="copy-row">
       <span class="copy-label">从其他日期复制</span>
@@ -581,6 +645,32 @@ select, input {
 .i-kcal { color: var(--text); font-variant-numeric: tabular-nums; }
 
 .new-food-entry { margin: var(--gap-md) 0 0; }
+.photo-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin: var(--gap-md) 0 0;
+  flex-wrap: wrap;
+}
+.photo-btn {
+  font-size: 11px;
+  padding: 4px 12px;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.photo-btn:disabled { border-color: var(--line); color: var(--text-dim); }
+.photo-input { display: none; }
+.photo-hint { font-size: 10px; color: var(--eyebrow); }
+.photo-reply {
+  margin: var(--gap-sm) 0 0;
+  padding: var(--gap-sm) var(--gap-md);
+  border-left: 2px solid var(--accent);
+  background: var(--panel);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 .copy-row {
   display: flex;
   align-items: center;

@@ -35,7 +35,7 @@ class AgentToolsTest {
     void 白名单是固定的那九个() {
         assertThat(tools.names()).containsExactlyInAnyOrder(
                 "weekly_volume", "recent_sessions", "today_nutrition",
-                "search_exercises", "search_foods", "body_metrics",
+                "search_exercises", "search_foods", "create_food", "body_metrics",
                 "record_workout", "record_meal", "record_body_metric");
     }
 
@@ -79,7 +79,7 @@ class AgentToolsTest {
     @Test
     void 每个工具的定义都带合法_JSON_Schema() throws Exception {
         var specs = tools.specs();
-        assertThat(specs).hasSize(9);
+        assertThat(specs).hasSize(10);
         for (var s : specs) {
             assertThat(s.name()).isNotBlank();
             assertThat(s.description()).isNotBlank();

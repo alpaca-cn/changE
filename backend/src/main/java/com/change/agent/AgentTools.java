@@ -86,6 +86,33 @@ public class AgentTools {
                 schema(Map.of("query", stringProp("食物名的一部分，例如 鸡胸 / 米饭 / 酸奶"))),
                 a -> write(foods.search(text(a, "query"), 8)));
 
+        // 拍照记饮食能不能落地的关键一条。
+        //
+        // 模型从图里认出「黄焖鸡米饭」，而库里 35 条预置食物里没有它 ——
+        // 没有这个工具，模型只能二选一：**拿一个近似食物顶替**（记错），
+        // 或者**放弃**（白看了图）。两者都不可接受，前者更糟：它会静默地把
+        // 一顿 800 千卡的饭记成 400 千卡，而用户以为记对了。
+        //
+        // 所以给它「自己建一条」的能力。建完再 record_meal，链就通了。
+        put(m, "create_food", "库里搜不到某种食物时，用这个新建一条，之后就能用它记饮食。"
+                        + "参数都是**这一份**的值，不是每 100 克 —— 用户说「一份 400 克、蛋白 28 克」，"
+                        + "就填 grams=400, protein=28。搜到了就**不要**建，直接用 search_foods 的结果。",
+                schema(Map.of(
+                        "name", stringProp("食物名字，例如 黄焖鸡米饭（大份）"),
+                        "grams", numberProp("这一份有多少克，必须大于 0"),
+                        "protein", numberProp("这一份含多少克蛋白质；不知道就填 0"),
+                        "fat", numberProp("这一份含多少克脂肪；不知道就填 0"),
+                        "carb", numberProp("这一份含多少克碳水；不知道就填 0"),
+                        "kcal", numberProp("可选：这一份的热量。留空则按 4/4/9 从三大营养素推算"))),
+                a -> write(foods.create(new com.change.service.FoodQueryService.CustomFoodInput(
+                        text(a, "name"),
+                        null,
+                        num(a, "grams").asDouble(),
+                        numOr0(a, "protein"),
+                        numOr0(a, "fat"),
+                        numOr0(a, "carb"),
+                        a.has("kcal") && a.get("kcal").isNumber() ? a.get("kcal").asDouble() : null))));
+
         put(m, "body_metrics", "查身体数据每种指标的最新值（体重、体脂、各围度）。",
                 schema(Map.of()),
                 a -> write(metrics.types()));
@@ -232,6 +259,22 @@ public class AgentTools {
     }
 
     // JSON Schema 的构造。写成小工厂而不是手拼字符串：字段名拼错时是编译错误，不是运行时惊喜。
+    /**
+     * 取一个数值，**缺失时按 0**。
+     *
+     * <p>为什么要这个版本：`num()` 在字段缺失时抛「缺少数值参数」。对
+     * `record_workout` 的重量来说那是对的（缺了就没法记）；但对
+     * `create_food` 的三项宏量来说，模型从一张照片里只认得出「碳水」、
+     * 认不出脂肪，是完全正常的输出——那种情况下抛错等于把整次拍照作废。
+     *
+     * <p>所以这三项走缺省 0，而 `grams` 仍然走 `num()`：没有份量，
+     * 后面所有换算都无从谈起，那个必须让模型重试。
+     */
+    private static double numOr0(JsonNode args, String name) {
+        JsonNode v = args.get(name);
+        return v != null && v.isNumber() ? v.asDouble() : 0.0;
+    }
+
     private static String stringProp(String desc) {
         return "{\"type\":\"string\",\"description\":\"" + desc + "\"}";
     }
