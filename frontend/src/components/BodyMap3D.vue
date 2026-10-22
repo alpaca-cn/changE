@@ -39,6 +39,9 @@ const message = ref('')
 const scene = shallowRef<unknown>(null)
 let dispose: (() => void) | null = null
 
+/** 皮肤对象名。见 build() 里的说明。 */
+const SKIN = 'skin'
+
 /** 与 2D 的色阶同源：未练是暗暖灰，练得越多越接近铜色。 */
 const UNTRAINED = 0x3a342c
 
@@ -109,10 +112,32 @@ async function build() {
     controls.maxDistance = span * 3
     controls.target.set(0, 0, 0)
 
+    // 皮肤层：`skin` 是唯一一个不参与「本周组数」着色的对象。
+    // 它来自 BodyParts3D（CC BY 4.0），Z-Anatomy 自己没有皮肤网格。
+    //
+    // 三个参数是刻意的：
+    //   - opacity 0.22：再高就把肌肉糊住，再低就看不出是个人
+    //   - depthWrite: false：皮肤不写深度，肌肉才能透过来；否则按渲染顺序
+    //     后画的皮肤会把肌肉挡掉
+    //   - side: DoubleSide：只有一层壳，背面剔掉会从内部看到空洞
+    const skinMat = new THREE.MeshPhysicalMaterial({
+      color: 0xe6b49a,
+      transparent: true,
+      opacity: 0.22,
+      roughness: 0.5,
+      metalness: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+
     const materials = new Map<string, InstanceType<typeof THREE.MeshStandardMaterial>>()
     root.traverse((o: { isMesh?: boolean; name?: string }) => {
       if (o.isMesh !== true) return
       const name = o.name ?? ''
+      if (name === SKIN) {
+        ;(o as { material: unknown }).material = skinMat
+        return
+      }
       const mat = new THREE.MeshStandardMaterial({
         color: toneFor(props.volumeByMuscle[name] ?? 0),
         roughness: 0.68,
@@ -144,9 +169,12 @@ async function build() {
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1
       raycaster.setFromCamera(pointer, camera)
       const hits = raycaster.intersectObjects(root.children, true)
-      if (hits.length === 0) return
+      // **必须跳过皮肤**：它是半透明的外壳，射线第一个打到的总是它。
+      // 不跳过的话每次点击都会命中 `skin`，然后走「不在肌群表里」那条分支。
+      const muscleHit = hits.find((h) => h.object.name !== SKIN)
+      if (muscleHit === undefined) return
 
-      const name = hits[0].object.name
+      const name = muscleHit.object.name
       if (!materials.has(name)) {
         // 点到了但名字不在肌群表里：告诉上层，别静默忽略
         emit('unknown-hit', name)
@@ -207,6 +235,7 @@ function repaint() {
     }
     if (mesh.isMesh !== true || mesh.material === undefined) return
     const name = mesh.name ?? ''
+    if (name === SKIN) return   // 皮肤不随组数变色
     mesh.material.color?.setHex(toneFor(props.volumeByMuscle[name] ?? 0))
     mesh.material.emissive?.setHex(name === selected ? 0x5a3d12 : 0x000000)
   })

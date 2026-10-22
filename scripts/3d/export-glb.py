@@ -1,77 +1,120 @@
-"""从 Startup.blend 导出 changE 用的肌肉 glb。
+"""导出 17 个肌群 + 一层皮肤。
 
-产出：一个 .glb，里面是 17 个对象，每个对象名 = 我们的 muscleGroupId
-（chest / abdominals / lats / ...），面数按组压到目标值。
+皮肤来自 BodyParts3D（CC BY 4.0）的 FJ2810.obj —— 它的部件清单里
+`FMA7163  skin  FJ2810`。Z-Anatomy 自己没有皮肤网格。
 
-为什么「按组 join 再减面」而不是逐块导出：
-  浏览器的 raycaster 只认 object，一个臂群如果拆成 9 个对象，
-  点选和高亮都要写 9 次。join 成一个对象、名字就是组名，前端逻辑就只有一层。
+## 对齐怎么做的（以及它的风险）
 
-为什么减面：
-  原始合计约 100 万面（仅被映射的部分）。屏幕上一个人体占不到 800px 高，
-  每组留到 3000 面肉眼已经分不出差别，而体积能压到几 MB。
+两个模型来自不同的数据集，比例与原点都不同。这里只按**包围盒**对齐：
+把皮肤的 Z 高度缩放到与肌肉一致，再把包围盒中心对齐。
+
+这是个粗糙的对齐：如果两者的姿态不同（比如手臂张开的程度不一样），
+皮肤就会偏。**所以第一次导出必须靠人眼检查**，脚本能保证的只有
+「两者高度一致、中心重合」。
 """
 import json
 import os
 
-import bmesh
 import bpy
 
 MAPPING = json.load(open(os.environ["MAPPING_JSON"], encoding="utf-8"))
 OUT = os.environ["GLB_OUT"]
+SKIN_OBJ = os.environ.get("SKIN_OBJ", "")
 TARGET_POLYS = int(os.environ.get("TARGET_POLYS", "3000"))
+SKIN_POLYS = int(os.environ.get("SKIN_POLYS", "8000"))
 
-print("=== 开始导出 ===")
-print("组数:", len(MAPPING), "每组目标面数:", TARGET_POLYS)
-
-# 先全部取消选择，最后只导出选中的
 for o in bpy.data.objects:
     o.select_set(False)
 
+
+def bbox_of(objs):
+    xs, ys, zs = [], [], []
+    for o in objs:
+        for corner in o.bound_box:
+            world = o.matrix_world @ __import__("mathutils").Vector(corner)
+            xs.append(world.x)
+            ys.append(world.y)
+            zs.append(world.z)
+    return (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))
+
+
+def decimate(obj, target):
+    before = len(obj.data.polygons)
+    if before > target:
+        mod = obj.modifiers.new(name="dec", type='DECIMATE')
+        mod.ratio = target / float(before)
+        with bpy.context.temp_override(active_object=obj, object=obj,
+                                       selected_editable_objects=[obj]):
+            bpy.ops.object.modifier_apply(modifier=mod.name)
+    return len(obj.data.polygons)
+
+
 exported = []
-
-
-def joined_object(group, names):
-    """把一组的网格 join 成一个对象，减面，改名。"""
+for group, items in MAPPING.items():
+    names = [it["name"] for it in items]
     objs = [bpy.data.objects.get(n) for n in names]
     objs = [o for o in objs if o is not None and o.type == 'MESH']
     if not objs:
-        print("  !! {} 没有可用网格".format(group))
-        return None
-
-    # 以第一个为容器，其余 join 进去
+        print("  !! {} 没有网格".format(group))
+        continue
     target = objs[0]
+    for o in bpy.data.objects:
+        o.select_set(False)
+    for o in objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = target
     if len(objs) > 1:
-        for o in bpy.data.objects:
-            o.select_set(False)
-        for o in objs:
-            o.select_set(True)
-        bpy.context.view_layer.objects.active = target
-        with bpy.context.temp_override(
-                active_object=target, selected_editable_objects=objs, object=target):
+        with bpy.context.temp_override(active_object=target, selected_editable_objects=objs,
+                                       object=target):
             bpy.ops.object.join()
-
-    before = len(target.data.polygons)
-    if before > TARGET_POLYS:
-        mod = target.modifiers.new(name="dec", type='DECIMATE')
-        mod.ratio = TARGET_POLYS / float(before)
-        with bpy.context.temp_override(
-                active_object=target, object=target, selected_editable_objects=[target]):
-            bpy.ops.object.modifier_apply(modifier=mod.name)
-
+    after = decimate(target, TARGET_POLYS)
     target.name = group
     target.data.name = group
-    after = len(target.data.polygons)
-    print("  {:<14} {:>7} -> {:>5} 面  ({} 个源网格)".format(group, before, after, len(objs)))
-    return target
+    exported.append(target)
+    print("  {:<14} -> {:>5} 面".format(group, after))
 
+muscle_min, muscle_max = bbox_of(exported)
+muscle_h = muscle_max[2] - muscle_min[2]
+print("  肌肉包围盒 Z 高度: {:.3f}".format(muscle_h))
 
-for group, items in MAPPING.items():
-    obj = joined_object(group, [it["name"] for it in items])
-    if obj is not None:
-        exported.append(obj)
+skin = None
+if SKIN_OBJ and os.path.isfile(SKIN_OBJ):
+    before = set(bpy.data.objects)
+    # BodyParts3D 的 obj 是 Y-up、单位 mm；Blender 的导入器会做 up 轴转换。
+    bpy.ops.wm.obj_import(filepath=SKIN_OBJ)
+    new = [o for o in bpy.data.objects if o not in before and o.type == 'MESH']
+    if new:
+        skin = new[0]
+        for o in new[1:]:
+            bpy.data.objects.remove(o, do_unlink=True)
+        skin.name = "skin"
+        skin.data.name = "skin"
 
-# 只导出这 17 个
+        skin_min, skin_max = bbox_of([skin])
+        skin_h = skin_max[2] - skin_min[2]
+        print("  皮肤包围盒 Z 高度: {:.3f}  (比例 {:.4f})".format(skin_h, muscle_h / skin_h))
+
+        if skin_h > 0:
+            k = muscle_h / skin_h
+            skin.scale = (skin.scale[0] * k, skin.scale[1] * k, skin.scale[2] * k)
+            bpy.context.view_layer.update()
+
+            skin_min, skin_max = bbox_of([skin])
+            centre_skin = [(skin_min[i] + skin_max[i]) / 2 for i in range(3)]
+            centre_muscle = [(muscle_min[i] + muscle_max[i]) / 2 for i in range(3)]
+            skin.location = (
+                skin.location[0] + (centre_muscle[0] - centre_skin[0]),
+                skin.location[1] + (centre_muscle[1] - centre_skin[1]),
+                skin.location[2] + (centre_muscle[2] - centre_skin[2]),
+            )
+            bpy.context.view_layer.update()
+
+        after = decimate(skin, SKIN_POLYS)
+        print("  皮肤 -> {} 面".format(after))
+        exported.append(skin)
+else:
+    print("  !! 没有提供皮肤 obj，只导出肌肉")
+
 for o in bpy.data.objects:
     o.select_set(False)
 for o in exported:
@@ -79,7 +122,7 @@ for o in exported:
 bpy.context.view_layer.objects.active = exported[0]
 
 total = sum(len(o.data.polygons) for o in exported)
-print("=== 合计 {} 个对象 / {} 面 ===".format(len(exported), total))
+print("=== {} 个对象 / {} 面 ===".format(len(exported), total))
 
 bpy.ops.export_scene.gltf(
     filepath=OUT,
