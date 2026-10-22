@@ -9,6 +9,7 @@ import {
 } from '../api/body-map'
 import BodyMap from '../components/BodyMap.vue'
 import BodyMapSidePanel from '../components/BodyMapSidePanel.vue'
+import BodyMap3D from '../components/BodyMap3D.vue'
 import ExerciseDetailPanel from '../components/ExerciseDetailPanel.vue'
 import { exerciseDetail, type ExerciseDetail } from '../api/exercise-detail'
 
@@ -84,6 +85,14 @@ async function load() {
  * 动作详情的抽屉。与训练记录页用的是同一个组件、同一份数据来源——
  * 「点一个动作看做法」不该因为你在哪个页面点而长得不一样。
  */
+/**
+ * 2D / 3D 切换。**默认 2D**，两个理由：
+ *   1. 3D 要下载 1 MB 的 glb + 一个 three.js chunk，那是首屏不该背的重量
+ *   2. 3D 在远程桌面 / 老显卡上可能拿不到 WebGL，默认 2D 就不会一进来就失败
+ * 3D 组件自己在 WebGL 不可用时给出提示，用户切回 2D 即可。
+ */
+const threeD = ref(false)
+
 const detailOpen = ref(false)
 const detail = ref<ExerciseDetail | null>(null)
 const detailLoading = ref(false)
@@ -134,6 +143,27 @@ const modeHint = computed(() => MODES.find((m) => m.key === mode.value)?.hint ??
 
 /** 连点两块肌肉时，先发的响应可能后到：用序号丢掉过期的那一份。 */
 let exerciseSeq = 0
+
+/**
+ * 3D 组件用的是 **slug**（`chest` / `lats` / …），因为 glb 里的对象名就是它；
+ * 而 2D 与右侧面板用**数字 id**。两张表在这里对一次，别让两边各自记。
+ *
+ * `nameEn` 就是那个 slug —— 后端肌群表的英文名本来就是这一列。
+ */
+const volumeBySlug = computed<Record<string, number>>(() => {
+  const out: Record<string, number> = {}
+  for (const m of Object.values(volumeByMuscle.value)) {
+    out[m.nameEn] = m.sets
+  }
+  return out
+})
+
+/** 3D 点选回来的是 slug，翻成数字 id 再走与 2D 相同的选中逻辑。 */
+function selectMuscleBySlug(slug: string) {
+  const hit = Object.values(volumeByMuscle.value).find((m) => m.nameEn === slug)
+  if (hit === undefined) return
+  void selectMuscle(hit.muscleGroupId)
+}
 
 async function selectMuscle(muscleGroupId: number) {
   selectedId.value = muscleGroupId
@@ -192,7 +222,32 @@ function closePanel() {
         <p v-else-if="error !== null" class="err">{{ error }}</p>
         <template v-else-if="volume !== null">
           <p class="span">{{ volume.weekStart }} → {{ volume.weekEnd }}</p>
+          <div class="view-toggle">
+            <button
+              type="button"
+              class="chip"
+              :class="{ on: !threeD }"
+              @click="threeD = false"
+            >
+              2D
+            </button>
+            <button
+              type="button"
+              class="chip"
+              :class="{ on: threeD }"
+              @click="threeD = true"
+            >
+              3D
+            </button>
+          </div>
+
+          <BodyMap3D
+            v-if="threeD"
+            :volume-by-muscle="volumeBySlug"
+            @muscle-click="selectMuscleBySlug"
+          />
           <BodyMap
+            v-else
             :volume-by-muscle="volumeByMuscle"
             :mode="mode"
             @muscle-click="selectMuscle"
@@ -261,6 +316,17 @@ h2 {
 }
 
 .note { color: var(--eyebrow); font-size: 11px; margin: calc(-1 * var(--gap-sm)) 0 var(--gap-md); }
+
+.view-toggle { display: flex; gap: 6px; margin: 0 0 var(--gap-sm); }
+.chip {
+  font-size: 11px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: var(--line-width) solid var(--line);
+  background: none;
+  color: var(--text-dim);
+}
+.chip.on { border-color: var(--accent); color: var(--accent); }
 
 .hint {
   color: var(--text-dim);
