@@ -131,21 +131,36 @@ if SKIN_OBJ and os.path.isfile(SKIN_OBJ):
             print("  已把 X-up 转成 Z-up，现在是 X={:.2f} Y={:.2f} Z={:.2f}".format(
                 raw_size.x, raw_size.y, raw_size.z))
 
-        # 按**身高**定缩放。姿态检查放在下面用宽高比核对：
-        # 肌肉 宽/高 = 0.404，皮肤 667/1719 = 0.388 —— 差 4%，说明两者都是垂臂站姿。
-        k = muscle_size.z / raw_size.z if raw_size.z else 1.0
-        print("  缩放比 k={:.6f}（按身高）".format(k))
+        # **按宽度定缩放，不按身高。**
+        #
+        # 为什么：两者的「高」不是同一样东西 --
+        #   皮肤：头顶 -> 脚底
+        #   肌肉：颈肌顶端（颅底附近）-> 脚背
+        # 所以「缩到等高」等于把皮肤缩小了约一成，再按包围盒中心对齐，
+        # 整体就会偏下（2026-10-22 用户截图：皮肤偏下、肌肉偏上）。
+        #
+        # 宽度则由「肩 + 垂下的手臂」决定，两边是同一组解剖标志，可信得多。
+        # 实测 宽度比 0.000958 vs 身高比 0.000919 —— 差 4%，正是那一成的零头。
+        k = muscle_size.x / raw_size.x if raw_size.x else 1.0
+        print("  缩放比 k={:.6f}（按宽度，身高比 {:.6f}）".format(
+            k, muscle_size.z / raw_size.z if raw_size.z else 0))
 
         skin.data.transform(Matrix.Scale(k, 4))
         skin.data.update()
 
-        # 缩放后重新量，再把中心对上（不要在缩放前的旧值上算偏移）
+        # 缩放后重新量，再对位（不要在缩放前的旧值上算偏移）。
+        #
+        # Z **按脚底对齐**，不按中心：两者的脚底是同一个解剖位置（都踩在地上），
+        # 而两者的顶不是（皮肤是头顶，肌肉是颅底）。按中心对齐会把那一点差异
+        # 均摊成上下各偏一半，皮肤就整体往下掉。
         _, skin_lo, skin_hi = size_of([skin])
         centre_skin = [(skin_lo[i] + skin_hi[i]) / 2.0 for i in range(3)]
         centre_muscle = [(muscle_lo[i] + muscle_hi[i]) / 2.0 for i in range(3)]
-        offset = Vector((centre_muscle[0] - centre_skin[0],
-                         centre_muscle[1] - centre_skin[1],
-                         centre_muscle[2] - centre_skin[2]))
+        offset = Vector((
+            centre_muscle[0] - centre_skin[0],          # X 居中
+            centre_muscle[1] - centre_skin[1],          # Y 居中
+            muscle_lo[2] - skin_lo[2],                  # Z 脚底对齐
+        ))
         skin.data.transform(Matrix.Translation(offset))
         skin.data.update()
 
@@ -154,9 +169,13 @@ if SKIN_OBJ and os.path.isfile(SKIN_OBJ):
         final_size, final_lo, final_hi = size_of([skin])
         print("  皮肤最终包围盒  height(Z)={:.4f}  width(X)={:.4f}  depth(Y)={:.4f}".format(
             final_size.z, final_size.x, final_size.y))
-        print("  比例检查: 高 {:.3f} / 宽 {:.3f} （1.0 附近才算对齐）".format(
+        print("  比例检查: 高 {:.3f} / 宽 {:.3f}".format(
             final_size.z / muscle_size.z if muscle_size.z else 0,
             final_size.x / muscle_size.x if muscle_size.x else 0))
+        print("  底面对齐: 皮肤 {:.4f} vs 肌肉 {:.4f}（应当相等）".format(
+            final_lo[2], muscle_lo[2]))
+        print("  顶面差: 皮肤比肌肉高 {:.4f}（应当为正，那是头顶那一截）".format(
+            final_hi[2] - muscle_hi[2]))
         exported.append(skin)
 else:
     print("  !! 没有提供皮肤 obj，只导出肌肉")
