@@ -75,11 +75,12 @@ async function build() {
     const sc = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(30, width / height, 0.1, 500)
 
-    sc.add(new THREE.AmbientLight(0xffffff, 1.5))
-    const key = new THREE.DirectionalLight(0xffffff, 2.4)
+    // 环境光压低、主光加强：肌肉的起伏靠明暗读出来，环境光一高就全糊平
+    sc.add(new THREE.AmbientLight(0xffffff, 0.55))
+    const key = new THREE.DirectionalLight(0xffffff, 3.4)
     key.position.set(2, 3, 4)
     sc.add(key)
-    const fill = new THREE.DirectionalLight(0xffe6c0, 1.0)
+    const fill = new THREE.DirectionalLight(0xffe6c0, 0.8)
     fill.position.set(-3, 1, -2)
     sc.add(fill)
     // 背光：只靠正面光时轮廓会糊在背景里
@@ -121,9 +122,9 @@ async function build() {
     //     后画的皮肤会把肌肉挡掉
     //   - side: DoubleSide：只有一层壳，背面剔掉会从内部看到空洞
     const skinMat = new THREE.MeshPhysicalMaterial({
-      color: 0xe6b49a,
+      color: 0xeec3aa,
       transparent: true,
-      opacity: 0.22,
+      opacity: 0.13,
       roughness: 0.5,
       metalness: 0,
       side: THREE.DoubleSide,
