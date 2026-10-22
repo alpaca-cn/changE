@@ -50,6 +50,21 @@ public class NutritionController {
         return foodQuery.search(q, limit);
     }
 
+    /**
+     * 新建一条用户自己的食物。
+     *
+     * <p>用户填的是「**我这一份**多少克、含什么」，后端换算成每 100 克存 ——
+     * 为什么要这么转，见 {@link FoodQueryService.CustomFoodInput} 的注释。
+     *
+     * <p>校验失败一律 400 带中文说明（重名、份量为 0、换算后超常识范围……）；
+     * 报错信息是给人看的，措辞会直接出现在输入框下面。
+     */
+    @PostMapping("/foods")
+    public FoodQueryService.FoodSummary createFood(
+            @RequestBody FoodQueryService.CustomFoodInput input) {
+        return foodQuery.create(input);
+    }
+
     /** 记一餐。请求体见 {@link NutritionService.MealInput}——**注意没有 grams 字段**。 */
     @PostMapping("/meals")
     public NutritionService.Result record(@RequestBody NutritionService.MealInput input) {

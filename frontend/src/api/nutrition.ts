@@ -110,6 +110,30 @@ export async function searchFoods(params: { q?: string; limit?: number } = {}): 
 }
 
 /** 记一餐。返回的 `nutrition` 是**后端实时算**的合计。 */
+/** 用户自建食物时提交的东西。**注意口径：是「这一份」的值，不是每 100 克。** */
+export interface NewFoodInput {
+  nameZh: string
+  /** 这一份多少克 */
+  grams: number
+  /** 这一份里含多少克蛋白 / 脂肪 / 碳水 */
+  protein: number
+  fat: number
+  carb: number
+  /** 可选：这一份的热量。留空（或 0）则由后端按 4/4/9 从宏量算。 */
+  kcal?: number
+}
+
+/**
+ * 新建一条自己的食物。
+ *
+ * 换算在**后端**做（每份 -> 每 100 克），不在前端：录入时真正写库的克数
+ * 也是后端算的，两处算法必须是同一份代码，否则「预览 300 千卡、存进去 420 千卡」
+ * 这种对不上会很难查。
+ */
+export async function createFood(input: NewFoodInput): Promise<FoodSummary> {
+  return callApi('POST', '/api/foods', input) as Promise<FoodSummary>
+}
+
 export async function recordMeal(input: MealInput): Promise<MealResult> {
   return (await callApi('POST', '/api/meals', input)) as MealResult
 }

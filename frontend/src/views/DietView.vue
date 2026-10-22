@@ -12,6 +12,7 @@ import {
   type MealDetail,
   type MealSlot,
 } from '../api/nutrition'
+import CustomFoodForm from '../components/CustomFoodForm.vue'
 import { todayIso } from './training-form'
 import {
   draftGrams,
@@ -51,6 +52,8 @@ const foods = ref<FoodSummary[]>([])
 const foodsError = ref<string | null>(null)
 const draft = ref<DraftItem[]>([])
 
+/** 是否展开「新建食物」。默认收起：搜索是主路径，建食物是兜底。 */
+const showNewFood = ref(false)
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const savedSummary = ref<string | null>(null)
@@ -153,6 +156,18 @@ function pick(food: FoodSummary) {
 
 function removeItem(index: number) {
   draft.value.splice(index, 1)
+}
+
+/**
+ * 新建食物成功后：把它塞进搜索结果首行，并把搜索框填成它的名字。
+ *
+ * 用户刚建完，下一步一定是「用它」——让他再搜一次是纯浪费。
+ */
+function onFoodCreated(food: FoodSummary) {
+  showNewFood.value = false
+  query.value = food.nameZh
+  foods.value = [food, ...foods.value.filter((f) => f.id !== food.id)]
+  foodsError.value = null
 }
 
 async function save() {
@@ -316,6 +331,17 @@ onMounted(() => {
 
     <p v-if="saveError" class="err">{{ saveError }}</p>
     <p v-if="savedSummary" class="ok">{{ savedSummary }}</p>
+
+    <!--
+      搜不到就自己建。位置刻意放在「搜食物」之后、记录之前：
+      用户是**在搜不到的那一刻**才需要它，而不是在打开页面时。
+    -->
+    <div class="new-food-entry">
+      <button type="button" class="new-food-toggle" @click="showNewFood = !showNewFood">
+        {{ showNewFood ? '收起' : '搜不到？自己建一个' }}
+      </button>
+    </div>
+    <CustomFoodForm v-if="showNewFood" @created="onFoodCreated" />
 
     <h3>这一天的记录</h3>
     <p v-if="meals.length === 0" class="dim">这一天还没有记录</p>
@@ -486,6 +512,17 @@ select, input {
 .i-amount { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .i-macros { color: var(--eyebrow); font-size: 10px; font-variant-numeric: tabular-nums; }
 .i-kcal { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.new-food-entry { margin: var(--gap-md) 0 0; }
+.new-food-toggle {
+  font-size: 11px;
+  color: var(--accent);
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
 
 .err { color: var(--danger); }
 .no-hit {
