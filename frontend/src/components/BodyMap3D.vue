@@ -6,39 +6,41 @@ import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
  *
  * ## 数据从哪来
  *
- * `src/assets/anatomy/muscles.glb` 里的 17 个对象，对象名就是后端肌群表里的
- * `muscleGroupId`（chest / lats / ...）。导出管线在 `scripts/3d/`，
+ * `src/assets/anatomy/muscles.glb` 里的 17 个对象，对象名就是后端肌群表的
+ * `nameEn`（chest / lats / …）。导出管线在 `scripts/3d/`，
  * 模型来源与许可见 `docs/2026-10-21-3D模型来源与许可.md`。
  *
- * ## 为什么这个组件自己管渲染循环
+ * ## 为什么自己管渲染循环
  *
- * 只有一个 3D 视图，没有复用需求；抽成一个通用的「场景容器」再加一层 props
- * 只会让「哪个肌群该亮」这条逻辑散在两处。所以这里一次性把「加载 → 上色 →
- * 点选 → 清理」做完，对外只暴露 `volumeByMuscle` 进去、`muscle-click` 出来，
- * 与 2D 的 `<BodyMap />` 契约一致。
+ * 只有一个 3D 视图，没有复用需求；抽成通用「场景容器」只会让「哪个肌群该亮」
+ * 散在两处。这里一次性把「加载 → 上色 → 轨道控制 → 点选 → 清理」做完，
+ * 对外只暴露 `volumeByMuscle` 进去、`muscle-click` 出来，与 2D 的契约一致。
  *
- * ## 为什么颜色算在 CPU 上
+ * ## 为什么点选用 pointerup + 位移阈值
  *
- * 17 个对象各自一个材质实例。用顶点着色器按属性上色也行，但那要求改几何体
- * 属性，而这里的颜色只随「本周组数」变一次——每帧重算没有意义。
+ * 第一版把点击挂在 `pointerdown` 上，而当时**没有轨道控制器**，于是用户
+ * 既转不动、也点不中。加了 OrbitControls 之后，按下-拖动是旋转、
+ * 按下-抬起不动才是点击，两者必须分开：否则每次拖完都会顺带选中一块肌肉。
  */
 const props = defineProps<{
-  /** 肌群 id -> 本周折算组数。缺项按 0 处理。 */
+  /** 肌群 nameEn -> 本周折算组数。缺项按 0 处理。 */
   volumeByMuscle: Record<string, number>
 }>()
-const emit = defineEmits<{ (e: 'muscle-click', id: string): void }>()
+const emit = defineEmits<{
+  (e: 'muscle-click', id: string): void
+  /** 点中了，但这个名字在肌群表里找不到。上层据此提示，而不是静默无事发生。 */
+  (e: 'unknown-hit', name: string): void
+}>()
 
 const host = ref<HTMLElement | null>(null)
 const status = ref<'loading' | 'ready' | 'failed'>('loading')
 const message = ref('')
 
-// three 的对象不放进 reactive：代理一层会拖慢每帧的矩阵更新
 const scene = shallowRef<unknown>(null)
 let dispose: (() => void) | null = null
 
-/** 与 2D 的那套色阶保持一致：未练是暖灰，练得越多越接近铜色。 */
+/** 与 2D 的色阶同源：未练是暗暖灰，练得越多越接近铜色。 */
 const UNTRAINED = 0x3a342c
-const SELECTED_EMISSIVE = 0x5a3d12
 
 function toneFor(sets: number): number {
   if (sets <= 0) return UNTRAINED
@@ -52,14 +54,15 @@ let selected: string | null = null
 async function build() {
   if (host.value === null) return
   try {
-    // 动态 import：three 有 ~600 KB，而 2D 模式完全用不到它。
-    // 静态 import 会让每个页面首屏都背上这个包。
+    // 动态 import：three 有 ~600 KB，2D 模式完全用不到。
+    // 静态 import 会让每个页面首屏都背上它。
     const THREE = await import('three')
     const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js')
+    const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
 
     const el = host.value
     const width = el.clientWidth || 640
-    const height = el.clientHeight || 560
+    const height = el.clientHeight || 620
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -67,60 +70,93 @@ async function build() {
     el.appendChild(renderer.domElement)
 
     const sc = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(32, width / height, 0.1, 200)
+    const camera = new THREE.PerspectiveCamera(30, width / height, 0.1, 500)
 
-    sc.add(new THREE.AmbientLight(0xffffff, 1.4))
-    const key = new THREE.DirectionalLight(0xffffff, 2.2)
+    sc.add(new THREE.AmbientLight(0xffffff, 1.5))
+    const key = new THREE.DirectionalLight(0xffffff, 2.4)
     key.position.set(2, 3, 4)
     sc.add(key)
-    const fill = new THREE.DirectionalLight(0xffe6c0, 0.9)
+    const fill = new THREE.DirectionalLight(0xffe6c0, 1.0)
     fill.position.set(-3, 1, -2)
     sc.add(fill)
+    // 背光：只靠正面光时轮廓会糊在背景里
+    const rim = new THREE.DirectionalLight(0xffd9a0, 0.7)
+    rim.position.set(0, 2, -5)
+    sc.add(rim)
 
     const loader = new GLTFLoader()
     const gltf = await loader.loadAsync(new URL('../assets/anatomy/muscles.glb', import.meta.url).href)
     const root = gltf.scene
     sc.add(root)
 
-    // 相机按包围盒自动取景：模型的原点与比例不该由前端猜
+    // 相机按包围盒自动取景。1.45 是「人体占满容器高度、四周留一点气」的系数；
+    // 第一版用 2.2，结果人只占中间窄窄一条。
     const box = new THREE.Box3().setFromObject(root)
     const size = box.getSize(new THREE.Vector3())
     const center = box.getCenter(new THREE.Vector3())
     root.position.sub(center)
-    const dist = Math.max(size.x, size.y, size.z) * 2.2
+    const span = Math.max(size.x, size.y, size.z)
+    const dist = span * 1.45
     camera.position.set(0, 0, dist)
     camera.lookAt(0, 0, 0)
 
+    // 轨道控制：拖动旋转、滚轮缩放。**关掉 autoRotate** —— 用户要求自己控制。
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.enableDamping = true
+    controls.dampingFactor = 0.08
+    controls.enablePan = false
+    controls.minDistance = span * 0.7
+    controls.maxDistance = span * 3
+    controls.target.set(0, 0, 0)
+
     const materials = new Map<string, InstanceType<typeof THREE.MeshStandardMaterial>>()
-    root.traverse((o: { isMesh?: boolean; name?: string; material?: unknown }) => {
+    root.traverse((o: { isMesh?: boolean; name?: string }) => {
       if (o.isMesh !== true) return
       const name = o.name ?? ''
       const mat = new THREE.MeshStandardMaterial({
         color: toneFor(props.volumeByMuscle[name] ?? 0),
-        roughness: 0.72,
-        metalness: 0.08,
+        roughness: 0.68,
+        metalness: 0.1,
+        // 双面：导出的网格里有些是单面壳，背面剔除会露出空洞
+        side: THREE.DoubleSide,
       })
-      // 双面：导出的网格里有些是单面壳，背面剔除会露出空洞
-      mat.side = THREE.DoubleSide
       ;(o as { material: unknown }).material = mat
       materials.set(name, mat)
     })
 
     const raycaster = new THREE.Raycaster()
     const pointer = new THREE.Vector2()
+    let downX = 0
+    let downY = 0
 
-    function onPointerDown(ev: PointerEvent) {
+    function onDown(ev: PointerEvent) {
+      downX = ev.clientX
+      downY = ev.clientY
+    }
+
+    function onUp(ev: PointerEvent) {
+      // 拖动超过 6px 就是「转视角」，不是「点选」。
+      // 没有这个判断，每次拖完都会顺带选中一块肌肉。
+      if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 6) return
+
       const rect = renderer.domElement.getBoundingClientRect()
       pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1
       raycaster.setFromCamera(pointer, camera)
       const hits = raycaster.intersectObjects(root.children, true)
       if (hits.length === 0) return
+
       const name = hits[0].object.name
-      if (!materials.has(name)) return
+      if (!materials.has(name)) {
+        // 点到了但名字不在肌群表里：告诉上层，别静默忽略
+        emit('unknown-hit', name)
+        return
+      }
       emit('muscle-click', name)
     }
-    renderer.domElement.addEventListener('pointerdown', onPointerDown)
+
+    renderer.domElement.addEventListener('pointerdown', onDown)
+    renderer.domElement.addEventListener('pointerup', onUp)
 
     function onResize() {
       if (host.value === null) return
@@ -132,10 +168,9 @@ async function build() {
     }
     window.addEventListener('resize', onResize)
 
-    // 缓慢自转：静止的 3D 很难看出它是 3D
     let raf = 0
     const loop = () => {
-      root.rotation.y += 0.0022
+      controls.update()   // 阻尼需要每帧喂
       renderer.render(sc, camera)
       raf = requestAnimationFrame(loop)
     }
@@ -147,28 +182,33 @@ async function build() {
     dispose = () => {
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', onResize)
-      renderer.domElement.removeEventListener('pointerdown', onPointerDown)
+      renderer.domElement.removeEventListener('pointerdown', onDown)
+      renderer.domElement.removeEventListener('pointerup', onUp)
+      controls.dispose()
       renderer.dispose()
       if (renderer.domElement.parentNode === el) el.removeChild(renderer.domElement)
     }
   } catch (e) {
-    // WebGL 不可用（老显卡 / 远程桌面 / 测试环境）时不能整页白掉：
-    // 上层据此退回 2D。
+    // WebGL 不可用（老显卡 / 远程桌面 / 测试环境）时不能整页白掉
     status.value = 'failed'
     message.value = e instanceof Error ? e.message : String(e)
   }
 }
 
-/** 组数变了就重上色。选中态单独走一层，两者互不覆盖。 */
+/** 组数变了就重上色。选中态单独一层，两者互不覆盖。 */
 function repaint() {
   const sc = scene.value
   if (sc === null) return
   ;(sc as { traverse: (cb: (o: unknown) => void) => void }).traverse((o) => {
-    const mesh = o as { isMesh?: boolean; name?: string; material?: { color?: { setHex: (n: number) => void }; emissive?: { setHex: (n: number) => void } } }
+    const mesh = o as {
+      isMesh?: boolean
+      name?: string
+      material?: { color?: { setHex: (n: number) => void }; emissive?: { setHex: (n: number) => void } }
+    }
     if (mesh.isMesh !== true || mesh.material === undefined) return
     const name = mesh.name ?? ''
     mesh.material.color?.setHex(toneFor(props.volumeByMuscle[name] ?? 0))
-    mesh.material.emissive?.setHex(name === selected ? SELECTED_EMISSIVE : 0x000000)
+    mesh.material.emissive?.setHex(name === selected ? 0x5a3d12 : 0x000000)
   })
 }
 
@@ -190,6 +230,7 @@ defineExpose({ status, message })
   <div class="wrap">
     <div ref="host" class="canvas" />
     <p v-if="status === 'loading'" class="hint">正在加载 3D 模型…</p>
+    <p v-if="status === 'ready'" class="tip">拖动旋转 · 滚轮缩放 · 点肌肉看动作</p>
     <p v-if="status === 'failed'" class="err">
       3D 渲染不可用（{{ message }}）。切回 2D 看本周容量。
     </p>
@@ -197,8 +238,18 @@ defineExpose({ status, message })
 </template>
 
 <style scoped>
-.wrap { position: relative; width: 100%; min-height: 520px; }
-.canvas { width: 100%; height: 520px; }
-.hint { position: absolute; inset: 0 0 auto; text-align: center; color: var(--text-dim); font-size: 12px; }
-.err { position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; color: var(--danger); font-size: 12px; }
+.wrap { position: relative; width: 100%; }
+.canvas { width: 100%; height: 620px; }
+.hint {
+  position: absolute; inset: 0 0 auto; text-align: center;
+  color: var(--text-dim); font-size: 12px; padding-top: 40px;
+}
+.tip {
+  position: absolute; left: 0; right: 0; bottom: 4px; text-align: center;
+  color: var(--eyebrow); font-size: 10px; margin: 0; pointer-events: none;
+}
+.err {
+  position: absolute; left: 0; right: 0; bottom: 8px; text-align: center;
+  color: var(--danger); font-size: 12px;
+}
 </style>

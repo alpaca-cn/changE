@@ -92,6 +92,8 @@ async function load() {
  * 3D 组件自己在 WebGL 不可用时给出提示，用户切回 2D 即可。
  */
 const threeD = ref(false)
+/** 3D 点选出问题时的提示。空 = 没问题。 */
+const threeDNote = ref<string | null>(null)
 
 const detailOpen = ref(false)
 const detail = ref<ExerciseDetail | null>(null)
@@ -159,9 +161,19 @@ const volumeBySlug = computed<Record<string, number>>(() => {
 })
 
 /** 3D 点选回来的是 slug，翻成数字 id 再走与 2D 相同的选中逻辑。 */
+function onUnknownHit(name: string) {
+  threeDNote.value = '点到了「' + name + '」，但它不在肌群表里'
+}
+
 function selectMuscleBySlug(slug: string) {
   const hit = Object.values(volumeByMuscle.value).find((m) => m.nameEn === slug)
-  if (hit === undefined) return
+  if (hit === undefined) {
+    // glb 的对象名与后端 nameEn 对不上时这里会命中。**必须显示出来**：
+    // 静默 return 的结果就是用户点半天没反应，而我们什么线索都没有。
+    threeDNote.value = '点到了「' + slug + '」，但它不在肌群表里（这是映射 bug，不是你没点到）'
+    return
+  }
+  threeDNote.value = null
   void selectMuscle(hit.muscleGroupId)
 }
 
@@ -245,7 +257,9 @@ function closePanel() {
             v-if="threeD"
             :volume-by-muscle="volumeBySlug"
             @muscle-click="selectMuscleBySlug"
+            @unknown-hit="onUnknownHit"
           />
+          <p v-if="threeD && threeDNote" class="note3d">{{ threeDNote }}</p>
           <BodyMap
             v-else
             :volume-by-muscle="volumeByMuscle"
@@ -327,6 +341,7 @@ h2 {
   color: var(--text-dim);
 }
 .chip.on { border-color: var(--accent); color: var(--accent); }
+.note3d { color: var(--warn); font-size: 11px; margin: 6px 0 0; }
 
 .hint {
   color: var(--text-dim);
