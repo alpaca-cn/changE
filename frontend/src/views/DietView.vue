@@ -52,6 +52,63 @@ const foods = ref<FoodSummary[]>([])
 const foodsError = ref<string | null>(null)
 const draft = ref<DraftItem[]>([])
 
+/**
+ * 「从其他日期复制」。
+ *
+ * 实现上不需要后端新接口：`mealsOn(fromDate)` 给出的每一条 ItemDetail 都带
+ * `foodId / amount / unitName`，而 `recordMeal` 要的正好是这三样 ——
+ * 拷一份再提交就是复制。多一层「复制」接口只会多一处要维护的换算。
+ *
+ * 为什么这个功能值得做：早餐和工作日午餐高度重复。要用户每天重搜一遍
+ * 「鸡蛋 + 燕麦 + 牛奶」，是这个应用最容易被放弃的地方。
+ */
+const copyFrom = ref('')
+const copying = ref(false)
+const copyNotice = ref<string | null>(null)
+
+async function copyDay() {
+  if (copyFrom.value === '' || copying.value) return
+  if (copyFrom.value === mealDate.value) {
+    copyNotice.value = '复制来源和目标日期是同一天。'
+    return
+  }
+  copying.value = true
+  copyNotice.value = null
+  try {
+    const source = await mealsOn(copyFrom.value)
+    if (source.length === 0) {
+      copyNotice.value = copyFrom.value + ' 那天没有记录，没什么可复制的。'
+      return
+    }
+
+    let meals = 0
+    let items = 0
+    for (const m of source) {
+      // 逐餐提交：一餐失败不该把已经复制成功的几餐也回滚掉，
+      // 更要紧的是让用户看到「复制了 2 餐，第 3 餐失败了」这种真相。
+      await recordMeal({
+        mealDate: mealDate.value,
+        slot: m.slot,
+        eatenAt: m.eatenAt,
+        note: m.note,
+        items: m.items.map((i) => ({
+          foodId: i.foodId,
+          amount: i.amount,
+          unitName: i.unitName,
+        })),
+      })
+      meals++
+      items += m.items.length
+    }
+    copyNotice.value = '从 ' + copyFrom.value + ' 复制了 ' + meals + ' 餐、' + items + ' 条目。'
+    await loadDay()
+  } catch (e) {
+    copyNotice.value = '复制失败：' + reason(e)
+  } finally {
+    copying.value = false
+  }
+}
+
 /** 是否展开「新建食物」。默认收起：搜索是主路径，建食物是兜底。 */
 const showNewFood = ref(false)
 const saving = ref(false)
@@ -343,6 +400,16 @@ onMounted(() => {
     </div>
     <CustomFoodForm v-if="showNewFood" @created="onFoodCreated" />
 
+    <!-- 从其他日期复制：早餐与工作日午餐高度重复，这是最省事的一条路 -->
+    <div class="copy-row">
+      <span class="copy-label">从其他日期复制</span>
+      <input v-model="copyFrom" class="copy-date" type="date" />
+      <button class="copy-btn" :disabled="copying || copyFrom === ''" @click="copyDay">
+        {{ copying ? '复制中…' : '复制整天' }}
+      </button>
+      <span v-if="copyNotice !== null" class="copy-notice">{{ copyNotice }}</span>
+    </div>
+
     <h3>这一天的记录</h3>
     <p v-if="meals.length === 0" class="dim">这一天还没有记录</p>
 
@@ -514,6 +581,30 @@ select, input {
 .i-kcal { color: var(--text); font-variant-numeric: tabular-nums; }
 
 .new-food-entry { margin: var(--gap-md) 0 0; }
+.copy-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin: var(--gap-lg) 0 var(--gap-sm);
+  flex-wrap: wrap;
+}
+.copy-label { font-size: 11px; color: var(--text-dim); }
+.copy-date {
+  border: var(--line-width) solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+}
+.copy-btn {
+  font-size: 11px;
+  padding: 4px 12px;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.copy-btn:disabled { border-color: var(--line); color: var(--text-dim); }
+.copy-notice { font-size: 11px; color: var(--text-dim); }
 .new-food-toggle {
   font-size: 11px;
   color: var(--accent);

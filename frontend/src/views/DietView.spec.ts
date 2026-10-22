@@ -352,3 +352,83 @@ describe('饮食记录页 · 把口径写在界面上', () => {
     }
   })
 })
+
+describe('饮食记录页 · 从其他日期复制', () => {
+  /** 源日期那天的两餐：用来验证「逐餐提交」与「只带 recordMeal 认得的字段」。 */
+  const SOURCE_DAY = JSON.stringify([
+    {
+      id: 71, mealDate: '2026-10-20', slot: 'breakfast', eatenAt: '2026-10-20T08:00:00',
+      note: null,
+      items: [{ mealItemId: 1, foodId: 3, nameZh: '鸡蛋', orderIndex: 0, amount: 50,
+        unitName: '克', grams: 50,
+        nutrition: { kcal: 72, protein: 6.3, carb: 0.4, fat: 5, fiber: 0, sodium: 0 } }],
+      nutrition: { kcal: 72, protein: 6.3, carb: 0.4, fat: 5, fiber: 0, sodium: 0 },
+    },
+    {
+      id: 72, mealDate: '2026-10-20', slot: 'lunch', eatenAt: '2026-10-20T12:00:00',
+      note: null,
+      items: [{ mealItemId: 2, foodId: 4, nameZh: '白米饭', orderIndex: 0, amount: 200,
+        unitName: '克', grams: 200,
+        nutrition: { kcal: 232, protein: 5.2, carb: 51.6, fat: 0.6, fiber: 0.6, sodium: 2 } }],
+      nutrition: { kcal: 232, protein: 5.2, carb: 51.6, fat: 0.6, fiber: 0.6, sodium: 2 },
+    },
+  ])
+
+  it('copies_every_meal_of_the_source_day_onto_the_target_day', async () => {
+    const wrapper = await mountDiet(
+      baseRules([
+        [(r) => r.method === 'GET' && r.path === '/api/meals?date=2026-10-20',
+          { status: 200, body: SOURCE_DAY }],
+      ]),
+    )
+
+    // 先把目标日期定下来，否则断言依赖「今天」是哪天
+    await wrapper.find('.meal-date').setValue('2026-10-21')
+    await flushPromises()
+
+    await wrapper.find('.copy-date').setValue('2026-10-20')
+    await wrapper.find('.copy-btn').trigger('click')
+    await flushPromises()
+
+    const posts = reqs()
+      .filter((r) => r.method === 'POST' && r.path === '/api/meals')
+      .map((r) => JSON.parse(r.body ?? '{}') as {
+        mealDate: string
+        slot: string
+        items: { foodId: number; amount: number; unitName: string }[]
+      })
+
+    // 两餐各提交一次：一餐失败不该把已经成功的几餐回滚掉
+    expect(posts.length).toBe(2)
+    // 提交的是**目标**日期
+    expect(posts[0].mealDate).toBe('2026-10-21')
+    expect(posts[0].slot).toBe('breakfast')
+    // 条目只带 recordMeal 认得的三个字段
+    expect(posts[0].items[0].foodId).toBe(3)
+    expect(posts[0].items[0].amount).toBe(50)
+    expect(posts[0].items[0].unitName).toBe('克')
+  })
+
+  it('an_empty_source_day_says_so_instead_of_crashing', async () => {
+    const wrapper = await mountDiet(
+      baseRules([[(r) => r.method === 'GET' && r.path === '/api/meals?date=2026-10-19',
+        { status: 200, body: '[]' }]]),
+    )
+    await wrapper.find('.copy-date').setValue('2026-10-19')
+    await wrapper.find('.copy-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.copy-notice').text()).toContain('没有记录')
+  })
+
+  it('refuses_to_copy_onto_the_same_day', async () => {
+    // 同一天复制到自己，只会把每一餐再存一遍
+    const wrapper = await mountDiet()
+    const target = value(wrapper.find('.meal-date'))
+    await wrapper.find('.copy-date').setValue(target)
+    await wrapper.find('.copy-btn').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.copy-notice').text()).toContain('同一天')
+  })
+})
