@@ -69,8 +69,13 @@ function canon(s: string): string {
 /** canonical 名 -> glb 里的原始组名（`chest` / `middle back` / …）。 */
 const groupOf = new Map<string, string>()
 
-/** 与 2D 的色阶同源：未练是暗暖灰，练得越多越接近铜色。 */
-const UNTRAINED = 0x3a342c
+/**
+ * 与 2D 的色阶同源：练得越多越接近铜色。
+ *
+ * 基色从近黑（0x3a342c）提到暖褐（0x5a4a3c）：纯近黑在暗背景上会糊成一团，
+ * 肌肉的起伏只能靠高光读，看起来像「烧焦的一坨」——用户的截图就是这个形态。
+ */
+const UNTRAINED = 0x5a4a3c
 
 function toneFor(sets: number): number {
   if (sets <= 0) return UNTRAINED
@@ -96,6 +101,11 @@ async function build() {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    // ACES 是电影调色的默认选择：高光会滚降而不是直接切白，
+    // 而肌肉的形体正是靠高光到中间调的过渡读出来的。
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.15
+    renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.setSize(width, height)
     el.appendChild(renderer.domElement)
 
@@ -103,17 +113,23 @@ async function build() {
     const camera = new THREE.PerspectiveCamera(30, width / height, 0.1, 500)
 
     // 环境光压低、主光加强：肌肉的起伏靠明暗读出来，环境光一高就全糊平
-    sc.add(new THREE.AmbientLight(0xffffff, 0.55))
-    const key = new THREE.DirectionalLight(0xffffff, 3.4)
+    sc.add(new THREE.AmbientLight(0xffffff, 0.42))
+    const key = new THREE.DirectionalLight(0xfff3e2, 3.0)
     key.position.set(2, 3, 4)
     sc.add(key)
-    const fill = new THREE.DirectionalLight(0xffe6c0, 0.8)
+    const fill = new THREE.DirectionalLight(0xffd9b8, 0.7)
     fill.position.set(-3, 1, -2)
     sc.add(fill)
     // 背光：只靠正面光时轮廓会糊在背景里
-    const rim = new THREE.DirectionalLight(0xffd9a0, 0.7)
+    const rim = new THREE.DirectionalLight(0xffd9a0, 0.9)
     rim.position.set(0, 2, -5)
     sc.add(rim)
+
+    // 侧光：只靠正面与背光时，肌肉的边缘会与背景连成一片。
+    // 这一盏的作用就是把轮廓「切」出来。
+    const side = new THREE.DirectionalLight(0xffe8d0, 0.9)
+    side.position.set(-4, 0.5, 2)
+    sc.add(side)
 
     const loader = new GLTFLoader()
     const gltf = await loader.loadAsync(new URL('../assets/anatomy/muscles.glb', import.meta.url).href)
@@ -149,45 +165,69 @@ async function build() {
     //     后画的皮肤会把肌肉挡掉
     //   - side: DoubleSide：只有一层壳，背面剔掉会从内部看到空洞
     const skinMat = new THREE.MeshPhysicalMaterial({
-      color: 0xeec3aa,
+      color: 0xe8b79e,
       transparent: true,
-      opacity: 0.13,
-      roughness: 0.5,
+      opacity: 0.17,
+      roughness: 0.62,
       metalness: 0,
       side: THREE.DoubleSide,
       depthWrite: false,
     })
 
-    // 第一遍：把「canonical 名 -> glb 原始名」记下来。
-    // 原始名取自**第一个** primitive（`chest`），后面的 `chest_1/_2` 归到同一个组。
+    /**
+     * 取出「这个 mesh 属于哪一个肌群」，**是干净的名字**。
+     *
+     * 2026-10-23 实测的坑：一个 mesh 有多个 primitive 时，three 会把它包成
+     *
+     *     Group name="abdominals"
+     *       ├─ Mesh name="abdominals_1"
+     *       ├─ Mesh name="abdominals_2"
+     *       └─ Mesh name="abdominals_3"
+     *
+     * 我上一版只遍历 `isMesh`，于是把子节点的名字 `abdominals_1` 当成了组名，
+     * 于是点选后 emit 出去的是 `abdominals_1` —— 后端肌群表里没有这个名字，
+     * 界面上就显示「点到了 abdominals_1，但它不在肌群表里」。
+     *
+     * 所以两级都看：**父对象名字与子名字去掉后缀后相同，就用父的那个**
+     * （它没有后缀）；否则退回去掉 `_数字` / `.数字` 后缀的自己。
+     */
+    function groupNameOf(o: { name?: string; parent?: { name?: string } | null }, rootObj: unknown): string {
+      const raw = o.name ?? ''
+      const parent = o.parent ?? null
+      const parentName = parent !== null && (parent as unknown) !== rootObj ? (parent.name ?? '') : ''
+      if (parentName !== '' && canon(parentName) === canon(raw)) return parentName
+      return raw.replace(/[._]\d+$/, '')
+    }
+
+    // 第一遍：把「canonical 名 -> 干净的组名」记下来
     groupOf.clear()
-    root.traverse((o: { isMesh?: boolean; name?: string }) => {
+    root.traverse((o: { isMesh?: boolean; name?: string; parent?: { name?: string } | null }) => {
       if (o.isMesh !== true) return
-      const name = o.name ?? ''
-      const c = canon(name)
+      const group = groupNameOf(o, root)
+      const c = canon(group)
       if (c === SKIN) return
-      if (!groupOf.has(c)) groupOf.set(c, name)
+      if (!groupOf.has(c)) groupOf.set(c, group)
     })
 
     // 第二遍：同组的所有 primitive **共用一个材质实例**。
     // 不共用的话，一组有 3 个 primitive 时颜色可能只上到第一块上，其余是默认白。
     const materialByGroup = new Map<string, InstanceType<typeof THREE.MeshStandardMaterial>>()
 
-    root.traverse((o: { isMesh?: boolean; name?: string }) => {
+    root.traverse((o: { isMesh?: boolean; name?: string; parent?: { name?: string } | null }) => {
       if (o.isMesh !== true) return
-      const name = o.name ?? ''
-      const c = canon(name)
+      const clean = groupNameOf(o, root)
+      const c = canon(clean)
       if (c === SKIN) {
         ;(o as { material: unknown }).material = skinMat
         return
       }
-      const group = groupOf.get(c) ?? name
+      const group = groupOf.get(c) ?? clean
       let mat = materialByGroup.get(group)
       if (mat === undefined) {
         mat = new THREE.MeshStandardMaterial({
           color: toneFor(props.volumeByMuscle[group] ?? 0),
-          roughness: 0.68,
-          metalness: 0.1,
+          roughness: 0.62,
+          metalness: 0.04,
           // 双面：导出的网格里有些是单面壳，背面剔除会露出空洞
           side: THREE.DoubleSide,
         })
@@ -235,8 +275,7 @@ async function build() {
       }
 
       const raw = muscleHit.object.name
-      // `chest_3` -> `chest`：同组多 primitive 时 three 会加后缀（见 canon 的注释）
-      const group = groupOf.get(canon(raw))
+      const group = groupOf.get(canon(groupNameOf(muscleHit.object, root)))
       if (group === undefined) {
         probe.value = '命中「' + raw + '」，但它不在肌群表里'
         emit('unknown-hit', raw)
@@ -299,7 +338,8 @@ function repaint() {
     if (mesh.isMesh !== true || mesh.material === undefined) return
     const c = canon(mesh.name ?? '')
     if (c === SKIN) return   // 皮肤不随组数变色
-    const group = groupOf.get(c)
+    // 重上色时用的是同一个规范化逻辑：`chest_3` 与 `chest` 归到同一组
+    const group = groupOf.get(canon((mesh.name ?? '').replace(/[._]\d+$/, '')))
     if (group === undefined) return
     mesh.material.color?.setHex(toneFor(props.volumeByMuscle[group] ?? 0))
     mesh.material.emissive?.setHex(group === selected ? 0x5a3d12 : 0x000000)
