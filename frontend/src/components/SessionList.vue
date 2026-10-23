@@ -33,7 +33,7 @@ function topOf(s: SessionSummary): string | null {
     <ul v-else class="list">
       <li v-for="s in sessions" :key="s.id" class="session-item">
         <!-- 用 button 而不是给 li 挂 click：键盘也能打开详情，不只是一个能点的 div -->
-        <button type="button" class="session" @click="emit('select', s.id)">
+        <button type="button" class="session glass" @click="emit('select', s.id)">
           <span class="head">
             <span class="title">{{ titleOf(s) }}</span>
             <span v-if="s.perceivedState" class="state">{{ s.perceivedState }}</span>

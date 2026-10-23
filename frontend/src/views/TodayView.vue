@@ -114,7 +114,7 @@ onMounted(() => {
       这是参考图里那种「卡片浮在画面上」的做法——单纯往下排会变成一条条列表。
     -->
     <div class="band">
-      <div class="card overview">
+      <div class="card overview glass">
         <div class="card-head">
           <span class="caps">本周进度</span>
           <span class="week mono">{{ volume?.weekStart ?? '—' }} → {{ volume?.weekEnd ?? '—' }}</span>
@@ -162,7 +162,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="card intake-card">
+      <div class="card intake-card glass">
         <div class="card-head">
           <span class="caps">今天吃了多少</span>
           <span class="week mono">{{ intake?.meals ?? 0 }} 餐 · {{ intake?.items ?? 0 }} 条目</span>

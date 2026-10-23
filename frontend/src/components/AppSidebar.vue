@@ -6,7 +6,7 @@ const bottom = NAV_GROUPS.filter((g) => g.pinnedBottom)
 </script>
 
 <template>
-  <nav class="sidebar">
+  <nav class="sidebar glass">
     <!-- 品牌块：中文名 + 一行 8px 全大写字距标签。参考项目用的是 CSS ::before，
          这里用真节点，因为它是可被读屏读到的产品名。 -->
     <div class="brand">

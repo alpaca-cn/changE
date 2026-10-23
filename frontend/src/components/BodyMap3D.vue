@@ -405,7 +405,7 @@ defineExpose({ status, message })
 
 <template>
   <div class="wrap">
-    <div ref="host" class="canvas" />
+    <div ref="host" class="canvas glass" />
     <p v-if="status === 'loading'" class="hint">正在加载 3D 模型…</p>
     <p v-if="status === 'ready'" class="tip">
       {{ probe === '' ? '拖动旋转 · 滚轮缩放 · 点肌肉看动作' : probe }}

@@ -33,8 +33,10 @@ describe('主题 token', () => {
   it('暖米白底、白卡片、暖灰发丝线', () => {
     // 底色是 #f4f2ed 而不是纯白：纯白在屏幕上发冷，带一点暖才「稳」。
     expect(token('bg')).toBe('#f4f2ed')
-    expect(token('panel')).toBe('#ffffff')
-    expect(token('line')).toBe('#e3dfd5')
+    // 2026-10-23 玻璃质感：面板与描边改成半透明，背后的渐变底色才透得上来。
+    // 不透明的 #ffffff 在渐变底色上像一块贴纸，而不是一层玻璃。
+    expect(token('panel')).toBe('rgba(255, 255, 255, 0.66)')
+    expect(token('line')).toBe('rgba(227, 223, 213, 0.72)')
   })
 
   it('底色不是纯黑也不是纯白（两端都极端，一个压抑一个发冷）', () => {
@@ -60,9 +62,21 @@ describe('主题 token', () => {
   it('深色只留一块 hero，不做成大面积底色', () => {
     expect(token('hero')).toBe('#161412')
     // hero 必须比任何表面色都暗，否则那块压不住画面
-    const lum = (hex: string) => {
-      const v = parseInt(hex.slice(1, 3), 16) + parseInt(hex.slice(3, 5), 16) + parseInt(hex.slice(5, 7), 16)
-      return v / 3
+    // 只算 RGB 三个分量：`--panel` 现在是 rgba(…)，按 #rrggbb 解析会得到 NaN，
+    // 而 NaN 参与比较永远为 false，那条断言会**静默地永远通过**。
+    const lum = (color: string) => {
+      // 两种格式都要支持：十六进制（没有分隔符，逐个 \d+ 会把整串当一个数）
+      // 与 rgba(r, g, b, a) 这种带逗号的形式。
+      if (color.startsWith('#')) {
+        return (parseInt(color.slice(1, 3), 16)
+          + parseInt(color.slice(3, 5), 16)
+          + parseInt(color.slice(5, 7), 16)) / 3
+      }
+      const nums = color.match(/[\d.]+/g)
+      if (nums === null || nums.length < 3) {
+        throw new Error('无法解析颜色: ' + color)
+      }
+      return (Number(nums[0]) + Number(nums[1]) + Number(nums[2])) / 3
     }
     for (const name of ['bg', 'panel', 'line']) {
       expect(lum(token('hero')!), `--hero 应该比 --${name} 暗`).toBeLessThan(lum(token(name)!))

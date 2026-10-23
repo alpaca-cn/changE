@@ -22,10 +22,10 @@
   /* 表面：暖米白打底。--panel 是抬起来的那一层（卡片、按钮），
      --sidebar 单独给侧栏，因为它比卡片再暗一档。 */
   --bg: #f4f2ed;
-  --panel: #ffffff;
+  --panel: rgba(255, 255, 255, 0.66);
   --sidebar: #efece3;
-  --line: #e3dfd5;
-  --line-soft: #eceae1;
+  --line: rgba(227, 223, 213, 0.72);
+  --line-soft: rgba(236, 234, 225, 0.72);
 
   /* 深色只出现在这里：今日页的 hero、封面类区块 */
   --hero: #161412;
@@ -63,6 +63,24 @@
   --eyebrow-tracking: 0.16em;
 
   /* 形状：靠 1px 发丝线与大圆角分层，仍然不用阴影 */
+
+  /*
+   * 玻璃质感（2026-10-23）。
+   *
+   * **玻璃需要背后有东西可折射。** 原来背景是一块纯平的 #f4f2ed，
+   * 半透明面板在上面和实心的一模一样 —— 直接加 backdrop-filter 是看不见的。
+   * 所以底色改成一层很淡的暖色径向渐变（见 body 的 background），
+   * 再叠半透明面板，才有「厚度」。
+   *
+   * 圆角必须用 `background-clip` 的写法，不能用 border-image：
+   * border-image 不尊重 border-radius，会把圆角切成直角。
+   */
+  --glass-bg: rgba(255, 255, 255, 0.58);
+  --glass-edge-a: rgba(255, 255, 255, 0.95);
+  --glass-edge-b: rgba(181, 137, 58, 0.22);
+  --glass-blur: 16px;
+  --glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+
   --radius: 16px;
   --radius-sm: 10px;
   --line-width: 1px;
@@ -87,7 +105,12 @@ html, body, #app {
 }
 
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(1200px 700px at 12% -10%, rgba(255, 252, 244, 0.95), transparent 60%),
+    radial-gradient(900px 600px at 100% 0%, rgba(238, 228, 209, 0.55), transparent 55%),
+    radial-gradient(800px 800px at 60% 110%, rgba(246, 236, 219, 0.6), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   font-family: var(--font);
   font-size: 14px;
@@ -123,3 +146,23 @@ button {
 button:hover { border-color: var(--accent); }
 
 a { color: var(--accent); }
+
+/*
+ * 玻璃面。**需要搭配背景**：背景有渐变或图片时才看得出来。
+ *
+ * 三层：
+ *   padding-box  半透明白 -> 背后的底色透上来
+ *   border-box   1px 渐变描边（左上偏白、右下偏铜）-> 「渐变半透明边框」
+ *   box-shadow   inset 高光 + 外阴影 -> 玻璃片的厚度
+ * backdrop-filter 负责把背后糊掉；不支持时只是一个半透明面板，不会坏。
+ */
+.glass {
+  border: 1px solid transparent !important;
+  background:
+    linear-gradient(var(--glass-bg), var(--glass-bg)) padding-box,
+    linear-gradient(135deg, var(--glass-edge-a) 0%,
+      var(--glass-edge-b) 45%, var(--glass-edge-a) 100%) border-box !important;
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.08);
+  box-shadow: var(--glass-hi), 0 10px 28px rgba(26, 26, 26, 0.06) !important;
+}
