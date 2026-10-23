@@ -46,4 +46,14 @@ public class MuscleGroup {
     /** 「本周容量」提醒的上限；与 min 成对出现。 */
     @Column(name = "weekly_sets_max")
     public Integer weeklySetsMax;
+
+    /**
+     * 父组的 {@code name_en}；null 表示自己就是顶层（原 17 个）。
+     *
+     * <p>体积极按**叶子**算，再由 {@code WeeklyVolumeService} 汇总到父组：
+     * 父组本周组数 = 自己的 + 所有子部位的。所以总量不变，
+     * 但界面上能看出「缺的是下胸」。
+     */
+    @Column(name = "parent_en")
+    public String parentEn;
 }

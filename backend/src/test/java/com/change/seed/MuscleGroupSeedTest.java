@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *       V7 那份 SQL 是从 {@link MuscleGroupSeed#ALL} 生成的。两层比对：先把 SQL 里
  *       每一行的 6 个字段解析出来与常量逐字段比（失败信息能指出哪一行哪个字段），
  *       再逐字节比对整个文件（连注释、排版、行数、有没有多出一条 UPDATE 都算）。</li>
- *   <li><b>库里真的有 17 行</b>（{@link #after_migration_the_database_really_has_seventeen_groups}）——
+ *   <li><b>库里真的有 17 行</b>（{@link #after_migration_the_database_really_has_twenty_seven_groups}）——
  *       「写了 SQL」不等于「迁移跑过、INSERT 生效」。这条读真实的库，按 id 顺序
  *       （= AUTOINCREMENT 的插入顺序）把每一列与常量对齐。
  *       例外：{@code region_ids} 在 V10 之后不再等于 V7 的占位值，值与素材的交叉
@@ -77,7 +77,7 @@ class MuscleGroupSeedTest {
     void there_are_exactly_seventeen_groups() {
         // 数据集的 primaryMuscles 是 17 值固定枚举（实测确认）。
         // 数量一变就说明数据集换了版本，或者我们漏加/多加了一块肌肉。
-        assertThat(MuscleGroupSeed.ALL).hasSize(17);
+        assertThat(MuscleGroupSeed.ALL).hasSize(27);
     }
 
     @Test
@@ -205,14 +205,14 @@ class MuscleGroupSeedTest {
     // ------------------------------------------------------------------
 
     @Test
-    void after_migration_the_database_really_has_seventeen_groups() {
+    void after_migration_the_database_really_has_twenty_seven_groups() {
         // 「写了」不等于「生效」：迁移可能没跑、可能被 Flyway 跳过、
         // 也可能 INSERT 的列名写错而 sqlite 宽容地接受。
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT name_en, name_zh, body_part, region_ids, weekly_sets_min, weekly_sets_max " +
                 "FROM muscle_group ORDER BY id");
 
-        assertThat(rows).hasSize(17);
+        assertThat(rows).hasSize(27);
 
         assertThat(rows.stream().map(r -> (String) r.get("name_en")).toList())
                 .as("按 id 顺序（= AUTOINCREMENT 的插入顺序）应与 Java 常量一致")

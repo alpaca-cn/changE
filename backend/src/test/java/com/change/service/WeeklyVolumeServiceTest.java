@@ -57,7 +57,8 @@ class WeeklyVolumeServiceTest {
     @Test
     void counts_primary_one_secondary_half_and_only_completed_sets_in_the_week() {
         long ex = newExercise("ZZ Vol Bench");
-        link(ex, muscleId("chest"), "primary");
+        // chest 被拆开，这个动作（无 incline/decline 线索）落到中胸
+        link(ex, muscleId("chest-middle"), "primary");
         link(ex, muscleId("triceps"), "secondary");
 
         LocalDate wednesday = LocalDate.of(2026, 10, 14);
@@ -68,8 +69,11 @@ class WeeklyVolumeServiceTest {
 
         assertThat(v.weekStart()).isEqualTo(LocalDate.of(2026, 10, 12));
         assertThat(v.weekEnd()).isEqualTo(LocalDate.of(2026, 10, 18));
-        assertThat(v.muscles()).hasSize(17);
+        // 2026-10-23: 拆分后 17 个顶层 + 10 个子部位
+        assertThat(v.muscles()).hasSize(27);
 
+        assertThat(muscleSets(v, "chest-middle")).isEqualTo(3.0);
+        // 父组 = 子部位之和，所以 chest 也是 3.0
         assertThat(muscleSets(v, "chest")).isEqualTo(3.0);
         assertThat(muscleSets(v, "triceps")).isEqualTo(1.5);
     }

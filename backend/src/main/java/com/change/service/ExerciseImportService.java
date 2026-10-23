@@ -96,16 +96,24 @@ public class ExerciseImportService {
             inserted++;
 
             for (FreeExerciseDb.Assignment assignment : row.muscleAssignments()) {
-                long muscleId = resolveMuscleId(row, assignment);
-                ExerciseMuscle link = persistLink(exercise.id, muscleId, assignment.role);
-                changeLog.recordInsert("exercise_muscle", link.id,
-                        Map.of("exercise_id", exercise.id,
-                               "muscle_group_id", muscleId,
-                               "role", assignment.role),
-                        ORIGIN, null);
-                musclesInserted++;
+                // 一个粗肌群可能拆成多个子部位（肩推 -> 前束主 + 中束辅），
+                // 所以这里是一对多：每条子部位都要落一行，并且各自写一条变更日志，
+                // 这样「逆序 undo 全部日志」仍然能精确回到导入之前。
+                for (long muscleId : resolveMuscleIds(row, assignment)) {
+                    ExerciseMuscle link = persistLink(exercise.id, muscleId, assignment.role);
+                    changeLog.recordInsert("exercise_muscle", link.id,
+                            Map.of("exercise_id", exercise.id,
+                                   "muscle_group_id", muscleId,
+                                   "role", assignment.role),
+                            ORIGIN, null);
+                    musclesInserted++;
+                }
             }
         }
+
+        // 老库里已有的映射仍挂在粗肌群上（导入会按 source_id 跳过已有动作，
+        // 所以那些行不会被上面的循环碰到）。这一步把它们挪到子部位。
+        remapToSubGroups();
 
         return new Result(inserted, skipped, musclesInserted);
     }
@@ -205,6 +213,74 @@ public class ExerciseImportService {
         return exercises.save(e);
     }
 
+    /**
+     * 把仍挂在「被拆分的粗肌群」上的映射挪到子部位。
+     *
+     * <h2>为什么放在导入的末尾，而不是一条独立的迁移</h2>
+     *
+     * <p>{@code exercise_muscle} 是**导入时从 exercises.json 重算**的。一条只在某次
+     * 升级时执行一次的迁移，会在新装时先于导入运行（那时表是空的），随后被导入覆盖 ——
+     * 新装用户永远拿不到子部位。而把这一步挂在 {@code importAll()} 末尾，每次启动
+     * 都会跑，新装与老库走同一条路。
+     *
+     * <h2>幂等性</h2>
+     *
+     * <p>只处理 {@code muscle_group.parent_en IS NULL} 且属于被拆父组的行。
+     * 跑过一次之后这些行的 {@code muscle_group_id} 已经是子部位，不再匹配，
+     * 所以重复执行什么也不做。
+     *
+     * <p><b>不改写现有行时用 UPDATE 而不是 DELETE + INSERT</b>：{@code exercise_muscle}
+     * 有代理主键，删掉重建会让历史变更日志里的 {@code record_id} 指向不存在的行，
+     * 「撤销导入」就会漏掉一部分。
+     */
+    @Transactional
+    public int remapToSubGroups() {
+        List<Map<String, Object>> links = jdbc.queryForList(
+                "SELECT em.id AS link_id, e.name_en AS exercise_name, "
+                        + "       mg.name_en AS muscle_name, mg.id AS muscle_id "
+                        + "FROM exercise_muscle em "
+                        + "JOIN exercise e ON e.id = em.exercise_id "
+                        + "JOIN muscle_group mg ON mg.id = em.muscle_group_id "
+                        + "WHERE mg.parent_en IS NULL");
+
+        int moved = 0;
+        for (Map<String, Object> link : links) {
+            String muscleName = (String) link.get("muscle_name");
+            if (!com.change.seed.SubGroupRules.isSplit(muscleName)) {
+                continue;
+            }
+            String exerciseName = (String) link.get("exercise_name");
+            var parts = com.change.seed.SubGroupRules.partsFor(muscleName, exerciseName);
+            if (parts.isEmpty()) {
+                continue;
+            }
+
+            long linkId = ((Number) link.get("link_id")).longValue();
+            long exerciseId = 0;
+            Long firstId = null;
+            for (var part : parts) {
+                var target = muscleGroups.findByNameEn(part.nameEn());
+                if (target.isEmpty()) {
+                    continue;
+                }
+                if (firstId == null) {
+                    firstId = target.get().id;
+                    // 主部位：把现有那一行改指向子部位，保留代理主键
+                    jdbc.update("UPDATE exercise_muscle SET muscle_group_id = ? WHERE id = ?",
+                            target.get().id, linkId);
+                } else {
+                    jdbc.update("INSERT INTO exercise_muscle (exercise_id, muscle_group_id, role) "
+                                    + "SELECT exercise_id, ?, role FROM exercise_muscle WHERE id = ?",
+                            target.get().id, linkId);
+                }
+            }
+            if (firstId != null) {
+                moved++;
+            }
+        }
+        return moved;
+    }
+
     private ExerciseMuscle persistLink(long exerciseId, long muscleId, String role) {
         ExerciseMuscle link = new ExerciseMuscle();
         link.exerciseId = exerciseId;
@@ -220,12 +296,27 @@ public class ExerciseImportService {
      * 而它不会报错、也没有日志，是典型的一路静默失效。名字与数据集逐字对齐，
      * 所以这里不做模糊匹配（见 {@code MuscleGroupRepo} 的注释）。
      */
-    private long resolveMuscleId(FreeExerciseDb.Row row, FreeExerciseDb.Assignment assignment) {
-        return muscleGroups.findByNameEn(assignment.muscleNameEn)
+    private List<Long> resolveMuscleIds(FreeExerciseDb.Row row, FreeExerciseDb.Assignment assignment) {
+        long parentId = muscleGroups.findByNameEn(assignment.muscleNameEn)
                 .orElseThrow(() -> new IllegalStateException(
                         "导入失败：动作「" + row.nameEn + "」的肌群「" + assignment.muscleNameEn
                                 + "」在 muscle_group 里找不到。数据集与种子数据对不上。"))
                 .id;
+
+        // 拆开的粗肌群（胸/肩/斜方/中背/下背）要落到子部位。
+        // **这一步必须在这里做，不能只在迁移里做**：导入是每次新装时重算的，
+        // 只写在迁移里的重映射会被随后的导入覆盖掉（见 V11 的注释与
+        // docs/动作到子部位映射.md 的「一个必须避开的坑」）。
+        var parts = com.change.seed.SubGroupRules.partsFor(assignment.muscleNameEn, row.nameEn);
+        if (parts.isEmpty()) {
+            return List.of(parentId);
+        }
+        List<Long> ids = new java.util.ArrayList<>();
+        for (var part : parts) {
+            muscleGroups.findByNameEn(part.nameEn()).ifPresent(g -> ids.add(g.id));
+        }
+        // 子部位行缺失（老库还没跑 V11）时退回父组，而不是让导入整体失败
+        return ids.isEmpty() ? List.of(parentId) : ids;
     }
 
     /**
