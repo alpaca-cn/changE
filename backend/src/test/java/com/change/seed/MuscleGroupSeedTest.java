@@ -249,6 +249,15 @@ class MuscleGroupSeedTest {
             // 素材原文里的 id 对起来——那比「与旧常量一致」有意义得多。这里只守住
             // 字符串的形状：非空、逗号分隔、逗号两侧没有空格。
             String regionIds = (String) row.get("region_ids");
+            // V12 之后被拆的 5 个父组故意没有区域（2D 交给子部位），
+            // 所以这里只要求在**有值**时形状正确。
+            if (regionIds == null) {
+                assertThat(java.util.Set.of("chest", "shoulders", "traps",
+                        "middle back", "lower back"))
+                        .as("%s 没有区域，只允许被拆的父组这样", at)
+                        .contains(g.nameEn);
+                continue;
+            }
             assertThat(regionIds).as("%s 的 region_ids", at).isNotBlank();
             assertThat(regionIds.split(",", -1))
                     .as("%s 的 region_ids 不应含空项或前后空格: %s", at, regionIds)

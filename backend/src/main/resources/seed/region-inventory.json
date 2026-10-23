@@ -1,0 +1,496 @@
+{
+ "_comment": "2D 区域归属的单一事实源。V12 与 MuscleRegionMappingTest 都读这里。",
+ "_generated_by": "scripts/body-map/gen-region-inventory.py",
+ "regions": [
+  {
+   "id": "head",
+   "groups": []
+  },
+  {
+   "id": "face",
+   "groups": []
+  },
+  {
+   "id": "neck-right",
+   "groups": [
+    "neck"
+   ]
+  },
+  {
+   "id": "neck-left",
+   "groups": [
+    "neck"
+   ]
+  },
+  {
+   "id": "shoulder-front-left",
+   "groups": [
+    "shoulders-anterior"
+   ]
+  },
+  {
+   "id": "shoulder-side-left",
+   "groups": [
+    "shoulders-lateral"
+   ]
+  },
+  {
+   "id": "shoulder-front-right",
+   "groups": [
+    "shoulders-anterior"
+   ]
+  },
+  {
+   "id": "shoulder-side-right",
+   "groups": [
+    "shoulders-lateral"
+   ]
+  },
+  {
+   "id": "biceps-left",
+   "groups": [
+    "biceps"
+   ]
+  },
+  {
+   "id": "forearm-left",
+   "groups": [
+    "forearms"
+   ]
+  },
+  {
+   "id": "biceps-right",
+   "groups": [
+    "biceps"
+   ]
+  },
+  {
+   "id": "forearm-right",
+   "groups": [
+    "forearms"
+   ]
+  },
+  {
+   "id": "chest-upper-left",
+   "groups": [
+    "chest-upper"
+   ]
+  },
+  {
+   "id": "chest-lower-left",
+   "groups": [
+    "chest-middle",
+    "chest-lower"
+   ]
+  },
+  {
+   "id": "chest-upper-right",
+   "groups": [
+    "chest-upper"
+   ]
+  },
+  {
+   "id": "chest-lower-right",
+   "groups": [
+    "chest-middle",
+    "chest-lower"
+   ]
+  },
+  {
+   "id": "abs-upper-left",
+   "groups": [
+    "abdominals"
+   ]
+  },
+  {
+   "id": "serratus-anterior-left",
+   "groups": []
+  },
+  {
+   "id": "obliques-left",
+   "groups": [
+    "abdominals"
+   ]
+  },
+  {
+   "id": "abs-upper-right",
+   "groups": [
+    "abdominals"
+   ]
+  },
+  {
+   "id": "abs-lower-right",
+   "groups": [
+    "abdominals"
+   ]
+  },
+  {
+   "id": "abs-lower-left",
+   "groups": [
+    "abdominals"
+   ]
+  },
+  {
+   "id": "serratus-anterior-right",
+   "groups": []
+  },
+  {
+   "id": "obliques-right",
+   "groups": [
+    "abdominals"
+   ]
+  },
+  {
+   "id": "hip-flexor-right",
+   "groups": []
+  },
+  {
+   "id": "hip-flexor-left",
+   "groups": []
+  },
+  {
+   "id": "quads-left",
+   "groups": [
+    "quadriceps"
+   ]
+  },
+  {
+   "id": "adductors-left",
+   "groups": [
+    "adductors"
+   ]
+  },
+  {
+   "id": "foot-left",
+   "groups": []
+  },
+  {
+   "id": "tibialis-anterior-left",
+   "groups": []
+  },
+  {
+   "id": "knee-left",
+   "groups": []
+  },
+  {
+   "id": "quads-right",
+   "groups": [
+    "quadriceps"
+   ]
+  },
+  {
+   "id": "adductors-right",
+   "groups": [
+    "adductors"
+   ]
+  },
+  {
+   "id": "foot-right",
+   "groups": []
+  },
+  {
+   "id": "tibialis-anterior-right",
+   "groups": []
+  },
+  {
+   "id": "knee-right",
+   "groups": []
+  },
+  {
+   "id": "elbow-right",
+   "groups": []
+  },
+  {
+   "id": "hand-right",
+   "groups": []
+  },
+  {
+   "id": "elbow-left",
+   "groups": []
+  },
+  {
+   "id": "hand-left",
+   "groups": []
+  },
+  {
+   "id": "head-back",
+   "groups": []
+  },
+  {
+   "id": "nape",
+   "groups": [
+    "neck"
+   ]
+  },
+  {
+   "id": "traps-upper-left",
+   "groups": [
+    "traps-upper"
+   ]
+  },
+  {
+   "id": "traps-mid-left",
+   "groups": [
+    "traps-middle",
+    "middle back-rhomboids"
+   ]
+  },
+  {
+   "id": "traps-lower-left",
+   "groups": [
+    "traps-middle"
+   ]
+  },
+  {
+   "id": "traps-upper-right",
+   "groups": [
+    "traps-upper"
+   ]
+  },
+  {
+   "id": "traps-mid-right",
+   "groups": [
+    "traps-middle",
+    "middle back-rhomboids"
+   ]
+  },
+  {
+   "id": "traps-lower-right",
+   "groups": [
+    "traps-middle"
+   ]
+  },
+  {
+   "id": "lats-upper-left",
+   "groups": [
+    "lats"
+   ]
+  },
+  {
+   "id": "deltoid-rear-left",
+   "groups": [
+    "shoulders-posterior"
+   ]
+  },
+  {
+   "id": "lats-mid-left",
+   "groups": [
+    "lats"
+   ]
+  },
+  {
+   "id": "lats-lower-left",
+   "groups": [
+    "lats"
+   ]
+  },
+  {
+   "id": "deltoid-rear-right",
+   "groups": [
+    "shoulders-posterior"
+   ]
+  },
+  {
+   "id": "lats-upper-right",
+   "groups": [
+    "lats"
+   ]
+  },
+  {
+   "id": "lats-mid-right",
+   "groups": [
+    "lats"
+   ]
+  },
+  {
+   "id": "lats-lower-right",
+   "groups": [
+    "lats"
+   ]
+  },
+  {
+   "id": "triceps-long-left",
+   "groups": [
+    "triceps"
+   ]
+  },
+  {
+   "id": "triceps-lateral-left",
+   "groups": [
+    "triceps"
+   ]
+  },
+  {
+   "id": "hand-back-left",
+   "groups": []
+  },
+  {
+   "id": "forearm-flexors-left",
+   "groups": [
+    "forearms"
+   ]
+  },
+  {
+   "id": "forearm-extensors-left",
+   "groups": [
+    "forearms"
+   ]
+  },
+  {
+   "id": "triceps-long-right",
+   "groups": [
+    "triceps"
+   ]
+  },
+  {
+   "id": "triceps-lateral-right",
+   "groups": [
+    "triceps"
+   ]
+  },
+  {
+   "id": "hand-back-right",
+   "groups": []
+  },
+  {
+   "id": "forearm-flexors-right",
+   "groups": [
+    "forearms"
+   ]
+  },
+  {
+   "id": "forearm-extensors-right",
+   "groups": [
+    "forearms"
+   ]
+  },
+  {
+   "id": "spine",
+   "groups": []
+  },
+  {
+   "id": "lower-back-erectors-left",
+   "groups": [
+    "lower back-erector"
+   ]
+  },
+  {
+   "id": "lower-back-ql-left",
+   "groups": [
+    "lower back-erector"
+   ]
+  },
+  {
+   "id": "lower-back-erectors-right",
+   "groups": [
+    "lower back-erector"
+   ]
+  },
+  {
+   "id": "lower-back-ql-right",
+   "groups": [
+    "lower back-erector"
+   ]
+  },
+  {
+   "id": "gluteus-medius-left",
+   "groups": [
+    "abductors"
+   ]
+  },
+  {
+   "id": "gluteus-maximus-left",
+   "groups": [
+    "glutes"
+   ]
+  },
+  {
+   "id": "gluteus-medius-right",
+   "groups": [
+    "abductors"
+   ]
+  },
+  {
+   "id": "gluteus-maximus-right",
+   "groups": [
+    "glutes"
+   ]
+  },
+  {
+   "id": "knee-back-left",
+   "groups": []
+  },
+  {
+   "id": "knee-back-right",
+   "groups": []
+  },
+  {
+   "id": "calves-gastroc-medial-left",
+   "groups": [
+    "calves"
+   ]
+  },
+  {
+   "id": "calves-gastroc-lateral-left",
+   "groups": [
+    "calves"
+   ]
+  },
+  {
+   "id": "calves-soleus-left",
+   "groups": [
+    "calves"
+   ]
+  },
+  {
+   "id": "calves-gastroc-medial-right",
+   "groups": [
+    "calves"
+   ]
+  },
+  {
+   "id": "calves-gastroc-lateral-right",
+   "groups": [
+    "calves"
+   ]
+  },
+  {
+   "id": "calves-soleus-right",
+   "groups": [
+    "calves"
+   ]
+  },
+  {
+   "id": "foot-back-left",
+   "groups": []
+  },
+  {
+   "id": "hamstrings-medial-left",
+   "groups": [
+    "hamstrings"
+   ]
+  },
+  {
+   "id": "hamstrings-lateral-left",
+   "groups": [
+    "hamstrings"
+   ]
+  },
+  {
+   "id": "foot-back-right",
+   "groups": []
+  },
+  {
+   "id": "hamstrings-medial-right",
+   "groups": [
+    "hamstrings"
+   ]
+  },
+  {
+   "id": "hamstrings-lateral-right",
+   "groups": [
+    "hamstrings"
+   ]
+  }
+ ]
+}

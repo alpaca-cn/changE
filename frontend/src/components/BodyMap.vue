@@ -127,38 +127,103 @@ interface RegionHit {
  * 目标，但**仍然要画出来**——缺了看起来像残肢。
  */
 const regionIndex = computed(() => {
-  const map = new Map<string, RegionHit>()
+  const map = new Map<string, RegionHit[]>()
   for (const mv of Object.values(props.volumeByMuscle)) {
     const level = levelFor(mv)
     for (const regionId of mv.regionIds) {
-      map.set(regionId, { muscleGroupId: mv.muscleGroupId, level })
+      const hit: RegionHit = { muscleGroupId: mv.muscleGroupId, level }
+      const list = map.get(regionId)
+      if (list === undefined) map.set(regionId, [hit])
+      else list.push(hit)
     }
   }
   return map
 })
 
-function levelOf(regionId: string): number {
-  return regionIndex.value.get(regionId)?.level ?? 0
-}
-
-function isMapped(regionId: string): boolean {
-  return regionIndex.value.has(regionId)
+/**
+ * 一个区域**被几个肌群认领**。
+ *
+ * 通常是 1 个。但素材是按解剖画的、比我们的分组粗：
+ *   - 胸只有 `chest-upper` / `chest-lower` 两块、没有「中胸」，
+ *     所以 `chest-lower-*` 同时属于中胸与下胸；
+ *   - 菱形肌没有独立区域，`traps-mid-*` 同时属于中斜方与菱形肌。
+ *
+ * 这些共用由后端的 `region-inventory.json` 声明、由 `MuscleRegionMappingTest` 守住。
+ * 顺序 = 后端给的顺序（`volumeByMuscle` 的插入序），第一个是主归属。
+ */
+function claimsOf(regionId: string): RegionHit[] {
+  return regionIndex.value.get(regionId) ?? []
 }
 
 /** 档位 → fill。0 档（含未映射区域）是基线灰，其余是 --accent 与基线的混合。 */
-function fillOf(regionId: string): string {
-  const percent = LEVEL_PERCENT[levelOf(regionId)] ?? 0
+function fillOfLevel(level: number): string {
+  const percent = LEVEL_PERCENT[level] ?? 0
   if (percent === 0) return BASELINE_FILL
   return `color-mix(in srgb, var(--accent) ${percent}%, var(--muted-strong))`
+}
+
+/** 未映射区域（头、脸、关节、四肢末端…）用基线灰画出来，只是不可点。 */
+const BASELINE_ONLY = fillOfLevel(0)
+
+/** 一条待渲染的路径。共用区域会被拆成多条。 */
+interface BandPath {
+  key: string
+  path: string
+  fill: string
+  clip: string | undefined
+  regionId: string
+  level: number
+  hit: RegionHit | null
+}
+
+function clipId(side: string, regionId: string, band: number): string {
+  return `band-${side}-${regionId}-${band}`
+}
+
+/**
+ * 把一个侧面的区域展开成路径列表。
+ *
+ * 被 N 个肌群认领的区域展开成 N 条，各自裁剪到一条横带 ——
+ * `clipPathUnits="objectBoundingBox"` 让裁剪坐标**相对该元素自身的包围盒**，
+ * 所以不需要提前知道 bbox 就能按比例切。
+ *
+ * 最多切两块：素材里被共用的只有 `chest-lower-*`（中胸/下胸）与
+ * `traps-mid-*`（中斜方/菱形肌），各由 2 个肌群认领。
+ */
+function pathsOf(side: string, muscles: { id: string; path: string }[]): BandPath[] {
+  const out: BandPath[] = []
+  for (const m of muscles) {
+    const claims = claimsOf(m.id)
+    if (claims.length === 0) {
+      out.push({
+        key: m.id, path: m.path, fill: BASELINE_ONLY,
+        clip: undefined, regionId: m.id, level: 0, hit: null,
+      })
+      continue
+    }
+    const bands = Math.min(claims.length, 2)
+    for (let i = 0; i < bands; i++) {
+      const hit = claims[i]
+      out.push({
+        key: m.id + '-' + i,
+        path: m.path,
+        fill: fillOfLevel(hit.level),
+        clip: bands > 1 ? `url(#${clipId(side, m.id, i + 1)})` : undefined,
+        regionId: m.id,
+        level: hit.level,
+        hit,
+      })
+    }
+  }
+  return out
 }
 
 /**
  * 点一块区域 → 把**肌群 id** 发出去（不是区域 id）。
  * 未映射区域点不动：直接返回，什么也不 emit。
  */
-function onRegionClick(regionId: string): void {
-  const hit = regionIndex.value.get(regionId)
-  if (!hit) return
+function onRegionClick(hit: RegionHit | null): void {
+  if (hit === null) return
   emit('muscle-click', hit.muscleGroupId)
 }
 </script>
@@ -169,16 +234,36 @@ function onRegionClick(regionId: string): void {
     <figure v-for="side in sides" :key="side.name" class="side">
       <figcaption class="eyebrow">{{ side.label }}</figcaption>
       <svg class="figure" :viewBox="side.viewBox">
+        <!-- 被多个肌群认领的区域要裁成横带，所以每个区域预备两条裁剪带 -->
+        <defs>
+          <clipPath
+            v-for="m in side.muscles"
+            :key="'c1-' + m.id"
+            :id="clipId(side.name, m.id, 1)"
+            clipPathUnits="objectBoundingBox"
+          >
+            <rect x="0" y="0" width="1" height="0.5" />
+          </clipPath>
+          <clipPath
+            v-for="m in side.muscles"
+            :key="'c2-' + m.id"
+            :id="clipId(side.name, m.id, 2)"
+            clipPathUnits="objectBoundingBox"
+          >
+            <rect x="0" y="0.5" width="1" height="0.5" />
+          </clipPath>
+        </defs>
         <path
-          v-for="m in side.muscles"
-          :key="m.id"
-          :d="m.path"
-          :fill="fillOf(m.id)"
-          :data-region-id="m.id"
-          :data-intensity="levelOf(m.id)"
-          :data-interactive="isMapped(m.id) ? 'true' : 'false'"
-          :class="{ 'is-clickable': isMapped(m.id) }"
-          @click="onRegionClick(m.id)"
+          v-for="p in pathsOf(side.name, side.muscles)"
+          :key="p.key"
+          :d="p.path"
+          :fill="p.fill"
+          :clip-path="p.clip"
+          :data-region-id="p.regionId"
+          :data-intensity="p.level"
+          :data-interactive="p.hit === null ? 'false' : 'true'"
+          :class="{ 'is-clickable': p.hit !== null }"
+          @click="onRegionClick(p.hit)"
         />
       </svg>
     </figure>
