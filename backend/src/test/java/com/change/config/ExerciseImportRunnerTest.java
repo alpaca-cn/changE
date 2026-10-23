@@ -43,12 +43,13 @@ class ExerciseImportRunnerTest {
         assertThat(scalar("SELECT COUNT(*) FROM exercise_muscle em "
                 + "JOIN exercise e ON e.id = em.exercise_id "
                 + "WHERE e.source_id LIKE 'free-exercise-db:%'"))
-                .as("肌群标注应当有 2587 条")
-                .isEqualTo(2587);
+                .as("肌群标注应当有 2741 条")
+                .isEqualTo(2741);
 
         assertThat(scalar("SELECT COUNT(*) FROM muscle_group"))
-                .as("17 块肌群来自 V7 种子迁移")
-                .isEqualTo(17);
+                // V7 的 17 块 + V11 的 10 个子部位
+                .as("27 块肌群来自 V7 与 V11 种子迁移")
+                .isEqualTo(27);
 
         assertThat(scalar("SELECT COUNT(*) FROM change_log "
                 + "WHERE origin = 'import' AND target_table = 'exercise'"))
@@ -57,7 +58,7 @@ class ExerciseImportRunnerTest {
         assertThat(scalar("SELECT COUNT(*) FROM change_log "
                 + "WHERE origin = 'import' AND target_table = 'exercise_muscle'"))
                 .as("导入的 join 行也要进审计日志")
-                .isEqualTo(2587);
+                .isEqualTo(2741);
     }
 
     private int scalar(String sql) {

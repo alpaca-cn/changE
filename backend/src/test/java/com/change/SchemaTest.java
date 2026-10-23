@@ -123,7 +123,9 @@ class SchemaTest {
         Map<String, List<String>> expectedColumns = new LinkedHashMap<>();
         expectedColumns.put("muscle_group", List.of(
                 "id", "name_zh", "name_en", "body_part", "region_ids",
-                "weekly_sets_min", "weekly_sets_max"));
+                "weekly_sets_min", "weekly_sets_max",
+                // V11 追加 parent_en（ALTER TABLE ADD COLUMN 追加在末尾）
+                "parent_en"));
         // V8 追加了 category / instructions 两列（ALTER TABLE ADD COLUMN 追加在末尾）：
         // category 让「记一组」的选择器能滤掉 292 条非 strength 动作，
         // instructions 是动作做法。两列都可空。

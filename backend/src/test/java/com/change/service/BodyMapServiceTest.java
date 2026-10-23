@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *
  * <h2>这里要守住的三件事</h2>
  *
- * <p><b>一、17 块一块都不能少。</b>「本周 0 组」是设计文档要求摆在最显眼位置的提醒，
+ * <p><b>一、27 块一块都不能少。</b>「本周 0 组」是设计文档要求摆在最显眼位置的提醒，
  * 它必须以 {@code sets: 0} 出现——从列表里消失等于提醒消失。所以「空库」不是空数组。
  *
  * <p><b>二、{@code lastTrainedOn} 是历史上任意一天，不是本周的快照。</b>本周没练过、
@@ -37,11 +37,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *
  * <h2>为什么用独立库文件</h2>
  *
- * <p>「空库 → 17 块全在、sets 全 0、lastTrainedOn 全 null」是一条关于**整张表**的断言，
+ * <p>「空库 → 27 块全在、sets 全 0、lastTrainedOn 全 null」是一条关于**整张表**的断言，
  * 共享库（{@code target/data/change.db}）里别处留下的训练行会让它凭空变红；
  * 而把它拆成「只断言自己插的那几行」就再也测不出「空库返回什么」。
  * 所以照 {@code ExerciseControllerTest} 的做法给这个类一个独立库文件，
- * 每个用例前把训练域清空——清完之后库里只剩 V7 的 17 块肌群，那就是确定的「空库」。
+ * 每个用例前把训练域清空——清完之后库里只剩 V7 的 27 块肌群，那就是确定的「空库」。
  *
  * <p>日期用固定的 {@code 2026-10-20}（**周二**，它那一周的周一是 2026-10-19），
  * 不用 {@code LocalDate.now()}：否则用例会随运行日期换周，`daysSince` 每天都不一样。
@@ -67,7 +67,7 @@ class BodyMapServiceTest {
 
     @BeforeEach
     void clean() {
-        // FK 顺序：组 → 动作实例 → 训练 → 肌群标注 → 动作。清完之后库里只剩 V7 的 17 块肌群。
+        // FK 顺序：组 → 动作实例 → 训练 → 肌群标注 → 动作。清完之后库里只剩 V7 的 27 块肌群。
         jdbc.update("DELETE FROM workout_set");
         jdbc.update("DELETE FROM session_exercise");
         jdbc.update("DELETE FROM workout_session");
@@ -110,7 +110,7 @@ class BodyMapServiceTest {
     }
 
     // ------------------------------------------------------------------
-    // 1. 17 块一块都不能少
+    // 1. 27 块一块都不能少
     // ------------------------------------------------------------------
 
     /**
@@ -119,14 +119,14 @@ class BodyMapServiceTest {
      * <p>这是变异「只返回有训练量的肌群」的杀手：过滤掉 0 组之后这里只剩 0 块。
      */
     @Test
-    void all_seventeen_muscles_come_back_with_zero_when_nothing_was_trained() {
+    void all_muscles_come_back_with_zero_when_nothing_was_trained() {
         BodyMapService.BodyMapVolume v = bodyMap.volumeOn(TUESDAY);
 
         assertThat(v.weekStart()).isEqualTo(MONDAY);
         assertThat(v.weekEnd()).isEqualTo(SUNDAY);
         assertThat(v.today()).isEqualTo(TUESDAY);
 
-        assertThat(v.muscles()).as("空库也要返回全部 17 块").hasSize(17);
+        assertThat(v.muscles()).as("空库也要返回全部 27 块").hasSize(27);
         // 不是「恰好 17 条硬编码」而是 muscle_group 的全部行：加了一块肌群这条会跟着变，
         // 而写死 17 的断言会在那时静默地少一条（或者要求人肉去数）。
         assertThat(v.muscles()).extracting(BodyMapService.MuscleBodyMap::nameEn)
@@ -137,23 +137,30 @@ class BodyMapServiceTest {
             assertThat(m.sets()).as("%s 的本周组数", m.nameEn()).isZero();
             assertThat(m.lastTrainedOn()).as("%s 从没练过", m.nameEn()).isNull();
             assertThat(m.daysSince()).as("%s 从没练过", m.nameEn()).isNull();
-            assertThat(m.regionIds()).as("%s 的人体图区域", m.nameEn()).isNotEmpty();
+            // 子部位（chest-upper 这种）**故意**没有区域 id：2D 人体图仍是父组粒度，
+            // 子部位带区域 id 会让同一块区域被两个肌群争着上色。
+            if (m.parentEn() == null) {
+                assertThat(m.regionIds()).as("%s 的人体图区域", m.nameEn()).isNotEmpty();
+            } else {
+                assertThat(m.regionIds()).as("%s 是子部位，不该参与 2D", m.nameEn()).isEmpty();
+            }
         }
     }
 
     /** 练了一块，另外 16 块仍然在（且都是 0）——「0」与「不在列表里」必须是两种结果。 */
     @Test
-    void training_one_muscle_does_not_remove_the_other_sixteen() {
+    void training_one_muscle_does_not_remove_the_others() {
         long ex = newExercise("ZZ BodyMap Only Chest");
         link(ex, "chest", "primary");
         record(TUESDAY, ex, 2, 0);
 
         BodyMapService.BodyMapVolume v = bodyMap.volumeOn(TUESDAY);
 
-        assertThat(v.muscles()).hasSize(17);
+        assertThat(v.muscles()).hasSize(27);
         assertThat(byName(v, "chest").sets()).isEqualTo(2.0);
+        // 拆分后「其余」是 17 个顶层 + 10 个子部位 - 1 个练过的 = 26
         assertThat(v.muscles()).filteredOn(m -> m.sets() == 0.0)
-                .as("其余 16 块以 0 出现").hasSize(16);
+                .as("其余 26 块以 0 出现").hasSize(26);
     }
 
     // ------------------------------------------------------------------
@@ -215,8 +222,10 @@ class BodyMapServiceTest {
             @Override
             public WeeklyVolume weekly(LocalDate anyDay) {
                 return new WeeklyVolume(MONDAY, SUNDAY, List.of(
+                        // 2026-10-23: MuscleVolume 加了 parentEn（子部位用），
+                        // 顶层组传 null
                         new MuscleVolume(1L, "胸部", "chest", 42.5, 999, 1000,
-                                VolumeCalculator.Status.ABOVE)));
+                                VolumeCalculator.Status.ABOVE, null)));
             }
         };
         BodyMapService withSentinel = new BodyMapService(sentinel, muscleGroups, jdbc);
@@ -336,6 +345,11 @@ class BodyMapServiceTest {
         for (BodyMapService.MuscleBodyMap m : v.muscles()) {
             String raw = jdbc.queryForObject(
                     "SELECT region_ids FROM muscle_group WHERE id = ?", String.class, m.muscleGroupId());
+            if (m.parentEn() != null) {
+                // 子部位故意没有 region_ids（2D 仍是父组粒度，见 V11 的注释）
+                assertThat(raw).as("%s 是子部位，region_ids 应为 NULL", m.nameEn()).isNull();
+                continue;
+            }
             assertThat(raw).as("%s 的 region_ids 列（V10 之后不应为 NULL）", m.nameEn()).isNotBlank();
             assertThat(m.regionIds())
                     .as("%s 的 regionIds 应与库里的那一列逐项一致", m.nameEn())
@@ -363,7 +377,7 @@ class BodyMapServiceTest {
         assertThat(v.weekStart()).isEqualTo(
                 today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)));
         assertThat(v.weekEnd()).isEqualTo(v.weekStart().plusDays(6));
-        assertThat(v.muscles()).hasSize(17);
+        assertThat(v.muscles()).hasSize(27);
     }
 
     @Test

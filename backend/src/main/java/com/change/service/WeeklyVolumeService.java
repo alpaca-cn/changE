@@ -28,7 +28,9 @@ public class WeeklyVolumeService {
 
     /** 一块肌群的周容量。{@code status} 由 {@link VolumeCalculator#classify} 给出。 */
     public record MuscleVolume(long muscleGroupId, String nameZh, String nameEn, double sets,
-                               Integer min, Integer max, VolumeCalculator.Status status) {}
+                               Integer min, Integer max, VolumeCalculator.Status status,
+                                     /** 父组的 name_en；null = 顶层。前端据此缩进。 */
+                                     String parentEn) {}
 
     /** 一周的容量。 */
     public record WeeklyVolume(LocalDate weekStart, LocalDate weekEnd, List<MuscleVolume> muscles) {}
@@ -62,17 +64,48 @@ public class WeeklyVolumeService {
 
         Map<Long, Double> setsByMuscle = VolumeCalculator.accumulate(entries);
 
-        List<MuscleVolume> muscles = muscleGroups.findAll().stream()
+        List<MuscleGroup> all = muscleGroups.findAll().stream()
                 .sorted(Comparator.comparing(g -> g.id))
-                .map(g -> toMuscleVolume(g, setsByMuscle))
                 .toList();
+
+        // 子部位按 parent_en 归到父组下
+        Map<String, List<MuscleGroup>> childrenByParent = all.stream()
+                .filter(g -> g.parentEn != null)
+                .collect(java.util.stream.Collectors.groupingBy(g -> g.parentEn));
+
+        // 顺序：父组在前，它的子部位紧跟其后。前端的容量面板靠这个顺序缩进，
+        // 而不是靠再排一次 —— 排两次就可能与这里不一致。
+        List<MuscleVolume> muscles = new java.util.ArrayList<>();
+        for (MuscleGroup g : all) {
+            if (g.parentEn != null) {
+                continue;   // 子部位跟父组一起输出
+            }
+            List<MuscleGroup> kids = childrenByParent.getOrDefault(g.nameEn, List.of());
+            double own = setsByMuscle.getOrDefault(g.id, 0.0);
+
+            // 父组 = 自己的 + 所有子部位的。
+            // 这样**总量不变**（用户的训练量不会被凭空放大或缩小），
+            // 同时界面上能看出「缺的是下胸」——这正是要细分的目的。
+            double total = own;
+            for (MuscleGroup k : kids) {
+                total += setsByMuscle.getOrDefault(k.id, 0.0);
+            }
+            muscles.add(toMuscleVolume(g, total, g.weeklySetsMin, g.weeklySetsMax));
+            for (MuscleGroup k : kids) {
+                muscles.add(toMuscleVolume(k, setsByMuscle.getOrDefault(k.id, 0.0), null, null));
+            }
+        }
 
         return new WeeklyVolume(start, end, muscles);
     }
 
-    private static MuscleVolume toMuscleVolume(MuscleGroup g, Map<Long, Double> setsByMuscle) {
-        double sets = setsByMuscle.getOrDefault(g.id, 0.0);   // 缺键 = 0 组
-        return new MuscleVolume(g.id, g.nameZh, g.nameEn, sets, g.weeklySetsMin, g.weeklySetsMax,
-                VolumeCalculator.classify(sets, g.weeklySetsMin, g.weeklySetsMax));
+    /**
+     * @param sets 已经算好的组数（父组传的是汇总值，子部位传自己的）
+     * @param min  参考区间下限；**子部位传 null** —— 区间是给「一块肌肉」的，
+     *             给子部位编一个会让「本周容量」的提醒乱跳
+     */
+    private static MuscleVolume toMuscleVolume(MuscleGroup g, double sets, Integer min, Integer max) {
+        return new MuscleVolume(g.id, g.nameZh, g.nameEn, sets, min, max,
+                VolumeCalculator.classify(sets, min, max), g.parentEn);
     }
 }

@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 再跑一次结果不变」——回滚的事务观察不到这件事。
  *
  * <p><b>为什么要手动清理（这是本类最容易出错的地方）。</b>导入会**提交** 876 行动作
- * 与 2587 行肌群标注，而测试库是全类共享的磁盘库。其中最凶的一点：数据里有
+ * 与 2741 行肌群标注，而测试库是全类共享的磁盘库。其中最凶的一点：数据里有
  * {@code Plank}，而 {@code TrainingRepoTest} 也要插一个叫 {@code Plank} 的动作——
  * 导入留下的行会让那条测试撞 {@code ux_exercise_name_en} 唯一索引，红在一个与被测行为
  * 完全无关的地方。所以 {@link #cleanUp()} 必须在每个方法后把导入的行与日志删干净。
@@ -53,15 +53,15 @@ class ExerciseImportServiceTest {
     }
 
     @Test
-    void first_import_creates_876_exercises_and_2587_muscle_links() {
+    void first_import_creates_876_exercises_and_2741_muscle_links() {
         ExerciseImportService.Result r = importService.importAll();
 
         assertThat(r.inserted()).isEqualTo(876);
         assertThat(r.skipped()).isZero();
-        assertThat(r.musclesInserted()).isEqualTo(2587);
+        assertThat(r.musclesInserted()).isEqualTo(2741);
 
         assertThat(importedExercises()).isEqualTo(876);
-        assertThat(importedLinks()).isEqualTo(2587);
+        assertThat(importedLinks()).isEqualTo(2741);
     }
 
     @Test
@@ -75,7 +75,7 @@ class ExerciseImportServiceTest {
         assertThat(again.musclesInserted()).isZero();
 
         assertThat(importedExercises()).isEqualTo(876);
-        assertThat(importedLinks()).isEqualTo(2587);
+        assertThat(importedLinks()).isEqualTo(2741);
     }
 
     @Test
@@ -114,8 +114,8 @@ class ExerciseImportServiceTest {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM change_log WHERE origin = 'import' AND target_table = 'exercise_muscle'",
                 Integer.class))
-                .as("2587 条 join 行都要有日志，否则「这次导入动了什么」答不出来")
-                .isEqualTo(2587);
+                .as("2741 条 join 行都要有日志，否则「这次导入动了什么」答不出来")
+                .isEqualTo(2741);
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM change_log WHERE origin = 'import' AND target_table = 'exercise'",
                 Integer.class))
@@ -192,7 +192,7 @@ class ExerciseImportServiceTest {
     void unimport_removes_every_imported_exercise_and_its_muscle_links() {
         importService.importAll();
         assertThat(importedExercises()).isEqualTo(876);
-        assertThat(importedLinks()).isEqualTo(2587);
+        assertThat(importedLinks()).isEqualTo(2741);
 
         int removed = importService.unimport();
 
@@ -206,7 +206,7 @@ class ExerciseImportServiceTest {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM change_log WHERE origin = 'import' AND action = 'insert'",
                 Integer.class))
-                .isEqualTo(876 + 2587);
+                .isEqualTo(876 + 2741);
         // 外加一条汇总 delete 日志，作为「那 876 个动作哪去了」的证据
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM change_log WHERE origin = 'import' AND action = 'delete'",
@@ -245,7 +245,7 @@ class ExerciseImportServiceTest {
 
         assertThat(again.inserted()).as("撤销是可逆的").isEqualTo(876);
         assertThat(importedExercises()).isEqualTo(876);
-        assertThat(importedLinks()).isEqualTo(2587);
+        assertThat(importedLinks()).isEqualTo(2741);
     }
 
     @Test

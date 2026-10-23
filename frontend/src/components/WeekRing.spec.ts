@@ -13,6 +13,7 @@ function muscle(status: VolumeStatus, over: Partial<MuscleVolume> = {}): MuscleV
     min: hasTarget ? 10 : null,
     max: hasTarget ? 20 : null,
     status,
+    parentEn: null,
     ...over,
   }
 }

@@ -21,6 +21,7 @@ function muscle(overrides: Partial<MuscleBodyMap> = {}): MuscleBodyMap {
     min: 10,
     max: 20,
     status: 'BELOW',
+    parentEn: null,
     lastTrainedOn: '2026-10-20',
     daysSince: 0,
     regionIds: ['chest-upper-left', 'chest-lower-left', 'chest-upper-right', 'chest-lower-right'],

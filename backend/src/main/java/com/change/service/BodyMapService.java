@@ -78,7 +78,14 @@ public class BodyMapService {
      */
     public record MuscleBodyMap(long muscleGroupId, String nameZh, String nameEn, double sets,
                                 Integer min, Integer max, VolumeCalculator.Status status,
-                                LocalDate lastTrainedOn, Integer daysSince, List<String> regionIds) {}
+                                LocalDate lastTrainedOn, Integer daysSince, List<String> regionIds,
+            /**
+             * 父组 name_en；null = 顶层。
+             *
+             * <p>子部位**没有** regionIds（2D 仍是父组粒度），所以前端拿这个字段
+             * 判断「这块要不要去 SVG 里找路径」。
+             */
+            String parentEn) {}
 
     /**
      * 一次人体图请求的全部数据。
@@ -156,7 +163,8 @@ public class BodyMapService {
                     LocalDate last = lastTrainedOn.get(m.muscleGroupId());
                     return new MuscleBodyMap(m.muscleGroupId(), m.nameZh(), m.nameEn(), m.sets(),
                             m.min(), m.max(), m.status(), last, daysSince(last, today),
-                            regionIds.getOrDefault(m.muscleGroupId(), List.of()));
+                            regionIds.getOrDefault(m.muscleGroupId(), List.of()),
+                            m.parentEn());
                 })
                 .toList();
 

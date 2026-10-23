@@ -18,12 +18,12 @@ class VolumeControllerTest {
     @Autowired MockMvc mvc;
 
     @Test
-    void weekly_volume_accepts_an_iso_date_and_returns_all_seventeen_muscles() throws Exception {
+    void weekly_volume_accepts_an_iso_date_and_returns_all_muscles() throws Exception {
         mvc.perform(get("/api/volume/weekly").param("date", "2026-10-14"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.weekStart").value("2026-10-12"))
                 .andExpect(jsonPath("$.weekEnd").value("2026-10-18"))
-                .andExpect(jsonPath("$.muscles.length()").value(17))
+                .andExpect(jsonPath("$.muscles.length()").value(27))
                 .andExpect(jsonPath("$.muscles[0].nameEn").exists())
                 .andExpect(jsonPath("$.muscles[0].status").exists());
     }

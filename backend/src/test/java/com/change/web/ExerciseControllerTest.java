@@ -81,7 +81,7 @@ class ExerciseControllerTest {
         mvc.perform(post("/api/exercises/import"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.inserted").value(876))
-                .andExpect(jsonPath("$.musclesInserted").value(2587));
+                .andExpect(jsonPath("$.musclesInserted").value(2741));
 
         mvc.perform(get("/api/exercises/status"))
                 .andExpect(jsonPath("$.imported").value(876))
@@ -196,7 +196,8 @@ class ExerciseControllerTest {
     void detail_returns_exactly_the_contract_keys_and_primary_muscles_first() throws Exception {
         long ex = insertExercise("ZZ Detail Bench", "详情卧推", "barbell", true, "strength",
                 "Lie on a flat bench.\nPress the bar.", "躺在平板凳上。\n推起杠铃。");
-        linkMuscle(ex, "chest", "primary");
+        // chest 被拆开；这个动作没有 incline/decline 线索 -> 中胸
+        linkMuscle(ex, "chest-middle", "primary");
         linkMuscle(ex, "triceps", "secondary");
 
         String body = detailBody(ex);
@@ -228,8 +229,8 @@ class ExerciseControllerTest {
             assertThat(keysOf(muscle)).as("肌群键").containsExactly(
                     "muscleGroupId", "nameZh", "nameEn", "role");
         }
-        assertThat(muscles.get(0).get("nameEn").asText()).isEqualTo("chest");
-        assertThat(muscles.get(0).get("nameZh").asText()).isEqualTo("胸部");
+        assertThat(muscles.get(0).get("nameEn").asText()).isEqualTo("chest-middle");
+        assertThat(muscles.get(0).get("nameZh").asText()).isEqualTo("中胸");
         assertThat(muscles.get(0).get("role").asText()).isEqualTo("primary");
         assertThat(muscles.get(1).get("nameEn").asText()).isEqualTo("triceps");
         assertThat(muscles.get(1).get("nameZh").asText()).isEqualTo("肱三头肌");
@@ -255,6 +256,8 @@ class ExerciseControllerTest {
 
         assertThat(muscleNames(muscles))
                 .as("主要在前；次要内部按 id；不依赖插入顺序")
+                // chest 被拆开 -> chest-middle（该动作无 incline/decline 线索）
+                // linkMuscle 直接插父组，不走导入器的子部位映射
                 .containsExactly("quadriceps", "chest", "biceps");
         assertThat(muscles.get(0).get("role").asText()).isEqualTo("primary");
         assertThat(muscles.get(1).get("role").asText()).isEqualTo("secondary");
@@ -347,10 +350,12 @@ class ExerciseControllerTest {
         // 真实数据里的 role：主要肌群在前，次要肌群按 muscle_group.id 排。
         JsonNode muscles = root.get("muscles");
         assertThat(muscleNames(muscles))
-                .containsExactly("chest", "lats", "shoulders", "triceps");
+                // chest 与 shoulders 在被拆分的父组里，落到子部位：
+        // 分类依据见 docs/动作到子部位映射.md（pullover 不含 incline/decline -> 中胸）
+        .containsExactly("chest-middle", "lats", "triceps", "shoulders-lateral");
         assertThat(muscles.get(0).get("role").asText()).isEqualTo("primary");
         assertThat(muscles.get(1).get("role").asText()).isEqualTo("secondary");
-        assertThat(muscles.get(0).get("nameZh").asText()).isEqualTo("胸部");
+        assertThat(muscles.get(0).get("nameZh").asText()).isEqualTo("中胸");
 
         // 5 条没有英文原文的动作之一：两个 null、键都在、仍是 200。
         long pushPress = jdbc.queryForObject(

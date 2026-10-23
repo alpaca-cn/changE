@@ -92,7 +92,8 @@ class AgentToolsTest {
     @Test
     void 只读工具能真的返回数据() throws Exception {
         var volume = json.readTree(tools.execute("weekly_volume", "{}"));
-        assertThat(volume.path("muscles")).hasSize(17);
+        // 2026-10-23: 拆分后 17 个顶层 + 10 个子部位
+        assertThat(volume.path("muscles")).hasSize(27);
     }
 
     @Test

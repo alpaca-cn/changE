@@ -105,11 +105,12 @@ class MuscleRegionMappingTest {
     // ------------------------------------------------------------------
 
     @Test
-    void all_seventeen_groups_have_non_blank_region_ids() {
+    void all_top_level_groups_have_non_blank_region_ids() {
         // 没有区域的肌群在人体图上永远点不亮——那是静默的空白。
         Map<String, List<String>> byGroup = databaseRegionIds();
 
-        assertThat(byGroup).as("muscle_group 应有 17 行").hasSize(17);
+        // 顶层仍是 17 个（V11 新增的 10 个是子部位，故意没有 region_ids）
+        assertThat(byGroup).as("muscle_group 的顶层应有 17 行").hasSize(17);
         for (Map.Entry<String, List<String>> e : byGroup.entrySet()) {
             assertThat(e.getValue())
                     .as("%s 的 region_ids 不应为空", e.getKey())
@@ -257,10 +258,12 @@ class MuscleRegionMappingTest {
      * 逗号分隔、无空项、逗号两侧没有空格（见 MuscleGroup 的类注释）。
      */
     private Map<String, List<String>> databaseRegionIds() {
+        // 只读**顶层**：V11 追加的 10 个子部位故意没有 region_ids
+        // （2D 人体图仍是父组粒度，见 V11 的注释）。
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT name_en, region_ids FROM muscle_group ORDER BY id");
+                "SELECT name_en, region_ids FROM muscle_group WHERE parent_en IS NULL ORDER BY id");
 
-        assertThat(rows).as("muscle_group 应有 17 行").hasSize(17);
+        assertThat(rows).as("muscle_group 的顶层应有 17 行").hasSize(17);
 
         Map<String, List<String>> byGroup = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {

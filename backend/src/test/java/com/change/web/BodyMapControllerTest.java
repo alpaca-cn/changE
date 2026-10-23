@@ -53,7 +53,9 @@ class BodyMapControllerTest {
     /** 契约里的十个键，顺序就是 record 的字段顺序。 */
     private static final List<String> MUSCLE_KEYS = List.of(
             "muscleGroupId", "nameZh", "nameEn", "sets", "min", "max", "status",
-            "lastTrainedOn", "daysSince", "regionIds");
+            "lastTrainedOn", "daysSince", "regionIds",
+            // V11：子部位用 parentEn 声明自己属于哪个父组
+            "parentEn");
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
@@ -160,7 +162,9 @@ class BodyMapControllerTest {
         // 3. 17 块，每块恰好十个键
         JsonNode muscles = root.get("muscles");
         assertThat(muscles.isArray()).isTrue();
-        assertThat(muscles).hasSize(17);
+        assertThat(muscles).// 2026-10-23: 胸/肩/斜方/中背/下背拆成子部位，17 块变成 27 块
+        // （17 个顶层 + 10 个子部位）。这是模型的有意变更。
+        hasSize(27);
         for (JsonNode m : muscles) {
             assertThat(keysOf(m)).as("肌群 %s 的键", m.get("nameEn").asText())
                     .containsExactlyElementsOf(MUSCLE_KEYS);
@@ -171,8 +175,19 @@ class BodyMapControllerTest {
                     .isTrue();
             assertThat(regionIds.isTextual()).as("%s 的 regionIds 不是字符串", m.get("nameEn").asText())
                     .isFalse();
-            assertThat(regionIds.size()).as("%s 的 regionIds 不应为空", m.get("nameEn").asText())
-                    .isPositive();
+            // 子部位（chest-upper 这种）**故意**没有 regionIds：
+            // 2D 人体图仍是父组粒度，子部位带区域 id 会让同一块区域被两个肌群争着上色。
+            boolean isSubGroup = m.get("parentEn") != null && !m.get("parentEn").isNull();
+            if (isSubGroup) {
+                // 子部位不带区域 id：2D 人体图仍是父组粒度
+                assertThat(regionIds.size())
+                        .as("%s 是子部位，regionIds 应为空", m.get("nameEn").asText())
+                        .isZero();
+            } else {
+                assertThat(regionIds.size())
+                        .as("%s 的 regionIds 不应为空", m.get("nameEn").asText())
+                        .isPositive();
+            }
             for (JsonNode id : regionIds) {
                 assertThat(id.isTextual()).as("region id 是字符串").isTrue();
                 assertThat(id.asText()).as("region id 不含逗号").doesNotContain(",");
@@ -236,10 +251,12 @@ class BodyMapControllerTest {
 
     /** 空库：17 块全在，{@code sets} 全 0，{@code lastTrainedOn} / {@code daysSince} 全 null。 */
     @Test
-    void an_empty_database_still_returns_all_seventeen_muscles_with_zero_sets() throws Exception {
+    void an_empty_database_still_returns_all_muscles_with_zero_sets() throws Exception {
         JsonNode muscles = json.readTree(getBody("2026-10-20")).get("muscles");
 
-        assertThat(muscles).hasSize(17);
+        assertThat(muscles).// 2026-10-23: 胸/肩/斜方/中背/下背拆成子部位，17 块变成 27 块
+        // （17 个顶层 + 10 个子部位）。这是模型的有意变更。
+        hasSize(27);
         for (JsonNode m : muscles) {
             assertThat(m.get("sets").asDouble()).as("%s 的本周组数", m.get("nameEn").asText()).isZero();
             assertThat(m.get("lastTrainedOn").isNull()).isTrue();
@@ -259,7 +276,9 @@ class BodyMapControllerTest {
         assertThat(root.get("today").asText()).isEqualTo(today.toString());
         assertThat(root.get("weekStart").asText()).isEqualTo(
                 today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).toString());
-        assertThat(root.get("muscles")).hasSize(17);
+        assertThat(root.get("muscles")).// 2026-10-23: 胸/肩/斜方/中背/下背拆成子部位，17 块变成 27 块
+        // （17 个顶层 + 10 个子部位）。这是模型的有意变更。
+        hasSize(27);
     }
 
     @Test
