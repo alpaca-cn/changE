@@ -37,6 +37,12 @@ export interface MuscleBodyMap {
   daysSince: number | null
   /** 该肌群在 SVG 里的区域 id。不在这里的区域不参与着色，也不可点。 */
   regionIds: string[]
+  /**
+   * 父组 nameEn；null = 顶层。
+   *
+   * 子部位（chest-upper 这种）`regionIds` 恒为空 —— 2D 人体图仍是父组粒度。
+   */
+  parentEn: string | null
 }
 
 /** `GET /api/body-map/volume` 的响应。 */

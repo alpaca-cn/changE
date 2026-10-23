@@ -53,7 +53,9 @@ class BodyMapControllerTest {
     /** 契约里的十个键，顺序就是 record 的字段顺序。 */
     private static final List<String> MUSCLE_KEYS = List.of(
             "muscleGroupId", "nameZh", "nameEn", "sets", "min", "max", "status",
-            "lastTrainedOn", "daysSince", "regionIds");
+            "lastTrainedOn", "daysSince", "regionIds",
+            // V11：子部位用 parentEn 声明自己属于哪个父组
+            "parentEn");
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
@@ -176,12 +178,15 @@ class BodyMapControllerTest {
             // 子部位（chest-upper 这种）**故意**没有 regionIds：
             // 2D 人体图仍是父组粒度，子部位带区域 id 会让同一块区域被两个肌群争着上色。
             boolean isSubGroup = m.get("parentEn") != null && !m.get("parentEn").isNull();
-            assertThat(regionIds.size())
-                    .as("%s 的 regionIds %s", m.get("nameEn").asText(),
-                            isSubGroup ? "应为空（子部位不参与 2D）" : "不应为空")
-                    .isEqualTo(0);
-            if (!isSubGroup) {
-                assertThat(regionIds.size()).as("父组的 regionIds 不应为空").isPositive();
+            if (isSubGroup) {
+                // 子部位不带区域 id：2D 人体图仍是父组粒度
+                assertThat(regionIds.size())
+                        .as("%s 是子部位，regionIds 应为空", m.get("nameEn").asText())
+                        .isZero();
+            } else {
+                assertThat(regionIds.size())
+                        .as("%s 的 regionIds 不应为空", m.get("nameEn").asText())
+                        .isPositive();
             }
             for (JsonNode id : regionIds) {
                 assertThat(id.isTextual()).as("region id 是字符串").isTrue();

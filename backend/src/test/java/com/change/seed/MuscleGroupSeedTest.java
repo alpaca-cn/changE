@@ -74,10 +74,12 @@ class MuscleGroupSeedTest {
     // ------------------------------------------------------------------
 
     @Test
-    void there_are_exactly_seventeen_groups() {
+    void the_java_constant_list_has_seventeen_entries() {
         // 数据集的 primaryMuscles 是 17 值固定枚举（实测确认）。
         // 数量一变就说明数据集换了版本，或者我们漏加/多加了一块肌肉。
-        assertThat(MuscleGroupSeed.ALL).hasSize(27);
+        // **常量仍是 17**：V11 的 10 个子部位是手写迁移、不来自这个常量列表。
+        // 库里的 27 行由 after_migration_the_database_really_has_twenty_seven_groups 守。
+        assertThat(MuscleGroupSeed.ALL).hasSize(17);
     }
 
     @Test
@@ -209,16 +211,26 @@ class MuscleGroupSeedTest {
         // 「写了」不等于「生效」：迁移可能没跑、可能被 Flyway 跳过、
         // 也可能 INSERT 的列名写错而 sqlite 宽容地接受。
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT name_en, name_zh, body_part, region_ids, weekly_sets_min, weekly_sets_max " +
+                "SELECT name_en, name_zh, body_part, region_ids, weekly_sets_min, weekly_sets_max, parent_en " +
                 "FROM muscle_group ORDER BY id");
 
         assertThat(rows).hasSize(27);
 
-        assertThat(rows.stream().map(r -> (String) r.get("name_en")).toList())
-                .as("按 id 顺序（= AUTOINCREMENT 的插入顺序）应与 Java 常量一致")
+        int topLevel = MuscleGroupSeed.ALL.size();   // 17:V7 生成的那一批
+        assertThat(rows.subList(0, topLevel).stream().map(r -> (String) r.get("name_en")).toList())
+                .as("前 17 行（V7 生成）按 id 顺序应与 Java 常量一致")
                 .isEqualTo(MuscleGroupSeed.ALL.stream().map(g -> g.nameEn).toList());
 
-        for (int i = 0; i < rows.size(); i++) {
+        // 后 10 行是 V11 手写的子部位：不来自常量列表，但必须都挂得住父组
+        assertThat(rows.subList(topLevel, rows.size()))
+                .as("V11 追加的 10 行子部位")
+                .hasSize(10)
+                .allMatch(r -> r.get("parent_en") != null);
+        assertThat(rows.subList(0, topLevel))
+                .as("顶层不该有 parent_en")
+                .allMatch(r -> r.get("parent_en") == null);
+
+        for (int i = 0; i < topLevel; i++) {
             MuscleGroupSeed.G g = MuscleGroupSeed.ALL.get(i);
             Map<String, Object> row = rows.get(i);
             String at = "第 " + (i + 1) + " 行（name_en=" + g.nameEn + "）";

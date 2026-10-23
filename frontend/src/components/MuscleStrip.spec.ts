@@ -13,6 +13,7 @@ function muscle(over: Partial<MuscleVolume> = {}): MuscleVolume {
     min: 10,
     max: 20,
     status: 'BELOW',
+    parentEn: null,
     ...over,
   }
 }

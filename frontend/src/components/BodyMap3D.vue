@@ -55,9 +55,9 @@ let dispose: (() => void) | null = null
  *   - 用 `-` 前面的部分拿到**父组**（体积极、右侧面板、2D 都用父组）
  *   - 用整名查到**中文子部位名**，点选时告诉用户「你点的是上胸」，而不是笼统的「胸部」
  *
- * **这一层不声称有分块体积。** 真实的分块数据要动 schema + 导入器 + 汇总 + UI
- * 四处，一次做完才算数；在那之前，说「上胸」但按胸部算，比说「胸部」更准，
- * 也比编一个分块数字更诚实。
+ * 2026-10-23 起，这些子部位已经是**真的肌群行**（V11 迁移），各有自己的
+ * 组数与动作映射；父组的组数是它们的和。所以这里的 PART_ZH 只用于提示文案，
+ * 体积直接查 `volumeByMuscle[子部位名]`。
  */
 const PART_ZH: Record<string, string> = {
   'chest-upper': '上胸',
@@ -261,7 +261,7 @@ async function build() {
       let mat = materialByGroup.get(group)
       if (mat === undefined) {
         mat = new THREE.MeshStandardMaterial({
-          color: toneFor(props.volumeByMuscle[parentOf.get(c) ?? group] ?? 0),
+          color: toneFor(props.volumeByMuscle[group] ?? 0),
           roughness: 0.62,
           metalness: 0.04,
           // 双面：导出的网格里有些是单面壳，背面剔除会露出空洞
@@ -313,7 +313,6 @@ async function build() {
       const raw = muscleHit.object.name
       const c = canon(groupNameOf(muscleHit.object, root))
       const group = groupOf.get(c)
-      const parent = parentOf.get(c) ?? group
       if (group === undefined) {
         probe.value = '命中「' + raw + '」，但它不在肌群表里'
         emit('unknown-hit', raw)
@@ -321,10 +320,11 @@ async function build() {
       }
       const partZh = PART_ZH[group]
       probe.value = partZh !== undefined
-        ? '命中 ' + partZh + '（' + raw + '，体积按 ' + parent + ' 算）'
+        ? '命中 ' + partZh + '（' + raw + '）'
         : '命中 ' + group + '（' + raw + '，共 ' + hits.length + ' 个交点）'
-      // **emit 父组**：体积极、右侧面板、2D 都按父组，数据层还没细分
-      emit('muscle-click', parent !== undefined ? parent : group)
+      // 2026-10-23：数据层已支持子部位，emit 它自己。
+      // 父组的组数是子部位之和，所以两侧的数字对得上。
+      emit('muscle-click', group)
     }
 
     renderer.domElement.addEventListener('pointerdown', onDown)
@@ -384,9 +384,8 @@ function repaint() {
     const c = canon((mesh.name ?? '').replace(/[._]\d+$/, ''))
     const group = groupOf.get(c)
     if (group === undefined) return
-    const parent = parentOf.get(c) ?? group
-    mesh.material.color?.setHex(toneFor(props.volumeByMuscle[parent] ?? 0))
-    mesh.material.emissive?.setHex(parent === selected ? 0x5a3d12 : 0x000000)
+    mesh.material.color?.setHex(toneFor(props.volumeByMuscle[group] ?? 0))
+    mesh.material.emissive?.setHex(group === selected ? 0x5a3d12 : 0x000000)
   })
 }
 

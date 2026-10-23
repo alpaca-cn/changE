@@ -81,6 +81,7 @@ function volumeOf(rows: readonly Row[]): Record<number, MuscleBodyMap> {
       lastTrainedOn: r.days === null ? null : isoDaysFrom(r.days),
       daysSince: r.days,
       regionIds: [...r.regions],
+      parentEn: null,
     }
   }
   return out

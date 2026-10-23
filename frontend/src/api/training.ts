@@ -28,6 +28,8 @@ export interface MuscleVolume {
   min: number | null
   max: number | null
   status: VolumeStatus
+  /** 父组 name_en；null = 顶层。容量面板靠它缩进。 */
+  parentEn: string | null
 }
 
 export interface WeeklyVolume {

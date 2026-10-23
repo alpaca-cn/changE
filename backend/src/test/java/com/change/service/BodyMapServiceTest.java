@@ -137,7 +137,13 @@ class BodyMapServiceTest {
             assertThat(m.sets()).as("%s 的本周组数", m.nameEn()).isZero();
             assertThat(m.lastTrainedOn()).as("%s 从没练过", m.nameEn()).isNull();
             assertThat(m.daysSince()).as("%s 从没练过", m.nameEn()).isNull();
-            assertThat(m.regionIds()).as("%s 的人体图区域", m.nameEn()).isNotEmpty();
+            // 子部位（chest-upper 这种）**故意**没有区域 id：2D 人体图仍是父组粒度，
+            // 子部位带区域 id 会让同一块区域被两个肌群争着上色。
+            if (m.parentEn() == null) {
+                assertThat(m.regionIds()).as("%s 的人体图区域", m.nameEn()).isNotEmpty();
+            } else {
+                assertThat(m.regionIds()).as("%s 是子部位，不该参与 2D", m.nameEn()).isEmpty();
+            }
         }
     }
 
@@ -152,8 +158,9 @@ class BodyMapServiceTest {
 
         assertThat(v.muscles()).hasSize(27);
         assertThat(byName(v, "chest").sets()).isEqualTo(2.0);
+        // 拆分后「其余」是 17 个顶层 + 10 个子部位 - 1 个练过的 = 26
         assertThat(v.muscles()).filteredOn(m -> m.sets() == 0.0)
-                .as("其余 16 块以 0 出现").hasSize(16);
+                .as("其余 26 块以 0 出现").hasSize(26);
     }
 
     // ------------------------------------------------------------------
@@ -338,6 +345,11 @@ class BodyMapServiceTest {
         for (BodyMapService.MuscleBodyMap m : v.muscles()) {
             String raw = jdbc.queryForObject(
                     "SELECT region_ids FROM muscle_group WHERE id = ?", String.class, m.muscleGroupId());
+            if (m.parentEn() != null) {
+                // 子部位故意没有 region_ids（2D 仍是父组粒度，见 V11 的注释）
+                assertThat(raw).as("%s 是子部位，region_ids 应为 NULL", m.nameEn()).isNull();
+                continue;
+            }
             assertThat(raw).as("%s 的 region_ids 列（V10 之后不应为 NULL）", m.nameEn()).isNotBlank();
             assertThat(m.regionIds())
                     .as("%s 的 regionIds 应与库里的那一列逐项一致", m.nameEn())
