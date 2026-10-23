@@ -21,12 +21,58 @@ import { APP_VERSION, BUILD_TIME, buildTimeText } from '../api/version'
  * 插件在非 Tauri 环境（单元测试的 jsdom）里 import 就会抛。
  * 放在事件处理里，组件挂载时不会碰到它，测试也就不必为它搭桩。
  */
-type Phase = 'idle' | 'checking' | 'uptodate' | 'available' | 'downloading' | 'ready' | 'failed'
+type Phase =
+  | 'idle'
+  | 'checking'
+  | 'uptodate'
+  | 'available'
+  /** 正在下载。有 total 时是确定进度，没有时只显示已下载量。 */
+  | 'downloading'
+  /** 下载完了、正在安装。**这一段没有进度可报**（Tauri 不吐安装进度），
+   *  必须与「下载中」分开，否则进度条停在 100% 不动会被当成卡死。 */
+  | 'installing'
+  | 'ready'
+  | 'failed'
 
 const phase = ref<Phase>('idle')
 const message = ref('')
 const latest = ref('')
-const progress = ref(0)
+
+/** 已下载字节与总字节。total = 0 表示服务器没给 Content-Length。 */
+const received = ref(0)
+const total = ref(0)
+/** 开始下载的时刻（ms）。用来算平均速度与剩余时间。 */
+let startedAt = 0
+
+const progress = computed(() =>
+  total.value > 0 ? Math.min(100, Math.round((received.value / total.value) * 100)) : 0,
+)
+
+/** 平均速度（字节/秒）。用**平均**而不是瞬时：瞬时速度在小分块上跳得没法看。 */
+const speed = computed(() => {
+  const seconds = (Date.now() - startedAt) / 1000
+  return seconds > 0 ? received.value / seconds : 0
+})
+
+function mb(bytes: number): string {
+  return (bytes / 1024 / 1024).toFixed(1)
+}
+
+/** 下载情况那一行：有总量时给百分比+速度+剩余，没有时只给已下载量。 */
+const downloadDetail = computed(() => {
+  if (phase.value !== 'downloading') return ''
+  const got = `${mb(received.value)} MB`
+  if (total.value <= 0) return `已下载 ${got}`
+  const left = total.value - received.value
+  const secs = speed.value > 0 ? Math.ceil(left / speed.value) : 0
+  const eta = secs > 0 ? `约 ${secs >= 60 ? `${Math.floor(secs / 60)} 分 ${secs % 60} 秒` : `${secs} 秒`}` : '即将完成'
+  // 速度用 KB/s 更直观：这个量级的下载，MB/s 会一直显示 0.3
+  return `已下载 ${got} / ${mb(total.value)} MB · ${Math.round(speed.value / 1024)} KB/s · ${eta}`
+})
+
+const busy = computed(
+  () => phase.value === 'checking' || phase.value === 'downloading' || phase.value === 'installing',
+)
 
 /** 有没有新版。**null 表示还不知道**（没查过，或查询失败）。 */
 const hasUpdate = computed(() => phase.value === 'available' || phase.value === 'downloading')
@@ -56,7 +102,9 @@ async function runCheck() {
 async function installUpdate() {
   if (phase.value !== 'available') return
   phase.value = 'downloading'
-  progress.value = 0
+  received.value = 0
+  total.value = 0
+  startedAt = Date.now()
   try {
     const { check } = await import('@tauri-apps/plugin-updater')
     const { relaunch } = await import('@tauri-apps/plugin-process')
@@ -65,16 +113,15 @@ async function installUpdate() {
       phase.value = 'uptodate'
       return
     }
-    let total = 0
-    let got = 0
     await update.downloadAndInstall((event) => {
       if (event.event === 'Started') {
-        total = event.data.contentLength ?? 0
+        total.value = event.data.contentLength ?? 0
       } else if (event.event === 'Progress') {
-        got += event.data.chunkLength
-        progress.value = total > 0 ? Math.round((got / total) * 100) : 0
+        received.value += event.data.chunkLength
       } else if (event.event === 'Finished') {
-        progress.value = 100
+        // 下载完了，接下来是静默安装。Tauri 不吐安装进度 —— 不能让它停在 100%。
+        received.value = total.value > 0 ? total.value : received.value
+        phase.value = 'installing'
       }
     })
     phase.value = 'ready'
@@ -127,7 +174,7 @@ const sources = [
         当前 <b class="mono">{{ APP_VERSION }}</b> · 构建于 <span class="mono">{{ buildTimeText(BUILD_TIME) }}</span>
       </p>
 
-      <button class="primary" :disabled="phase === 'checking' || phase === 'downloading'" @click="runCheck">
+      <button class="primary" :disabled="busy" @click="runCheck">
         {{ phase === 'checking' ? '正在检查…' : '检查更新' }}
       </button>
 
@@ -138,8 +185,15 @@ const sources = [
           有新版本 <b>{{ latest }}</b>（当前 {{ APP_VERSION }}）。
         </p>
 
-        <p v-if="phase === 'downloading'" class="hint">
-          正在下载并安装… {{ progress }}%
+        <!-- 下载：有总量时给进度条，没有时给已下载量 -->
+        <template v-if="phase === 'downloading'">
+          <div v-if="total > 0" class="bar"><span :style="{ width: progress + '%' }" /></div>
+          <p class="hint">{{ downloadDetail }}</p>
+        </template>
+
+        <!-- 安装：**没有进度可报**。给一句「正在安装」比一个卡在 100% 的条诚实 -->
+        <p v-if="phase === 'installing'" class="hint">
+          正在安装…（这一步没有进度，通常十几秒）
         </p>
 
         <button
@@ -214,5 +268,22 @@ h3 { font-size: 15px; }
 .tip { margin-top: var(--gap-md); color: var(--eyebrow); }
 .primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .primary:disabled { border-color: var(--line); color: var(--text-dim); cursor: not-allowed; }
+.bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+  margin: 6px 0 4px;
+  max-width: 320px;
+}
+.bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  /* 速度波动时让宽度平滑过去，而不是一格一格跳 */
+  transition: width 0.25s linear;
+}
+
 .install { margin-top: 6px; border-color: var(--accent); color: #fff; background: var(--accent); font-weight: 600; }
 </style>
