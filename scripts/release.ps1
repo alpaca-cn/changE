@@ -23,6 +23,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$pythonPath = 'E:\dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
@@ -47,9 +48,13 @@ $remote = git remote -v 2>$null
 if (-not $remote) {
     Fail "还没有配 git remote。先跑：git remote add origin https://github.com/$Repo.git && git push -u origin main"
 }
+# gh 不再是必需项：下载源已切到阿里云 OSS，GitHub 上只需要手动传一个 714 字节的
+# latest.json。这台机器上 winget 装不了 gh（CDN 被挡），硬失败只会把发版卡死。
+$skipGh = $false
 $gh = Get-Command gh -ErrorAction SilentlyContinue
 if (-not $gh) {
-    Fail "没有安装 GitHub CLI。先跑：winget install GitHub.cli，再跑：gh auth login"
+    Write-Host "没有 gh —— 走手动发版路径（见 docs/发布与自动更新.md）" -ForegroundColor Yellow
+    $skipGh = $true
 }
 
 # ── 3. 构建 ────────────────────────────────────────────────
@@ -114,6 +119,19 @@ $latestPath = Join-Path $nsis 'latest.json'
 Write-Host "latest.json 已写: $latestPath" -ForegroundColor Cyan
 
 # ── 5. 发 release ─────────────────────────────────────────
+if ($skipGh) {
+    & $pythonPath (Join-Path $root 'scripts/prepare-release.py')
+    Write-Host ""
+    Write-Host "手动发版清单：" -ForegroundColor Cyan
+    Write-Host "  1. 把 artifacts/release/ 里的三个文件上传到 OSS bucket change-release 的根目录"
+    Write-Host "  2. 在 https://github.com/$Repo/releases/new 建 tag $tag，只附 latest.json"
+    Write-Host "  3. 点 Publish（不要存成 draft）"
+    Write-Host "  4. 回应用里点「检查更新」"
+    Write-Host ""
+    Write-Host "详见 docs/发布与自动更新.md" -ForegroundColor Cyan
+    exit 0
+}
+
 $exists = gh release view $tag --repo $Repo 2>$null
 if ($exists) {
     Write-Host "release $tag 已存在，上传（覆盖同名资产）…" -ForegroundColor Yellow

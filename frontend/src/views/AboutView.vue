@@ -77,13 +77,39 @@ const busy = computed(
 /** 有没有新版。**null 表示还不知道**（没查过，或查询失败）。 */
 const hasUpdate = computed(() => phase.value === 'available' || phase.value === 'downloading')
 
+/**
+ * 给一个 Promise 加超时。
+ *
+ * 2026-10-23 实测：用户在挂着 VPN 时点「检查更新」，界面停在「正在检查…」不动。
+ * 原因是更新器请求的 github.com 清单会 302 到 release-assets.githubusercontent.com，
+ * 那条跳转被卡住，请求既不成功也不失败。
+ *
+ * **卡住和「查不到」必须长得不一样。** 没有超时的话，用户唯一能得到的信息是转圈，
+ * 既不知道是不是网络问题，也不知道该不该继续等。
+ */
+const CHECK_TIMEOUT_MS = 15000
+
+function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
+
 async function runCheck() {
   if (phase.value === 'checking' || phase.value === 'downloading') return
   phase.value = 'checking'
   message.value = ''
   try {
     const { check } = await import('@tauri-apps/plugin-updater')
-    const update = await check()
+    const update = await withTimeout(
+      check(),
+      CHECK_TIMEOUT_MS,
+      '检查更新超时（15 秒）。可能是网络、代理或 VPN 的问题 —— 关掉 VPN 再试一次。',
+    )
     if (update === null) {
       phase.value = 'uptodate'
       return
@@ -210,8 +236,7 @@ const sources = [
       </div>
 
       <p class="hint tip">
-        想要「装一次就自动更新」还需要一对签名密钥与一个能放清单的地址——
-        那是部署决定，不是代码问题。现在这一步只回答「我是不是最新的」。
+        更新包从阿里云 OSS 下载，GitHub 作为兜底。装过一次之后，以后都不用再下安装包。
       </p>
     </section>
 
