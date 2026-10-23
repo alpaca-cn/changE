@@ -1,0 +1,994 @@
+{
+ "chest-upper": [
+  {
+   "name": "Clavicular head of pectoralis major muscle.l",
+   "polys": 850
+  },
+  {
+   "name": "Clavicular head of pectoralis major muscle.r",
+   "polys": 850
+  }
+ ],
+ "chest-lower": [
+  {
+   "name": "(Abdominal part of pectoralis major muscle).l",
+   "polys": 1508
+  },
+  {
+   "name": "(Abdominal part of pectoralis major muscle).r",
+   "polys": 1508
+  }
+ ],
+ "chest-middle": [
+  {
+   "name": "Pectoralis minor muscle.l",
+   "polys": 4142
+  },
+  {
+   "name": "Pectoralis minor muscle.r",
+   "polys": 4142
+  },
+  {
+   "name": "Sternocostal head of pectoralis major muscle.l",
+   "polys": 3217
+  },
+  {
+   "name": "Sternocostal head of pectoralis major muscle.r",
+   "polys": 3217
+  },
+  {
+   "name": "Pectoralis major muscle.j",
+   "polys": 0
+  }
+ ],
+ "abdominals": [
+  {
+   "name": "Transversus abdominis muscle.l",
+   "polys": 34328
+  },
+  {
+   "name": "Transversus abdominis muscle.r",
+   "polys": 34328
+  },
+  {
+   "name": "External abdominal oblique muscle.l",
+   "polys": 29622
+  },
+  {
+   "name": "External abdominal oblique muscle.r",
+   "polys": 29622
+  },
+  {
+   "name": "Internal abdominal oblique muscle.l",
+   "polys": 28869
+  },
+  {
+   "name": "Internal abdominal oblique muscle.r",
+   "polys": 28869
+  },
+  {
+   "name": "Rectus abdominis muscle.l",
+   "polys": 20604
+  },
+  {
+   "name": "Rectus abdominis muscle.r",
+   "polys": 20604
+  }
+ ],
+ "lats": [
+  {
+   "name": "Latissimus dorsi muscle.l",
+   "polys": 21580
+  },
+  {
+   "name": "Latissimus dorsi muscle.r",
+   "polys": 21580
+  }
+ ],
+ "middle back-rhomboids": [
+  {
+   "name": "Rhomboid major muscle.l",
+   "polys": 4800
+  },
+  {
+   "name": "Rhomboid major muscle.r",
+   "polys": 4800
+  },
+  {
+   "name": "Rhomboid minor muscle.l",
+   "polys": 1494
+  },
+  {
+   "name": "Rhomboid minor muscle.r",
+   "polys": 1494
+  }
+ ],
+ "lower back-erector": [
+  {
+   "name": "Iliocostalis lumborum muscle.l",
+   "polys": 10038
+  },
+  {
+   "name": "Iliocostalis lumborum muscle.r",
+   "polys": 10038
+  },
+  {
+   "name": "Longissimus thoracis muscle.l",
+   "polys": 9652
+  },
+  {
+   "name": "Longissimus thoracis muscle.r",
+   "polys": 9652
+  },
+  {
+   "name": "Iliocostalis thoracis muscle.l",
+   "polys": 5772
+  },
+  {
+   "name": "Iliocostalis thoracis muscle.r",
+   "polys": 5772
+  },
+  {
+   "name": "Spinalis thoracis muscle.l",
+   "polys": 5532
+  },
+  {
+   "name": "Spinalis thoracis muscle.r",
+   "polys": 5532
+  },
+  {
+   "name": "Semispinalis thoracis muscle.r",
+   "polys": 4972
+  },
+  {
+   "name": "Semispinalis thoracis muscle.l",
+   "polys": 4972
+  },
+  {
+   "name": "Multifidus thoracis muscle.l",
+   "polys": 3902
+  },
+  {
+   "name": "Multifidus thoracis muscle.r",
+   "polys": 3902
+  },
+  {
+   "name": "Quadratus lumborum muscle.l",
+   "polys": 2832
+  },
+  {
+   "name": "Quadratus lumborum muscle.r",
+   "polys": 2832
+  },
+  {
+   "name": "Multifidus lumborum muscle.l",
+   "polys": 2820
+  },
+  {
+   "name": "Multifidus lumborum muscle.r",
+   "polys": 2820
+  },
+  {
+   "name": "Semispinalis colli muscle.l",
+   "polys": 2584
+  },
+  {
+   "name": "Semispinalis colli muscle.r",
+   "polys": 2584
+  },
+  {
+   "name": "Spinalis capitis muscle.l",
+   "polys": 2560
+  },
+  {
+   "name": "Spinalis capitis muscle.r",
+   "polys": 2560
+  },
+  {
+   "name": "Iliocostalis colli muscle",
+   "polys": 2050
+  },
+  {
+   "name": "Iliocostalis colli muscle.r",
+   "polys": 2050
+  },
+  {
+   "name": "Longissimus colli muscle.l",
+   "polys": 1826
+  },
+  {
+   "name": "Longissimus colli muscle.r",
+   "polys": 1826
+  },
+  {
+   "name": "Longissimus capitis muscle.l",
+   "polys": 1574
+  },
+  {
+   "name": "Longissimus capitis muscle.r",
+   "polys": 1574
+  },
+  {
+   "name": "Multifidus colli muscle.l",
+   "polys": 1390
+  },
+  {
+   "name": "Multifidus colli muscle.r",
+   "polys": 1390
+  },
+  {
+   "name": "Spinalis colli muscle.l",
+   "polys": 596
+  },
+  {
+   "name": "Spinalis colli muscle.r",
+   "polys": 596
+  },
+  {
+   "name": "Erector spinae.j",
+   "polys": 0
+  },
+  {
+   "name": "Iliocostalis muscles.j",
+   "polys": 0
+  },
+  {
+   "name": "Longissimus muscles.j",
+   "polys": 0
+  },
+  {
+   "name": "Multifidus muscles.j",
+   "polys": 0
+  },
+  {
+   "name": "Semispinalis muscles.j",
+   "polys": 0
+  },
+  {
+   "name": "Spinalis muscles.j",
+   "polys": 0
+  }
+ ],
+ "traps-upper": [
+  {
+   "name": "Descending part of trapezius muscle.l",
+   "polys": 6760
+  },
+  {
+   "name": "Descending part of trapezius muscle.r",
+   "polys": 6760
+  },
+  {
+   "name": "Levator scapulae.l",
+   "polys": 3082
+  },
+  {
+   "name": "Levator scapulae.r",
+   "polys": 3082
+  },
+  {
+   "name": "Subtendinous bursa of trapezius muscle.l",
+   "polys": 192
+  },
+  {
+   "name": "Subtendinous bursa of trapezius muscle.r",
+   "polys": 192
+  },
+  {
+   "name": "Trapezius muscle.j",
+   "polys": 0
+  }
+ ],
+ "traps-middle": [
+  {
+   "name": "Ascending part of trapezius muscle.l",
+   "polys": 4596
+  },
+  {
+   "name": "Ascending part of trapezius muscle.r",
+   "polys": 4596
+  },
+  {
+   "name": "Transverse part of trapezius muscle.l",
+   "polys": 2992
+  },
+  {
+   "name": "Transverse part of trapezius muscle.r",
+   "polys": 2992
+  }
+ ],
+ "shoulders-anterior": [
+  {
+   "name": "Clavicular part of deltoid muscle.l",
+   "polys": 2902
+  },
+  {
+   "name": "Clavicular part of deltoid muscle.r",
+   "polys": 2902
+  }
+ ],
+ "shoulders-posterior": [
+  {
+   "name": "Scapular spinal part of deltoid muscle.l",
+   "polys": 4378
+  },
+  {
+   "name": "Scapular spinal part of deltoid muscle.r",
+   "polys": 4378
+  }
+ ],
+ "shoulders-lateral": [
+  {
+   "name": "Acromial part of deltoid muscle.l",
+   "polys": 2964
+  },
+  {
+   "name": "Acromial part of deltoid muscle.r",
+   "polys": 2964
+  },
+  {
+   "name": "Deltoid fascia.l",
+   "polys": 1821
+  },
+  {
+   "name": "Deltoid fascia.r",
+   "polys": 1821
+  },
+  {
+   "name": "Subdeltoid bursa.l",
+   "polys": 192
+  },
+  {
+   "name": "Subdeltoid bursa.r",
+   "polys": 192
+  },
+  {
+   "name": "Deltoid muscle.j",
+   "polys": 0
+  }
+ ],
+ "biceps": [
+  {
+   "name": "Brachialis muscle.l",
+   "polys": 3478
+  },
+  {
+   "name": "Brachialis muscle.r",
+   "polys": 3478
+  },
+  {
+   "name": "Long head of biceps brachii.l",
+   "polys": 3218
+  },
+  {
+   "name": "Long head of biceps brachii.r",
+   "polys": 3218
+  },
+  {
+   "name": "Short head of biceps brachii.l",
+   "polys": 2696
+  },
+  {
+   "name": "Short head of biceps brachii.r",
+   "polys": 2696
+  },
+  {
+   "name": "Coracobrachialis muscle.l",
+   "polys": 1160
+  },
+  {
+   "name": "Coracobrachialis muscle.r",
+   "polys": 1160
+  },
+  {
+   "name": "Biceps brachii muscle.j",
+   "polys": 0
+  }
+ ],
+ "triceps": [
+  {
+   "name": "Long head of triceps brachii.l",
+   "polys": 3950
+  },
+  {
+   "name": "Long head of triceps brachii.r",
+   "polys": 3950
+  },
+  {
+   "name": "Lateral head of triceps brachii.l",
+   "polys": 3628
+  },
+  {
+   "name": "Lateral head of triceps brachii.r",
+   "polys": 3628
+  },
+  {
+   "name": "Medial head of triceps brachii.l",
+   "polys": 2686
+  },
+  {
+   "name": "Medial head of triceps brachii.r",
+   "polys": 2686
+  },
+  {
+   "name": "Subtendinous bursa of triceps brachii muscle.l",
+   "polys": 192
+  },
+  {
+   "name": "Subtendinous bursa of triceps brachii muscle.r",
+   "polys": 192
+  },
+  {
+   "name": "Triceps brachii muscle.j",
+   "polys": 0
+  }
+ ],
+ "forearms": [
+  {
+   "name": "Humero-ulnar head of flexor digitorum superficialis.l",
+   "polys": 12798
+  },
+  {
+   "name": "Humero-ulnar head of flexor digitorum superficialis.r",
+   "polys": 12798
+  },
+  {
+   "name": "Brachioradialis muscle.l",
+   "polys": 7312
+  },
+  {
+   "name": "Brachioradialis muscle.r",
+   "polys": 7312
+  },
+  {
+   "name": "Flexor digitorum profundus.l",
+   "polys": 7110
+  },
+  {
+   "name": "Flexor digitorum profundus.r",
+   "polys": 7110
+  },
+  {
+   "name": "Flexor digitorum longus.l",
+   "polys": 6836
+  },
+  {
+   "name": "Flexor digitorum longus.r",
+   "polys": 6836
+  },
+  {
+   "name": "Extensor digitorum.l",
+   "polys": 6410
+  },
+  {
+   "name": "Extensor digitorum.r",
+   "polys": 6410
+  },
+  {
+   "name": "Tendon of extensor digitorum longus.l",
+   "polys": 5184
+  },
+  {
+   "name": "Tendon of extensor digitorum longus.r",
+   "polys": 5184
+  },
+  {
+   "name": "Humeral head of flexor carpi ulnaris.l",
+   "polys": 3912
+  },
+  {
+   "name": "Humeral head of flexor carpi ulnaris.r",
+   "polys": 3912
+  },
+  {
+   "name": "Extensor carpi radialis longus.l",
+   "polys": 3706
+  },
+  {
+   "name": "Extensor carpi radialis longus.r",
+   "polys": 3706
+  },
+  {
+   "name": "Flexor digitorum brevis.l",
+   "polys": 3224
+  },
+  {
+   "name": "Flexor digitorum brevis.r",
+   "polys": 3224
+  },
+  {
+   "name": "Extensor digitorum brevis.l",
+   "polys": 3184
+  },
+  {
+   "name": "Extensor digitorum brevis.r",
+   "polys": 3184
+  },
+  {
+   "name": "Extensor digitorum longus.l",
+   "polys": 3176
+  },
+  {
+   "name": "Extensor digitorum longus.r",
+   "polys": 3176
+  },
+  {
+   "name": "Extensor carpi radialis brevis.l",
+   "polys": 3142
+  },
+  {
+   "name": "Extensor carpi radialis brevis.r",
+   "polys": 3142
+  },
+  {
+   "name": "Supinator.l",
+   "polys": 2754
+  },
+  {
+   "name": "Supinator.r",
+   "polys": 2754
+  },
+  {
+   "name": "Superficial head of pronator teres.l",
+   "polys": 2546
+  },
+  {
+   "name": "Superficial head of pronator teres.r",
+   "polys": 2546
+  },
+  {
+   "name": "Flexor carpi radialis.l",
+   "polys": 1666
+  },
+  {
+   "name": "Flexor carpi radialis.r",
+   "polys": 1666
+  },
+  {
+   "name": "Ulnar head of flexor carpi ulnaris.l",
+   "polys": 1466
+  },
+  {
+   "name": "Ulnar head of flexor carpi ulnaris.r",
+   "polys": 1466
+  },
+  {
+   "name": "Radial head of flexor digitorum superficialis.l",
+   "polys": 1276
+  },
+  {
+   "name": "Radial head of flexor digitorum superficialis.r",
+   "polys": 1276
+  },
+  {
+   "name": "Deep head of pronator teres.l",
+   "polys": 1114
+  },
+  {
+   "name": "Deep head of pronator teres.r",
+   "polys": 1114
+  },
+  {
+   "name": "Pronator quadratus.l",
+   "polys": 1020
+  },
+  {
+   "name": "Pronator quadratus.r",
+   "polys": 1020
+  },
+  {
+   "name": "Humeral head of extensor carpi ulnaris.l",
+   "polys": 830
+  },
+  {
+   "name": "Humeral head of extensor carpi ulnaris.r",
+   "polys": 830
+  },
+  {
+   "name": "Ulnar head of extensor carpi ulnaris.l",
+   "polys": 582
+  },
+  {
+   "name": "Ulnar head of extensor carpi ulnaris.r",
+   "polys": 582
+  },
+  {
+   "name": "Tendon sheath of flexor digitorum longus.l",
+   "polys": 128
+  },
+  {
+   "name": "Tendon sheath of flexor digitorum longus.r",
+   "polys": 128
+  },
+  {
+   "name": "Tendon sheath of extensor digitorum and extensor indicis.l",
+   "polys": 74
+  },
+  {
+   "name": "Tendon sheath of extensor digitorum and extensor indicis.r",
+   "polys": 74
+  },
+  {
+   "name": "Tendon sheath of extensor digitorum longus.l",
+   "polys": 65
+  },
+  {
+   "name": "Tendon sheath of extensor digitorum longus.r",
+   "polys": 65
+  },
+  {
+   "name": "Tendon sheath of extensor carpi ulnaris.l",
+   "polys": 0
+  },
+  {
+   "name": "Tendon sheath of extensor carpi ulnaris.r",
+   "polys": 0
+  },
+  {
+   "name": "Tendon sheath of flexor carpi radialis.l",
+   "polys": 0
+  },
+  {
+   "name": "Tendon sheath of flexor carpi radialis.r",
+   "polys": 0
+  }
+ ],
+ "quadriceps": [
+  {
+   "name": "Vastus lateralis muscle.l",
+   "polys": 9356
+  },
+  {
+   "name": "Vastus lateralis muscle.r",
+   "polys": 9356
+  },
+  {
+   "name": "Rectus femoris muscle.l",
+   "polys": 8276
+  },
+  {
+   "name": "Rectus femoris muscle.r",
+   "polys": 8276
+  },
+  {
+   "name": "Vastus medialis muscle.l",
+   "polys": 6460
+  },
+  {
+   "name": "Vastus medialis muscle.r",
+   "polys": 6460
+  },
+  {
+   "name": "Vastus intermedius muscle.l",
+   "polys": 6164
+  },
+  {
+   "name": "Vastus intermedius muscle.r",
+   "polys": 6164
+  }
+ ],
+ "hamstrings": [
+  {
+   "name": "Semimembranosus muscle.l",
+   "polys": 7442
+  },
+  {
+   "name": "Semimembranosus muscle.r",
+   "polys": 7442
+  },
+  {
+   "name": "Long head of biceps femoris.l",
+   "polys": 7258
+  },
+  {
+   "name": "Long head of biceps femoris.r",
+   "polys": 7258
+  },
+  {
+   "name": "Semitendinosus muscle.l",
+   "polys": 4316
+  },
+  {
+   "name": "Semitendinosus muscle.r",
+   "polys": 4316
+  },
+  {
+   "name": "Short head of biceps femoris.l",
+   "polys": 2476
+  },
+  {
+   "name": "Short head of biceps femoris.r",
+   "polys": 2476
+  },
+  {
+   "name": "Superior bursa of biceps femoris muscle.l",
+   "polys": 192
+  },
+  {
+   "name": "Superior bursa of biceps femoris muscle.r",
+   "polys": 192
+  },
+  {
+   "name": "Inferior subtendinous bursa of biceps femoris muscle.l",
+   "polys": 48
+  },
+  {
+   "name": "Inferior subtendinous bursa of biceps femoris muscle.r",
+   "polys": 48
+  },
+  {
+   "name": "Semimembranosus bursa.l",
+   "polys": 48
+  },
+  {
+   "name": "Semimembranosus bursa.r",
+   "polys": 48
+  }
+ ],
+ "glutes": [
+  {
+   "name": "Gluteus maximus muscle.l",
+   "polys": 3326
+  },
+  {
+   "name": "Gluteus maximus muscle.r",
+   "polys": 3326
+  },
+  {
+   "name": "Sciatic bursa of gluteus maximus muscle.l",
+   "polys": 192
+  },
+  {
+   "name": "Sciatic bursa of gluteus maximus muscle.r",
+   "polys": 192
+  },
+  {
+   "name": "Trochanteric bursa of gluteus maximus muscle.l",
+   "polys": 192
+  },
+  {
+   "name": "Trochanteric bursa of gluteus maximus muscle.r",
+   "polys": 192
+  }
+ ],
+ "calves": [
+  {
+   "name": "Soleus muscle.l",
+   "polys": 6774
+  },
+  {
+   "name": "Soleus muscle.r",
+   "polys": 6774
+  },
+  {
+   "name": "Medial head of gastrocnemius.l",
+   "polys": 6462
+  },
+  {
+   "name": "Medial head of gastrocnemius.r",
+   "polys": 6462
+  },
+  {
+   "name": "Lateral head of gastrocnemius.l",
+   "polys": 4908
+  },
+  {
+   "name": "Lateral head of gastrocnemius.r",
+   "polys": 4908
+  },
+  {
+   "name": "Lateral subtendinous bursa of gastrocnemius muscle.l",
+   "polys": 48
+  },
+  {
+   "name": "Lateral subtendinous bursa of gastrocnemius muscle.r",
+   "polys": 48
+  },
+  {
+   "name": "Medial subtendinous bursa of gastrocnemius muscle.l",
+   "polys": 40
+  },
+  {
+   "name": "Medial subtendinous bursa of gastrocnemius muscle.r",
+   "polys": 40
+  }
+ ],
+ "adductors": [
+  {
+   "name": "Adductor magnus.l",
+   "polys": 8192
+  },
+  {
+   "name": "Adductor magnus.r",
+   "polys": 8192
+  },
+  {
+   "name": "Gracilis muscle.l",
+   "polys": 4812
+  },
+  {
+   "name": "Gracilis muscle.r",
+   "polys": 4812
+  },
+  {
+   "name": "Adductor longus.l",
+   "polys": 3714
+  },
+  {
+   "name": "Adductor longus.r",
+   "polys": 3714
+  },
+  {
+   "name": "Adductor brevis.l",
+   "polys": 2132
+  },
+  {
+   "name": "Adductor brevis.r",
+   "polys": 2132
+  },
+  {
+   "name": "Pectineus muscle.l",
+   "polys": 1952
+  },
+  {
+   "name": "Pectineus muscle.r",
+   "polys": 1952
+  },
+  {
+   "name": "Transverse head of adductor pollicis.l",
+   "polys": 1014
+  },
+  {
+   "name": "Transverse head of adductor pollicis.r",
+   "polys": 1014
+  },
+  {
+   "name": "(Adductor minimus).l",
+   "polys": 948
+  },
+  {
+   "name": "(Adductor minimus).r",
+   "polys": 948
+  },
+  {
+   "name": "Oblique head of adductor hallucis.l",
+   "polys": 904
+  },
+  {
+   "name": "Oblique head of adductor hallucis.r",
+   "polys": 904
+  },
+  {
+   "name": "Oblique head of adductor pollicis.l",
+   "polys": 450
+  },
+  {
+   "name": "Oblique head of adductor pollicis.r",
+   "polys": 450
+  },
+  {
+   "name": "Transverse head of adductor hallucis.l",
+   "polys": 366
+  },
+  {
+   "name": "Transverse head of adductor hallucis.r",
+   "polys": 366
+  },
+  {
+   "name": "Adductor hallucis.j",
+   "polys": 0
+  }
+ ],
+ "abductors": [
+  {
+   "name": "Gluteus minimus muscle.l",
+   "polys": 6250
+  },
+  {
+   "name": "Gluteus minimus muscle.r",
+   "polys": 6250
+  },
+  {
+   "name": "Gluteus medius muscle.l",
+   "polys": 5176
+  },
+  {
+   "name": "Gluteus medius muscle.r",
+   "polys": 5176
+  },
+  {
+   "name": "Tensor fasciae latae.l",
+   "polys": 1862
+  },
+  {
+   "name": "Tensor fasciae latae.r",
+   "polys": 1862
+  },
+  {
+   "name": "Trochanteric bursa of gluteus medius muscle.l",
+   "polys": 192
+  },
+  {
+   "name": "Trochanteric bursa of gluteus medius muscle.r",
+   "polys": 192
+  },
+  {
+   "name": "Trochanteric bursa of gluteus minimus muscle.l",
+   "polys": 192
+  },
+  {
+   "name": "Trochanteric bursa of gluteus minimus muscle.r",
+   "polys": 192
+  }
+ ],
+ "neck": [
+  {
+   "name": "Longus colli muscle.l",
+   "polys": 6294
+  },
+  {
+   "name": "Longus colli muscle.r",
+   "polys": 6294
+  },
+  {
+   "name": "Splenius capitis muscle.l",
+   "polys": 5262
+  },
+  {
+   "name": "Splenius capitis muscle.r",
+   "polys": 5262
+  },
+  {
+   "name": "Sternocleidomastoid muscle.l",
+   "polys": 4952
+  },
+  {
+   "name": "Sternocleidomastoid muscle.r",
+   "polys": 4952
+  },
+  {
+   "name": "Splenius colli muscle.l",
+   "polys": 4314
+  },
+  {
+   "name": "Splenius colli muscle.r",
+   "polys": 4314
+  },
+  {
+   "name": "Scalenus medius muscle.l",
+   "polys": 2078
+  },
+  {
+   "name": "Scalenus medius muscle.r",
+   "polys": 2078
+  },
+  {
+   "name": "Longus capitis muscle.l",
+   "polys": 1980
+  },
+  {
+   "name": "Longus capitis muscle.r",
+   "polys": 1980
+  },
+  {
+   "name": "Scalenus anterior muscle.l",
+   "polys": 1386
+  },
+  {
+   "name": "Scalenus anterior muscle.r",
+   "polys": 1386
+  },
+  {
+   "name": "Scalenus posterior muscle.l",
+   "polys": 1326
+  },
+  {
+   "name": "Scalenus posterior muscle.r",
+   "polys": 1326
+  },
+  {
+   "name": "Splenius muscles.j",
+   "polys": 0
+  }
+ ]
+}

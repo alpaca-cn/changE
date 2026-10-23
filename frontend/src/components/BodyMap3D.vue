@@ -47,6 +47,37 @@ const message = ref('')
 const scene = shallowRef<unknown>(null)
 let dispose: (() => void) | null = null
 
+/**
+ * 子部位。
+ *
+ * glb 里的对象名对可细分的组是 `父-子` 的形式（`chest-upper` / `shoulders-anterior` …），
+ * 其余组仍是原来的名字。这样前端能：
+ *   - 用 `-` 前面的部分拿到**父组**（体积极、右侧面板、2D 都用父组）
+ *   - 用整名查到**中文子部位名**，点选时告诉用户「你点的是上胸」，而不是笼统的「胸部」
+ *
+ * **这一层不声称有分块体积。** 真实的分块数据要动 schema + 导入器 + 汇总 + UI
+ * 四处，一次做完才算数；在那之前，说「上胸」但按胸部算，比说「胸部」更准，
+ * 也比编一个分块数字更诚实。
+ */
+const PART_ZH: Record<string, string> = {
+  'chest-upper': '上胸',
+  'chest-middle': '中胸',
+  'chest-lower': '下胸',
+  'shoulders-anterior': '前束',
+  'shoulders-lateral': '中束',
+  'shoulders-posterior': '后束',
+  'traps-upper': '上斜方',
+  'traps-middle': '中斜方',
+  'middle back-rhomboids': '菱形肌',
+  'lower back-erector': '竖脊肌',
+}
+
+/** 对象名 -> 父组名（体积极与面板都按父组）。不能先 canon：`-` 会被吃掉。 */
+function parentOfName(raw: string): string {
+  const i = raw.indexOf('-')
+  return i > 0 ? raw.slice(0, i) : raw
+}
+
 /** 皮肤对象名。见 build() 里的说明。 */
 const SKIN = 'skin'
 
@@ -68,6 +99,9 @@ function canon(s: string): string {
 
 /** canonical 名 -> glb 里的原始组名（`chest` / `middle back` / …）。 */
 const groupOf = new Map<string, string>()
+
+/** canonical 名 -> 父组名（`chest-upper` 的父组是 `chest`）。 */
+const parentOf = new Map<string, string>()
 
 /**
  * 与 2D 的色阶同源：练得越多越接近铜色。
@@ -201,12 +235,14 @@ async function build() {
 
     // 第一遍：把「canonical 名 -> 干净的组名」记下来
     groupOf.clear()
+    parentOf.clear()
     root.traverse((o: { isMesh?: boolean; name?: string; parent?: { name?: string } | null }) => {
       if (o.isMesh !== true) return
       const group = groupNameOf(o, root)
       const c = canon(group)
       if (c === SKIN) return
       if (!groupOf.has(c)) groupOf.set(c, group)
+      parentOf.set(c, parentOfName(group))
     })
 
     // 第二遍：同组的所有 primitive **共用一个材质实例**。
@@ -225,7 +261,7 @@ async function build() {
       let mat = materialByGroup.get(group)
       if (mat === undefined) {
         mat = new THREE.MeshStandardMaterial({
-          color: toneFor(props.volumeByMuscle[group] ?? 0),
+          color: toneFor(props.volumeByMuscle[parentOf.get(c) ?? group] ?? 0),
           roughness: 0.62,
           metalness: 0.04,
           // 双面：导出的网格里有些是单面壳，背面剔除会露出空洞
@@ -275,14 +311,20 @@ async function build() {
       }
 
       const raw = muscleHit.object.name
-      const group = groupOf.get(canon(groupNameOf(muscleHit.object, root)))
+      const c = canon(groupNameOf(muscleHit.object, root))
+      const group = groupOf.get(c)
+      const parent = parentOf.get(c) ?? group
       if (group === undefined) {
         probe.value = '命中「' + raw + '」，但它不在肌群表里'
         emit('unknown-hit', raw)
         return
       }
-      probe.value = '命中 ' + group + '（' + raw + '，共 ' + hits.length + ' 个交点）'
-      emit('muscle-click', group)
+      const partZh = PART_ZH[group]
+      probe.value = partZh !== undefined
+        ? '命中 ' + partZh + '（' + raw + '，体积按 ' + parent + ' 算）'
+        : '命中 ' + group + '（' + raw + '，共 ' + hits.length + ' 个交点）'
+      // **emit 父组**：体积极、右侧面板、2D 都按父组，数据层还没细分
+      emit('muscle-click', parent !== undefined ? parent : group)
     }
 
     renderer.domElement.addEventListener('pointerdown', onDown)
@@ -336,13 +378,15 @@ function repaint() {
       material?: { color?: { setHex: (n: number) => void }; emissive?: { setHex: (n: number) => void } }
     }
     if (mesh.isMesh !== true || mesh.material === undefined) return
-    const c = canon(mesh.name ?? '')
-    if (c === SKIN) return   // 皮肤不随组数变色
-    // 重上色时用的是同一个规范化逻辑：`chest_3` 与 `chest` 归到同一组
-    const group = groupOf.get(canon((mesh.name ?? '').replace(/[._]\d+$/, '')))
+    // 重上色用的是同一个规范化逻辑：primitive 后缀（chest_3）要去掉，
+    // 子部位名（chest-upper）留着，由 groupOf / parentOf 两张表去查。
+    if (canon(mesh.name ?? '') === SKIN) return   // 皮肤不随组数变色
+    const c = canon((mesh.name ?? '').replace(/[._]\d+$/, ''))
+    const group = groupOf.get(c)
     if (group === undefined) return
-    mesh.material.color?.setHex(toneFor(props.volumeByMuscle[group] ?? 0))
-    mesh.material.emissive?.setHex(group === selected ? 0x5a3d12 : 0x000000)
+    const parent = parentOf.get(c) ?? group
+    mesh.material.color?.setHex(toneFor(props.volumeByMuscle[parent] ?? 0))
+    mesh.material.emissive?.setHex(parent === selected ? 0x5a3d12 : 0x000000)
   })
 }
 
