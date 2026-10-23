@@ -139,10 +139,14 @@ class BodyMapServiceTest {
             assertThat(m.daysSince()).as("%s 从没练过", m.nameEn()).isNull();
             // 子部位（chest-upper 这种）**故意**没有区域 id：2D 人体图仍是父组粒度，
             // 子部位带区域 id 会让同一块区域被两个肌群争着上色。
-            if (m.parentEn() == null) {
+            // V12 之后 2D 由子部位上色：被拆的 5 个父组故意没有区域
+            boolean isSplitParent = java.util.Set.of(
+                    "chest", "shoulders", "traps", "middle back", "lower back")
+                    .contains(m.nameEn());
+            if (m.parentEn() == null && !isSplitParent) {
                 assertThat(m.regionIds()).as("%s 的人体图区域", m.nameEn()).isNotEmpty();
-            } else {
-                assertThat(m.regionIds()).as("%s 是子部位，不该参与 2D", m.nameEn()).isEmpty();
+            } else if (isSplitParent) {
+                assertThat(m.regionIds()).as("%s 被拆，2D 交给子部位", m.nameEn()).isEmpty();
             }
         }
     }
@@ -345,7 +349,8 @@ class BodyMapServiceTest {
         for (BodyMapService.MuscleBodyMap m : v.muscles()) {
             String raw = jdbc.queryForObject(
                     "SELECT region_ids FROM muscle_group WHERE id = ?", String.class, m.muscleGroupId());
-            if (m.parentEn() != null) {
+            if (m.parentEn() != null || java.util.Set.of("chest", "shoulders", "traps",
+                    "middle back", "lower back").contains(m.nameEn())) {
                 // 子部位故意没有 region_ids（2D 仍是父组粒度，见 V11 的注释）
                 assertThat(raw).as("%s 是子部位，region_ids 应为 NULL", m.nameEn()).isNull();
                 continue;

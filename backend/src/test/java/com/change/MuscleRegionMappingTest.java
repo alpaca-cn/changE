@@ -261,9 +261,12 @@ class MuscleRegionMappingTest {
         // 只读**顶层**：V11 追加的 10 个子部位故意没有 region_ids
         // （2D 人体图仍是父组粒度，见 V11 的注释）。
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT name_en, region_ids FROM muscle_group WHERE parent_en IS NULL ORDER BY id");
+                // V12 之后：被拆的 5 个父组故意没有 region_ids（2D 由子部位上色）
+                "SELECT name_en, region_ids FROM muscle_group " +
+                "WHERE parent_en IS NULL AND name_en NOT IN ('chest','shoulders','traps','middle back','lower back') ORDER BY id");
 
-        assertThat(rows).as("muscle_group 的顶层应有 17 行").hasSize(17);
+        // 17 个顶层里去掉被拆的 5 个 = 12
+        assertThat(rows).as("没有被拆的顶层应有 12 行").hasSize(12);
 
         Map<String, List<String>> byGroup = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {

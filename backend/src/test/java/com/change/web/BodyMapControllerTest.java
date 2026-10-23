@@ -178,10 +178,14 @@ class BodyMapControllerTest {
             // 子部位（chest-upper 这种）**故意**没有 regionIds：
             // 2D 人体图仍是父组粒度，子部位带区域 id 会让同一块区域被两个肌群争着上色。
             boolean isSubGroup = m.get("parentEn") != null && !m.get("parentEn").isNull();
-            if (isSubGroup) {
+            // V12 之后：被拆的 5 个父组也没有区域（2D 由子部位上色）
+            boolean isSplitParent = java.util.Set.of(
+                    "chest", "shoulders", "traps", "middle back", "lower back")
+                    .contains(m.get("nameEn").asText());
+            if (isSubGroup || isSplitParent) {
                 // 子部位不带区域 id：2D 人体图仍是父组粒度
                 assertThat(regionIds.size())
-                        .as("%s 是子部位，regionIds 应为空", m.get("nameEn").asText())
+                        .as("%s 不参与 2D，regionIds 应为空", m.get("nameEn").asText())
                         .isZero();
             } else {
                 assertThat(regionIds.size())
