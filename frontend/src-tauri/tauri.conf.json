@@ -49,7 +49,7 @@
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwMzZFQjQzRkZFRTNDQjUKUldTMVBPNy9RK3MyMEVSTDJNOEEvRllObXR6ejR5YUFGU0VNTGc5MkJ0UkpVVVkxbnZQUUV1cWMK",
       "endpoints": [
         "https://change-release.oss-cn-beijing.aliyuncs.com/latest.json",
-        "https://github.com/alpaca-cn/alpaca/releases/latest/download/latest.json"
+        "https://github.com/alpaca-cn/changE/releases/latest/download/latest.json"
       ]
     }
   }

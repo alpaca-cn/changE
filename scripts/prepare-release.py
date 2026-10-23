@@ -26,7 +26,7 @@ OUT = ROOT / "artifacts" / "release"
 # 更新包的下载地址走阿里云 OSS（国内快），GitHub 只留作兜底。
 # 两处内容必须一致：latest.json 里的 url 指向哪，更新器就从哪下。
 OSS_BASE = "https://change-release.oss-cn-beijing.aliyuncs.com"
-REPO = "alpaca-cn/alpaca"
+REPO = "alpaca-cn/changE"
 
 conf = json.loads((ROOT / "frontend/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
 version = conf["version"]

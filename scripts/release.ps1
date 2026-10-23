@@ -19,7 +19,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Notes,
     [switch]$SkipBuild,
-    [string]$Repo = 'alpaca-cn/alpaca'
+    [string]$Repo = 'alpaca-cn/changE'
 )
 
 $ErrorActionPreference = 'Stop'
