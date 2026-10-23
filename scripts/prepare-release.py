@@ -23,6 +23,9 @@ import shutil
 ROOT = pathlib.Path(r"E:\idea\program\change")
 NSIS = ROOT / "frontend/src-tauri/target/release/bundle/nsis"
 OUT = ROOT / "artifacts" / "release"
+# 更新包的下载地址走阿里云 OSS（国内快），GitHub 只留作兜底。
+# 两处内容必须一致：latest.json 里的 url 指向哪，更新器就从哪下。
+OSS_BASE = "https://change-release.oss-cn-beijing.aliyuncs.com"
 REPO = "alpaca-cn/alpaca"
 
 conf = json.loads((ROOT / "frontend/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
@@ -55,7 +58,7 @@ latest = {
     "platforms": {
         "windows-x86_64": {
             "signature": signature,
-            "url": f"https://github.com/{REPO}/releases/download/{tag}/{exe_name}",
+            "url": f"{OSS_BASE}/{exe_name}",
         }
     },
 }
