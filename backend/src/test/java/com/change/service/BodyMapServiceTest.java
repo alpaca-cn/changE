@@ -139,15 +139,10 @@ class BodyMapServiceTest {
             assertThat(m.daysSince()).as("%s 从没练过", m.nameEn()).isNull();
             // 子部位（chest-upper 这种）**故意**没有区域 id：2D 人体图仍是父组粒度，
             // 子部位带区域 id 会让同一块区域被两个肌群争着上色。
-            // V12 之后 2D 由子部位上色：被拆的 5 个父组故意没有区域
-            boolean isSplitParent = java.util.Set.of(
-                    "chest", "shoulders", "traps", "middle back", "lower back")
-                    .contains(m.nameEn());
-            if (m.parentEn() == null && !isSplitParent) {
-                assertThat(m.regionIds()).as("%s 的人体图区域", m.nameEn()).isNotEmpty();
-            } else if (isSplitParent) {
-                assertThat(m.regionIds()).as("%s 被拆，2D 交给子部位", m.nameEn()).isEmpty();
-            }
+            // 区域有无由 region-inventory.json 决定，逐条核对在 MuscleRegionMappingTest；
+            // 这里只要求 DTO 与库里的那一列**形状一致**。
+            assertThat(m.regionIds()).as("%s 的 regionIds 不应含空项", m.nameEn())
+                    .allMatch(id -> !id.isBlank());
         }
     }
 
@@ -242,8 +237,10 @@ class BodyMapServiceTest {
         assertThat(chest.min()).isEqualTo(999);
         assertThat(chest.max()).isEqualTo(1000);
         assertThat(chest.status()).isEqualTo(VolumeCalculator.Status.ABOVE);
-        // regionIds 不是 WeeklyVolumeService 的职责，仍然来自数据库
-        assertThat(chest.regionIds()).isNotEmpty();
+        // regionIds 不是 WeeklyVolumeService 的职责，仍然来自数据库。
+        // **V12 之后 chest 自己没有区域了**（区域下放到子部位），所以这里不能再断言非空。
+        // 想验「regionIds 真的来自数据库」，用一个确实有区域的肌群：biceps。
+        assertThat(chest.regionIds()).isEmpty();
     }
 
     // ------------------------------------------------------------------
@@ -349,13 +346,12 @@ class BodyMapServiceTest {
         for (BodyMapService.MuscleBodyMap m : v.muscles()) {
             String raw = jdbc.queryForObject(
                     "SELECT region_ids FROM muscle_group WHERE id = ?", String.class, m.muscleGroupId());
-            if (m.parentEn() != null || java.util.Set.of("chest", "shoulders", "traps",
-                    "middle back", "lower back").contains(m.nameEn())) {
-                // 子部位故意没有 region_ids（2D 仍是父组粒度，见 V11 的注释）
-                assertThat(raw).as("%s 是子部位，region_ids 应为 NULL", m.nameEn()).isNull();
+            // 区域有无由 region-inventory.json 决定（逐条核对在 MuscleRegionMappingTest）；
+            // 这里只要求 DTO 与库里的那一列形状一致。
+            if (raw == null || raw.isBlank()) {
+                assertThat(m.regionIds()).as("%s 库里没有区域，DTO 应为空", m.nameEn()).isEmpty();
                 continue;
             }
-            assertThat(raw).as("%s 的 region_ids 列（V10 之后不应为 NULL）", m.nameEn()).isNotBlank();
             assertThat(m.regionIds())
                     .as("%s 的 regionIds 应与库里的那一列逐项一致", m.nameEn())
                     .containsExactly(raw.split(",", -1));
@@ -363,9 +359,10 @@ class BodyMapServiceTest {
                     .allMatch(id -> !id.isBlank());
         }
 
-        // V10 之后的真实素材词汇：连字符，不是 V7 的 chest_left
-        assertThat(byName(v, "chest").regionIds()).containsExactly(
-                "chest-upper-left", "chest-lower-left", "chest-upper-right", "chest-lower-right");
+        // V12 之后区域下放到子部位：chest 自己没有区域，上胸那块有
+        assertThat(byName(v, "chest").regionIds()).isEmpty();
+        assertThat(byName(v, "chest-upper").regionIds()).containsExactly(
+                "chest-upper-left", "chest-upper-right");
     }
 
     // ------------------------------------------------------------------

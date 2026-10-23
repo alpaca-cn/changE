@@ -1,65 +1,43 @@
 -- V12: 把 2D 区域从「被拆的父组」下放到子部位。
 --
--- 背景：V11 加了 10 个子部位，但区域 id 仍挂在父组上，所以 2D 人体图只能按
--- 「胸部」整块上色，看不出是上胸还是下胸练得多。
+-- **这个文件是生成的，不要手改。** 来源是
+-- backend/src/main/resources/seed/region-inventory.json，由
+-- scripts/body-map/gen-region-inventory.py 生成；测试 MuscleRegionMappingTest
+-- 读同一份 JSON 来比对数据库。两边同源，改归属只需改那个脚本并重跑。
 --
--- ## 为什么有的区域被两个子部位共用
+-- 为什么有的区域被两个子部位共用：素材是**按解剖画**的，比我们的分组粗——
+-- 胸只有 upper/lower 两块（没有中胸），菱形肌没有独立区域（画在 traps-mid 里）。
+-- 所以 chest-lower-* 同属中胸与下胸、traps-mid-* 同属中斜方与菱形肌；
+-- 前端 BodyMap.vue 对「被 N 个肌群认领的区域」渲染 N 次，各自裁剪到一条横带。
 --
--- 人体图素材是**按解剖画**的，比我们的分组粗：
---   - 胸只画了 `chest-upper-*` 与 `chest-lower-*` 两块，**没有中胸**
---   - 菱形肌没有独立区域（它画在 `traps-mid-*` 那一块里，深于中斜方）
---
--- 用户选的处理方式（2026-10-23）：中胸与下胸**共用 chest-lower**，前端把这块
--- 按高度切成上下两半（中点在上者=中胸，下者=下胸）；菱形肌与中斜方共用
--- `traps-mid-*`，前端同样切成上下两半。
---
--- 所以下面有两条 UPDATE 写进同一个区域 id 集合 —— 那是**故意的**。
--- 前端 `BodyMap.vue` 对「被 N 个肌群认领的区域」渲染 N 次，各自裁剪到一条横带。
---
--- ## 为什么把父组的 region_ids 清空
---
--- 父组仍然存在（体积极汇总到它），但它不再直接画 2D：
--- 如果父组也认领同一批区域，它就变成第三个认领者，切成三份反而更乱。
--- 父组的信息由「子部位之和」体现，2D 上由子部位上色。
---
--- lats 没有拆分，保持 V10 的值不动。
+-- 被拆的 5 个父组把 region_ids 清空：它们仍存在（体积极汇总到它们），
+-- 但不再直接画 2D，否则就变成第三个认领者。
 
--- ── 胸 ──────────────────────────────────────────────────
-UPDATE muscle_group SET region_ids = NULL WHERE name_en IN ('chest');
-UPDATE muscle_group SET region_ids = 'chest-upper-left,chest-upper-right'
-    WHERE name_en = 'chest-upper';
-UPDATE muscle_group SET region_ids = 'chest-lower-left,chest-lower-right'
-    WHERE name_en = 'chest-middle';
-UPDATE muscle_group SET region_ids = 'chest-lower-left,chest-lower-right'
-    WHERE name_en = 'chest-lower';
+UPDATE muscle_group SET region_ids = 'abs-upper-left,obliques-left,abs-upper-right,abs-lower-right,abs-lower-left,obliques-right' WHERE name_en = 'abdominals';
+UPDATE muscle_group SET region_ids = 'gluteus-medius-left,gluteus-medius-right' WHERE name_en = 'abductors';
+UPDATE muscle_group SET region_ids = 'adductors-left,adductors-right' WHERE name_en = 'adductors';
+UPDATE muscle_group SET region_ids = 'biceps-left,biceps-right' WHERE name_en = 'biceps';
+UPDATE muscle_group SET region_ids = 'calves-gastroc-medial-left,calves-gastroc-lateral-left,calves-soleus-left,calves-gastroc-medial-right,calves-gastroc-lateral-right,calves-soleus-right' WHERE name_en = 'calves';
+UPDATE muscle_group SET region_ids = 'chest-lower-left,chest-lower-right' WHERE name_en = 'chest-lower';
+UPDATE muscle_group SET region_ids = 'chest-lower-left,chest-lower-right' WHERE name_en = 'chest-middle';
+UPDATE muscle_group SET region_ids = 'chest-upper-left,chest-upper-right' WHERE name_en = 'chest-upper';
+UPDATE muscle_group SET region_ids = 'forearm-left,forearm-right,forearm-flexors-left,forearm-extensors-left,forearm-flexors-right,forearm-extensors-right' WHERE name_en = 'forearms';
+UPDATE muscle_group SET region_ids = 'gluteus-maximus-left,gluteus-maximus-right' WHERE name_en = 'glutes';
+UPDATE muscle_group SET region_ids = 'hamstrings-medial-left,hamstrings-lateral-left,hamstrings-medial-right,hamstrings-lateral-right' WHERE name_en = 'hamstrings';
+UPDATE muscle_group SET region_ids = 'lats-upper-left,lats-mid-left,lats-lower-left,lats-upper-right,lats-mid-right,lats-lower-right' WHERE name_en = 'lats';
+UPDATE muscle_group SET region_ids = 'lower-back-erectors-left,lower-back-ql-left,lower-back-erectors-right,lower-back-ql-right' WHERE name_en = 'lower back-erector';
+UPDATE muscle_group SET region_ids = 'traps-mid-left,traps-mid-right' WHERE name_en = 'middle back-rhomboids';
+UPDATE muscle_group SET region_ids = 'neck-right,neck-left,nape' WHERE name_en = 'neck';
+UPDATE muscle_group SET region_ids = 'quads-left,quads-right' WHERE name_en = 'quadriceps';
+UPDATE muscle_group SET region_ids = 'shoulder-front-left,shoulder-front-right' WHERE name_en = 'shoulders-anterior';
+UPDATE muscle_group SET region_ids = 'shoulder-side-left,shoulder-side-right' WHERE name_en = 'shoulders-lateral';
+UPDATE muscle_group SET region_ids = 'deltoid-rear-left,deltoid-rear-right' WHERE name_en = 'shoulders-posterior';
+UPDATE muscle_group SET region_ids = 'traps-mid-left,traps-lower-left,traps-mid-right,traps-lower-right' WHERE name_en = 'traps-middle';
+UPDATE muscle_group SET region_ids = 'traps-upper-left,traps-upper-right' WHERE name_en = 'traps-upper';
+UPDATE muscle_group SET region_ids = 'triceps-long-left,triceps-lateral-left,triceps-long-right,triceps-lateral-right' WHERE name_en = 'triceps';
 
--- ── 肩 ──────────────────────────────────────────────────
-UPDATE muscle_group SET region_ids = NULL WHERE name_en = 'shoulders';
-UPDATE muscle_group SET region_ids = 'shoulder-front-left,shoulder-front-right'
-    WHERE name_en = 'shoulders-anterior';
-UPDATE muscle_group SET region_ids = 'shoulder-side-left,shoulder-side-right'
-    WHERE name_en = 'shoulders-lateral';
-UPDATE muscle_group SET region_ids = 'deltoid-rear-left,deltoid-rear-right'
-    WHERE name_en = 'shoulders-posterior';
-
--- ── 斜方 ────────────────────────────────────────────────
-UPDATE muscle_group SET region_ids = NULL WHERE name_en = 'traps';
-UPDATE muscle_group SET region_ids = 'traps-upper-left,traps-upper-right'
-    WHERE name_en = 'traps-upper';
--- 中斜方 + 下斜方（用户选的是「背 5 块」，下斜方并入中斜方）
-UPDATE muscle_group SET region_ids = 'traps-mid-left,traps-mid-right,traps-lower-left,traps-lower-right'
-    WHERE name_en = 'traps-middle';
-
--- ── 中背 / 菱形肌 ────────────────────────────────────────
-UPDATE muscle_group SET region_ids = NULL WHERE name_en = 'middle back';
--- 与 traps-middle 共用 traps-mid-*（菱形肌在解剖上位于中斜方深层）；
--- 多出来的 traps-lower-* 给中斜方，菱形肌只要 mid。
-UPDATE muscle_group SET region_ids = 'traps-mid-left,traps-mid-right'
-    WHERE name_en = 'middle back-rhomboids';
-UPDATE muscle_group SET region_ids = 'traps-lower-left,traps-lower-right'
-    WHERE name_en = 'traps-middle';
-
--- ── 下背 / 竖脊肌 ────────────────────────────────────────
+UPDATE muscle_group SET region_ids = NULL WHERE name_en = 'chest';
 UPDATE muscle_group SET region_ids = NULL WHERE name_en = 'lower back';
-UPDATE muscle_group SET region_ids = 'lower-back-erectors-left,lower-back-erectors-right,lower-back-ql-left,lower-back-ql-right'
-    WHERE name_en = 'lower back-erector';
+UPDATE muscle_group SET region_ids = NULL WHERE name_en = 'middle back';
+UPDATE muscle_group SET region_ids = NULL WHERE name_en = 'shoulders';
+UPDATE muscle_group SET region_ids = NULL WHERE name_en = 'traps';

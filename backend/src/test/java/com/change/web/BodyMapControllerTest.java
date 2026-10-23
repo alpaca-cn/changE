@@ -177,20 +177,11 @@ class BodyMapControllerTest {
                     .isFalse();
             // 子部位（chest-upper 这种）**故意**没有 regionIds：
             // 2D 人体图仍是父组粒度，子部位带区域 id 会让同一块区域被两个肌群争着上色。
-            boolean isSubGroup = m.get("parentEn") != null && !m.get("parentEn").isNull();
-            // V12 之后：被拆的 5 个父组也没有区域（2D 由子部位上色）
-            boolean isSplitParent = java.util.Set.of(
-                    "chest", "shoulders", "traps", "middle back", "lower back")
-                    .contains(m.get("nameEn").asText());
-            if (isSubGroup || isSplitParent) {
-                // 子部位不带区域 id：2D 人体图仍是父组粒度
-                assertThat(regionIds.size())
-                        .as("%s 不参与 2D，regionIds 应为空", m.get("nameEn").asText())
-                        .isZero();
-            } else {
-                assertThat(regionIds.size())
-                        .as("%s 的 regionIds 不应为空", m.get("nameEn").asText())
-                        .isPositive();
+            // 区域有无由 region-inventory.json 决定（见 MuscleRegionMappingTest）；
+            // 这里只要求是数组、无空项。
+            for (JsonNode rid : regionIds) {
+                assertThat(rid.asText()).as("%s 的 region id 不应为空", m.get("nameEn").asText())
+                        .isNotBlank();
             }
             for (JsonNode id : regionIds) {
                 assertThat(id.isTextual()).as("region id 是字符串").isTrue();
@@ -208,9 +199,11 @@ class BodyMapControllerTest {
         assertThat(chest.get("status").asText()).isEqualTo("BELOW");
         assertThat(chest.get("lastTrainedOn").asText()).isEqualTo("2026-10-20");
         assertThat(chest.get("daysSince").asInt()).isZero();
-        assertThat(chest.get("regionIds").toString()).as("原样是四个连字符 id")
-                .isEqualTo("[\"chest-upper-left\",\"chest-lower-left\","
-                        + "\"chest-upper-right\",\"chest-lower-right\"]");
+        // V12 之后区域下放到子部位：chest 自己没有区域，上胸那块才有
+        assertThat(chest.get("regionIds").size()).as("chest 不直接参与 2D").isZero();
+        assertThat(muscle(muscles, "chest-upper").get("regionIds").toString())
+                .as("上胸拿到 chest-upper-* 两个 id")
+                .isEqualTo("[\"chest-upper-left\",\"chest-upper-right\"]");
 
         assertThat(muscle(muscles, "triceps").get("sets").asDouble()).isEqualTo(1.5);
 
