@@ -57,7 +57,7 @@ logs/
 *.iws
 
 # ── PPT 任务派生物 ──
-ppt_tasks/*/render/*.pdf
+scratch/ppt_tasks/*/render/*.pdf
 
 # 前端
 frontend/node_modules/
