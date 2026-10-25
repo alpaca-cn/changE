@@ -61,8 +61,19 @@ export function putAgentConfig(input: AgentConfigInput): Promise<AgentConfig> {
  * （已下线）和 Qwen3.8-Flash（不存在），两次都只得到一句 model_not_found。
  * 让界面把服务商**真实存在的 id** 拉回来选，就不会再撞这个墙。
  */
-export function listModels(): Promise<string[]> {
-  return callApi('GET', '/api/agent/models', undefined, 30_000) as Promise<string[]>
+export async function listModels(): Promise<string[]> {
+  const raw = await callApi('GET', '/api/agent/models', undefined, 30_000)
+
+  // 后端回的是 **{ models: [...] }**，不是裸数组。
+  // 这里**绝不能用 s string[] 蒙过去**：蒙过去的结果是 availableModels
+  // 变成一个对象、.length 是 undefined，于是下拉的 v-if 不成立、
+  // 「空列表」的提示也不触发 —— 界面一片空白，既没结果也没报错。
+  // 2026-10-25 用户看到的就是这个。
+  const models = (raw as { models?: unknown } | null)?.models
+  if (!Array.isArray(models)) {
+    throw new Error('后端返回的模型列表格式不对（期望 { models: [...] }）')
+  }
+  return models.filter((m): m is string => typeof m === 'string')
 }
 
 const CHAT_TIMEOUT_MS = 180_000
