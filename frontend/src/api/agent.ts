@@ -48,11 +48,21 @@ export function putAgentConfig(input: AgentConfigInput): Promise<AgentConfig> {
  * 一轮对话。`imageDataUrl` 可选，必须是 `data:image/...;base64,...`
  * （由 `lib/image.ts` 压好再传）。
  */
+/**
+ * 一次对话的等待上限。
+ *
+ * 智能体内部要跑「模型 → 工具 → 模型」，最多 6 轮工具调用。实测中等任务
+ * 10-40 秒，给到 180 秒（外壳的上限也是 180 秒，超出的会被夹掉）。
+ */
+const CHAT_TIMEOUT_MS = 180_000
+
 export function chat(message: string, imageDataUrl?: string): Promise<AgentChatResult> {
-  return callApi('POST', '/api/agent/chat', {
-    message,
-    imageDataUrl,
-  }) as Promise<AgentChatResult>
+  return callApi(
+    'POST',
+    '/api/agent/chat',
+    { message, imageDataUrl },
+    CHAT_TIMEOUT_MS,
+  ) as Promise<AgentChatResult>
 }
 
 export function history(): Promise<AgentMessage[]> {

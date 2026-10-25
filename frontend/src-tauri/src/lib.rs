@@ -75,6 +75,7 @@ fn api_request(
     method: String,
     path: String,
     body: Option<String>,
+    timeout_ms: Option<u64>,
 ) -> Result<http::ApiResponse, String> {
     let (status, port, message) = {
         let s = backend.state.lock().unwrap();
@@ -85,7 +86,8 @@ fn api_request(
             let port = port.ok_or_else(|| {
                 "后端状态是 ready，但没有端口——这是外壳内部的矛盾，请报告".to_string()
             })?;
-            http::api_request(port, &method, &path, body.as_deref())
+            let timeout = timeout_ms.map(http::clamp_timeout);
+            http::api_request(port, &method, &path, body.as_deref(), timeout)
         }
         BackendStatus::Starting => Err("后端还在启动中，请稍候".to_string()),
         BackendStatus::Failed => Err(format!("后端没有起来：{message}")),

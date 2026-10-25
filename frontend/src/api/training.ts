@@ -205,13 +205,26 @@ function query(params: Record<string, string | number | undefined | null>): stri
  * - `204` → `null`（「这个动作没做过」不是一个错误）；
  * - 2xx → 解析后的对象；**其它** → `ApiError`，`message` 取后端 `{error}`。
  */
-export async function callApi(method: 'GET' | 'POST', path: string, body?: unknown): Promise<unknown> {
+export async function callApi(
+  method: 'GET' | 'POST',
+  path: string,
+  body?: unknown,
+  /**
+   * 可选超时（毫秒）。省略 = 外壳的默认 10 秒。
+   *
+   * **只有「要等外部模型」的请求才该传它。** 普通请求 10 秒足够，
+   * 而模型调用十几到几十秒——用默认值去等，只会在拿到结果前把自己掐断
+   * （2026-10-25 的「识别不了图片」就是这么来的）。外壳会把它夹在 100ms-180s。
+   */
+  timeoutMs?: number,
+): Promise<unknown> {
   let res: RawResponse
   try {
     res = await invoke<RawResponse>('api_request', {
       method,
       path,
       body: body === undefined ? undefined : JSON.stringify(body),
+      timeoutMs,
     })
   } catch (e) {
     throw new ApiTransportError(String(e))

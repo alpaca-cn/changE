@@ -1245,7 +1245,7 @@ mod tests {
 
         // (1) 200 + chunked + 中文 JSON：读路径
         let start = Instant::now();
-        let weekly = crate::http::api_request(port, "GET", "/api/volume/weekly", None)
+        let weekly = crate::http::api_request(port, "GET", "/api/volume/weekly", None, None)
             .unwrap_or_else(|e| panic!("GET /api/volume/weekly 失败：{e}"));
         println!("[e2e-proxy] weekly 用了 {:?}，status={}", start.elapsed(), weekly.status);
         assert_eq!(weekly.status, 200);
@@ -1264,6 +1264,7 @@ mod tests {
             "GET",
             "/api/exercises?q=%E5%8D%A7%E6%8E%A8&limit=1",
             None,
+            None,
         )
         .unwrap_or_else(|e| panic!("GET /api/exercises 失败：{e}"));
         assert_eq!(search.status, 200);
@@ -1272,7 +1273,7 @@ mod tests {
         assert!(rows.as_array().unwrap().len() <= 1, "limit=1 应当生效");
 
         // (3) 204：一个不存在的动作 → 没有正文，且**不是**错误
-        let never = crate::http::api_request(port, "GET", "/api/exercises/999999/last-performance", None)
+        let never = crate::http::api_request(port, "GET", "/api/exercises/999999/last-performance", None, None)
             .unwrap_or_else(|e| panic!("last-performance 失败：{e}"));
         assert_eq!(never.status, 204);
         assert_eq!(never.body, "", "204 的正文必须是空的（不是 '0' 也不是 '[]'）");
@@ -1283,6 +1284,7 @@ mod tests {
             "POST",
             "/api/sessions",
             Some(r#"{"sessionDate":"2026-10-19","exercises":[]}"#),
+            None,
         )
         .unwrap_or_else(|e| panic!("POST /api/sessions 失败：{e}"));
         println!("[e2e-proxy] 400 正文 = {}", bad.body);
@@ -1299,7 +1301,7 @@ mod tests {
         // `{"timestamp":…,"error":"Not Found","path":…}`——`TrainingController` reason 里那句
         // 中文根本不出现，前端界面上只有英文的 `Not Found`。ApiErrors 补了
         // ResponseStatusException 的 handler 之后，正文才变成 `{"error":"找不到这次训练: …"}`。
-        let missing = crate::http::api_request(port, "GET", "/api/sessions/999999", None)
+        let missing = crate::http::api_request(port, "GET", "/api/sessions/999999", None, None)
             .unwrap_or_else(|e| panic!("不存在的训练应当回 404 而不是传输失败：{e}"));
         assert_eq!(missing.status, 404);
         println!("[e2e-proxy] 404 正文 = {}", missing.body);

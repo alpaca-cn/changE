@@ -301,6 +301,28 @@ fn parse_health_json(body: &[u8]) -> Result<Health, HealthError> {
 /// 10 秒仍远小于用户会以为「卡死」的时间，也与前端一次操作的等待上限相称。
 pub const API_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// 调用方可以请求的最长超时。
+///
+/// 智能体的 `chat` 在内部可能要跑好几轮「模型 → 工具 → 模型」，
+/// 实测一次带工具的中等任务在 10-40 秒。180 秒给了足够余量，
+/// 同时仍然是有限的——无限等待会把「服务挂了」变成「界面卡了」。
+pub const MAX_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// 调用方可以请求的最短超时。低于它没有实际意义，只会立刻失败。
+pub const MIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// 把前端传来的毫秒数夹到 `[MIN_TIMEOUT, MAX_TIMEOUT]` 里。
+pub fn clamp_timeout(millis: u64) -> std::time::Duration {
+    let d = std::time::Duration::from_millis(millis);
+    if d < MIN_TIMEOUT {
+        MIN_TIMEOUT
+    } else if d > MAX_TIMEOUT {
+        MAX_TIMEOUT
+    } else {
+        d
+    }
+}
+
 /// 一条**已完成**的 HTTP 响应。
 ///
 /// `status` 是服务端的真实状态码。**400 / 404 也是 `Ok`**——前端要根据状态码
@@ -370,7 +392,13 @@ pub fn api_request(
     method: &str,
     path: &str,
     body: Option<&str>,
+    timeout: Option<std::time::Duration>,
 ) -> Result<ApiResponse, String> {
+    // 默认 10 秒，但**调用方可以要一个更长的** —— 模型调用动辄十几到几十秒，
+    // 用 10 秒去等它只会在拿到答案之前把自己掐断（2026-10-25 用户报的
+    // 「模型识别不了图片」就是这么来的：请求在 10 秒时被外壳断开，
+    // 前端只看到一句超时，看起来像模型不支持图片）。
+    let timeout = timeout.unwrap_or(API_TIMEOUT);
     let addr = format!("127.0.0.1:{port}");
     let read_err = |e: std::io::Error| {
         HealthError::Read {
@@ -391,8 +419,8 @@ pub fn api_request(
     let request = build_request(port, method, path, body)?;
 
     let mut stream = std::net::TcpStream::connect(&addr).map_err(connect_err)?;
-    stream.set_read_timeout(Some(API_TIMEOUT)).map_err(read_err)?;
-    stream.set_write_timeout(Some(API_TIMEOUT)).map_err(read_err)?;
+    stream.set_read_timeout(Some(timeout)).map_err(read_err)?;
+    stream.set_write_timeout(Some(timeout)).map_err(read_err)?;
 
     {
         use std::io::Write;
@@ -1299,7 +1327,7 @@ mod tests {
             let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             l.local_addr().unwrap().port()
         };
-        let err = api_request(port, "GET", "/api/health", None).unwrap_err();
+        let err = api_request(port, "GET", "/api/health", None, None).unwrap_err();
         assert!(err.contains("连不上"), "实际 {err}");
         assert!(!err.contains("HTTP 200"));
     }
@@ -1311,7 +1339,7 @@ mod tests {
             let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             l.local_addr().unwrap().port()
         };
-        let err = api_request(port, "DELETE", "/api/sessions", None).unwrap_err();
+        let err = api_request(port, "DELETE", "/api/sessions", None, None).unwrap_err();
         assert!(err.contains("GET / POST"), "实际 {err}");
     }
 }
