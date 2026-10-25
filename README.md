@@ -9,6 +9,11 @@
 
 > 给朋友用也是同一个安装包——装完自带 Java 运行时，不需要他们准备任何环境。
 
+<p align="center">
+  <img src="docs/images/today.png" width="49%" alt="今日：本周进度、今日摄入、17 块肌群的容量条">
+  <img src="docs/images/body-map.png" width="49%" alt="人体图：可点选的 3D 模型，按子部位上色">
+</p>
+
 ---
 
 ## 下载安装
