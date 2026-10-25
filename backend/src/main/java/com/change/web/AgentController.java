@@ -1,6 +1,7 @@
 package com.change.web;
 
 import com.change.agent.AgentService;
+import com.change.agent.OpenAiCompatibleClient;
 import com.change.agent.AgentSettingsStore;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,16 +29,30 @@ public class AgentController {
 
     private final AgentService agent;
     private final AgentSettingsStore settings;
+    private final OpenAiCompatibleClient client;
 
-    public AgentController(AgentService agent, AgentSettingsStore settings) {
+    public AgentController(AgentService agent, AgentSettingsStore settings,
+                           OpenAiCompatibleClient client) {
         this.agent = agent;
         this.settings = settings;
+        this.client = client;
     }
 
     /** 配置状态。**不含 key**。 */
     @GetMapping("/config")
     public Map<String, Object> config() {
         return settings.read().redacted();
+    }
+
+    /**
+     * 服务商当前可用的模型列表。
+     *
+     * <p>为什么要它：型号会下线，而手打型号只能靠撞。让界面从服务商那里把
+     * **真实存在的 id** 拉回来给人选，就不会再出现「Model not exist」。
+     */
+    @GetMapping("/models")
+    public Map<String, Object> models() {
+        return Map.of("models", client.listModels(settings.read()));
     }
 
     /**

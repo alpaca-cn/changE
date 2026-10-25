@@ -20,6 +20,7 @@ import {
 const config = ref<AgentConfig | null>(null)
 // 服务商预设：换模型时不用自己记接口地址和型号名（各家路径都不一样）
 import { LLM_PROVIDERS, providerById } from './llm-providers'
+import { listModels } from '../api/agent'
 
 /** 当前选中的预设 id。「自定义」时是 'custom'。 */
 const providerId = ref('custom')
@@ -31,6 +32,32 @@ function applyProvider(id: string) {
   if (p === undefined) return
   baseUrl.value = p.baseUrl
   model.value = p.model
+}
+
+/** 从服务商拉回来的模型 id。拉失败时为空，界面退回到手填。 */
+const availableModels = ref<string[]>([])
+const modelsError = ref<string | null>(null)
+const loadingModels = ref(false)
+
+/**
+ * 问服务商「你有哪些模型」。
+ *
+ * 这是**唯一可靠**的填型号方式：型号会下线，手打只能靠撞。
+ */
+async function fetchModels() {
+  loadingModels.value = true
+  modelsError.value = null
+  try {
+    availableModels.value = await listModels()
+    if (availableModels.value.length === 0) {
+      modelsError.value = '服务商返回了空列表，只能手动填型号'
+    }
+  } catch (e) {
+    availableModels.value = []
+    modelsError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    loadingModels.value = false
+  }
 }
 
 /** 当前预设给的那句提示（没有预设时为空）。 */
@@ -169,8 +196,28 @@ onMounted(() => {
 
       <label class="field">
         <span class="label">模型名</span>
-        <input v-model="model" type="text" placeholder="deepseek-chat" />
+        <input v-model="model" type="text" placeholder="先点下面「获取可用模型」再选" />
       </label>
+
+      <!--
+        型号不能靠猜：服务商会下线旧型号，而手打只会得到一句 model_not_found。
+        这里直接问服务商要列表，从真实存在的 id 里选。
+      -->
+      <div class="model-pick">
+        <button type="button" class="ghost" :disabled="loadingModels" @click="fetchModels">
+          {{ loadingModels ? '正在获取…' : '获取可用模型' }}
+        </button>
+        <select
+          v-if="availableModels.length > 0"
+          class="model-select"
+          :value="model"
+          @change="model = ($event.target as HTMLSelectElement).value"
+        >
+          <option value="">从 {{ availableModels.length }} 个模型里选一个</option>
+          <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
+        </select>
+        <span v-if="modelsError" class="note bad">{{ modelsError }}</span>
+      </div>
 
       <label class="field">
         <span class="label">API Key</span>
@@ -236,6 +283,18 @@ h3 { font-size: 15px; }
 .hint code { font-family: var(--mono); font-size: 11px; }
 
 .provider { font-size: 13px; }
+.model-pick { display: flex; align-items: center; flex-wrap: wrap; gap: var(--gap-sm); margin: -6px 0 var(--gap-sm); }
+.model-select { font-size: 12px; max-width: 320px; }
+.ghost {
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.ghost:disabled { opacity: 0.6; cursor: wait; }
 .note.bad { color: var(--danger); }
 
 .field { display: block; margin-bottom: var(--gap-md); }

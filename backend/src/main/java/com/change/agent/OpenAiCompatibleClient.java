@@ -68,6 +68,71 @@ public class OpenAiCompatibleClient implements LlmClient {
         return parseReply(res.body());
     }
 
+    /**
+     * 拉服务商的可用模型列表（OpenAI 兼容的 {@code GET {baseUrl}/models}）。
+     *
+     * <p><b>为什么要有这个</b>：型号名会下线。2026-10-25 用户先后填了
+     * {@code qwen-vl-max}（已下线）和 {@code Qwen3.8-Flash}（不存在），两次都只拿到
+     * 一句 {@code model_not_found} —— 而「现在到底有哪些能用的」只有问服务商才知道。
+     * 让人手打型号就是在赌。
+     *
+     * <p>返回的 id **按字母序**排好：服务商的顺序不稳定，每次刷新都换位置很难扫。
+     */
+    public List<String> listModels(AgentSettingsStore.Settings settings) {
+        if (!settings.configured()) {
+            throw new LlmException("还没有配置模型，先去「设置」里填 API key。");
+        }
+
+        String url = trimTrailingSlash(settings.baseUrl()) + "/models";
+        HttpRequest req = HttpRequest.newBuilder(java.net.URI.create(url))
+                .timeout(REQUEST_TIMEOUT)
+                .header("Authorization", "Bearer " + settings.apiKey())
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+
+        HttpResponse<String> res;
+        try {
+            res = http.send(req, HttpResponse.BodyHandlers.ofString());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new LlmException("拉模型列表时被中断。", e);
+        } catch (IOException e) {
+            throw new LlmException("连不上模型服务：" + e.getMessage(), e);
+        }
+
+        if (res.statusCode() / 100 != 2) {
+            throw new LlmException("拉模型列表失败：" + explainStatus(res.statusCode(), res.body()));
+        }
+
+        JsonNode root = readTreeOrEmptyObject(res.body());
+        JsonNode data = root.get("data");
+        if (data == null || !data.isArray()) {
+            // 有的服务商不实现 /models。这是「服务商不支持」，不是我们的错，
+            // 但要说得让人能判断：那就手动填型号。
+            throw new LlmException(
+                    "这个服务商没有返回模型列表（它可能不支持 GET /models）。请手动填写型号名。");
+        }
+
+        List<String> ids = new java.util.ArrayList<>();
+        for (JsonNode n : data) {
+            JsonNode id = n.get("id");
+            if (id != null && !id.asText().isBlank()) {
+                ids.add(id.asText());
+            }
+        }
+        java.util.Collections.sort(ids);
+        return ids;
+    }
+
+    private static String trimTrailingSlash(String s) {
+        String out = s == null ? "" : s.trim();
+        while (out.endsWith("/")) {
+            out = out.substring(0, out.length() - 1);
+        }
+        return out;
+    }
+
     private HttpRequest buildRequest(AgentSettingsStore.Settings s, List<Turn> turns, List<ToolSpec> tools) {
         ObjectNode body = json.createObjectNode();
         body.put("model", s.model());

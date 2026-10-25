@@ -54,6 +54,17 @@ export function putAgentConfig(input: AgentConfigInput): Promise<AgentConfig> {
  * 智能体内部要跑「模型 → 工具 → 模型」，最多 6 轮工具调用。实测中等任务
  * 10-40 秒，给到 180 秒（外壳的上限也是 180 秒，超出的会被夹掉）。
  */
+/**
+ * 服务商当前可用的模型列表。
+ *
+ * **为什么不让人手打型号**：型号会下线。2026-10-25 用户先后填了 qwen-vl-max
+ * （已下线）和 Qwen3.8-Flash（不存在），两次都只得到一句 model_not_found。
+ * 让界面把服务商**真实存在的 id** 拉回来选，就不会再撞这个墙。
+ */
+export function listModels(): Promise<string[]> {
+  return callApi('GET', '/api/agent/models', undefined, 30_000) as Promise<string[]>
+}
+
 const CHAT_TIMEOUT_MS = 180_000
 
 export function chat(message: string, imageDataUrl?: string): Promise<AgentChatResult> {
