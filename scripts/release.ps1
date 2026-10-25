@@ -18,11 +18,48 @@
 
 param(
     [Parameter(Mandatory = $true)][string]$Notes,
+    # 想发哪个版本就写哪个（如 0.2.9）。不给就用当前版本号。
+    # 给了就自动写进 frontend/package.json 与 tauri.conf.json —— 这两处
+    # 必须一致，手改很容易漏一处，而漏了的表现是「安装包里是旧的版本号」。
+    [string]$Version = '',
     [switch]$SkipBuild,
     [string]$Repo = 'alpaca-cn/changE'
 )
 
 $ErrorActionPreference = 'Stop'
+
+$root = Split-Path -Parent $PSScriptRoot
+
+# 升版本号（给了 -Version 才做）
+if ($Version -ne '') {
+    $pkg = Join-Path $root 'frontend/package.json'
+    $conf = Join-Path $root 'frontend/src-tauri/tauri.conf.json'
+    $python = 'E:\dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe'
+    $bump = @'
+import json, sys, pathlib
+ver = sys.argv[1]
+for rel in sys.argv[2:]:
+    p = pathlib.Path(rel)
+    d = json.loads(p.read_text(encoding="utf-8"))
+    old = d.get("version")
+    d["version"] = ver
+    p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"  {rel}: {old} -> {ver}")
+'@
+    $tmp = Join-Path $env:TEMP 'change-bump.py'
+    [System.IO.File]::WriteAllText($tmp, $bump, [System.Text.UTF8Encoding]::new($false))
+    & $python $tmp $Version $pkg $conf
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '写版本号失败，停下来。' -ForegroundColor Red
+        exit 1
+    }
+# 更新说明落成文件：prepare-release.py 从 docs/release-notes.txt 读它，
+# 最终写进 latest.json 的 notes —— 也就是应用里「有新版本」那句话。
+ = Join-Path (Split-Path -Parent ) 'docs/release-notes.txt'
+$notesFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'docs/release-notes.txt'
+[System.IO.File]::WriteAllText($notesFile, $Notes, [System.Text.UTF8Encoding]::new($false))
+
+}
 $pythonPath = 'E:\dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -120,7 +157,7 @@ Write-Host "latest.json 已写: $latestPath" -ForegroundColor Cyan
 
 # ── 5. 发 release ─────────────────────────────────────────
 if ($skipGh) {
-    & $pythonPath (Join-Path $root 'scripts/prepare-release.py')
+    & $pythonPath (Join-Path $root 'scripts/prepare-release.py') --notes $Notes
     Write-Host ""
     Write-Host "手动发版清单：" -ForegroundColor Cyan
     Write-Host "  1. 把 artifacts/release/ 里的三个文件上传到 OSS bucket change-release 的根目录"
