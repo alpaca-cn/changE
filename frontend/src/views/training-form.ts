@@ -41,6 +41,24 @@ export function rowsFromLastPerformance(lp: LastPerformance | null): SetRow[] {
 }
 
 /**
+ * 草稿里的一个动作。**一次训练通常有多个动作**，每个各有自己的若干组。
+ *
+ * 2026-10-25：之前这一页只有一个 `selectedExercise` + 一份 `rows`，点第二个动作
+ * 会把第一个覆盖掉。而「一天只练一个动作」在现实中不存在 —— 用户报的第一个问题
+ * 就是「练完辅助引体想记高位下拉，引体的记录没了」。
+ *
+ * 后端 `SessionInput` 本来就接受 `List<ExerciseInput>`，是前端把模型压扁了。
+ */
+export interface DraftItem {
+  exerciseId: number
+  nameZh: string | null
+  nameEn: string
+  rows: SetRow[]
+  /** 「上次 xx」那句话，只用于显示。 */
+  prefillNote: string
+}
+
+/**
  * 输入框文本 → 数字。
  *
  * **空串必须是 `null`，不能是 `0`。** `Number('') === 0`，把「没填重量」写成
@@ -83,14 +101,13 @@ export function todayIso(d: Date = new Date()): string {
   return `${y}-${m}-${day}`
 }
 
-/** 表单 → `POST /api/sessions` 的请求体。 */
-export function toSessionInput(args: {
+/** 草稿 → `POST /api/sessions` 的请求体。**一次训练里的所有动作一起提交。** */
+export function toSessionInputMulti(args: {
   sessionDate: string
   title: string
   perceivedState: string
   note: string
-  exerciseId: number
-  rows: SetRow[]
+  items: DraftItem[]
 }): SessionInput {
   return {
     sessionDate: args.sessionDate,
@@ -99,15 +116,38 @@ export function toSessionInput(args: {
     note: textOrNull(args.note),
     startedAt: null,
     endedAt: null,
-    exercises: [
-      {
-        exerciseId: args.exerciseId,
-        note: null,
-        supersetGroup: null,
-        sets: args.rows.map(toSetInput),
-      },
-    ],
+    exercises: args.items.map((item) => ({
+      exerciseId: item.exerciseId,
+      note: null,
+      supersetGroup: null,
+      sets: item.rows.map(toSetInput),
+    })),
   }
+}
+
+/**
+ * 单动作的旧签名，**委托给多动作版本**。
+ *
+ * 保留它是因为智能体的 `record_workout` 与若干用例仍按单动作思考；
+ * 但实现只有一份，不会出现「单动作与多动作拼出的请求体不一样」这种问题。
+ */
+export function toSessionInput(args: {
+  sessionDate: string
+  title: string
+  perceivedState: string
+  note: string
+  exerciseId: number
+  rows: SetRow[]
+}): SessionInput {
+  return toSessionInputMulti({
+    sessionDate: args.sessionDate,
+    title: args.title,
+    perceivedState: args.perceivedState,
+    note: args.note,
+    items: [
+      { exerciseId: args.exerciseId, nameZh: null, nameEn: '', rows: args.rows, prefillNote: '' },
+    ],
+  })
 }
 
 /**
@@ -118,6 +158,22 @@ export function toSessionInput(args: {
 export function validationError(exerciseId: number | null, rows: SetRow[]): string | null {
   if (exerciseId === null) return '先选一个动作'
   if (rows.length === 0) return '至少要有一组'
+  return null
+}
+
+/**
+ * 多动作草稿的校验。
+ *
+ * 每个动作至少要有一组：一个「零组」的动作写进库只会变成一条空练，
+ * 而它在历史与容量里都会占位。
+ */
+export function validationErrorMulti(items: DraftItem[]): string | null {
+  if (items.length === 0) return '先选一个动作'
+  for (const item of items) {
+    if (item.rows.length === 0) {
+      return `「${item.nameZh ?? item.nameEn}」至少要有一组`
+    }
+  }
   return null
 }
 

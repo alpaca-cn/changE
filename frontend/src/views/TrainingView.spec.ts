@@ -522,7 +522,9 @@ describe('训练记录页 · 看做法（详情抽屉接线）', () => {
           resolveSecond = resolve
         }),
     )
-    await wrapper.find('.look-up').trigger('click')
+    // 2026-10-25：草稿现在可以同时装多个动作，所以 `.look-up` 不再是唯一的 ——
+    // 第二个动作的「看做法」是第二个按钮。这条用例的意图（慢响应不该覆盖新响应）不变。
+    await wrapper.findAll('.look-up')[1].trigger('click')
     await flushPromises()
 
     const detailPaths = paths().filter(

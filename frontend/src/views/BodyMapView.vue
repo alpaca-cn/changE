@@ -290,8 +290,9 @@ function closePanel() {
 
 <style scoped>
 .page {
+  margin-inline: auto;
   padding: var(--gap-xl);
-  max-width: 1180px;
+  max-width: 1440px;
 }
 h2 {
   font-size: 26px;

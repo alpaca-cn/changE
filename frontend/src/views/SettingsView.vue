@@ -190,7 +190,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.page { padding: var(--gap-xl); max-width: 720px; }
+.page {
+  margin-inline: auto; padding: var(--gap-xl); max-width: 960px; }
 h2 { font-size: 26px; margin: var(--gap-sm) 0 var(--gap-md); }
 
 .block { margin-top: var(--gap-lg); }

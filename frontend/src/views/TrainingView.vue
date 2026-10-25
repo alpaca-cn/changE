@@ -19,9 +19,10 @@ import {
   emptyRow,
   lastPerformanceNote,
   rowsFromLastPerformance,
-  toSessionInput,
+  toSessionInputMulti,
   todayIso,
-  validationError,
+  validationErrorMulti,
+  type DraftItem,
   type SetRow,
 } from './training-form'
 
@@ -52,11 +53,14 @@ const selectedMuscleId = ref<number | ''>('')
 const query = ref('')
 const exercises = ref<ExerciseSummary[]>([])
 const exercisesError = ref<string | null>(null)
-const selectedExercise = ref<ExerciseSummary | null>(null)
-
-// ---- 组 ----
-const rows = ref<SetRow[]>([emptyRow()])
-const prefillNote = ref('')
+/**
+ * 这次训练的草稿：**多个动作**，每个动作各自有自己的组。
+ *
+ * 2026-10-25 之前这里是 `selectedExercise` + 一份 `rows`，点第二个动作会把第一个
+ * 覆盖掉 —— 用户报的就是「记完辅助引体，点高位下拉，引体的记录没了」。
+ * 一天练一块肌肉不可能只有一个动作，所以模型必须是一列而不是一个。
+ */
+const draft = ref<DraftItem[]>([])
 
 // ---- 训练本身 ----
 const title = ref('')
@@ -142,35 +146,62 @@ function onMuscleChange() {
 }
 
 /** 选中一个动作：把「上次」带出来。 */
+/**
+ * 把一个动作**加进草稿**（不是替换）。
+ *
+ * 已在草稿里的动作不重复加：再点一次多半是想改它的组，而不是想要两条同名记录。
+ */
 async function pickExercise(ex: ExerciseSummary) {
-  selectedExercise.value = ex
   saveError.value = null
   savedSummary.value = ''
+
+  if (draft.value.some((item) => item.exerciseId === ex.id)) {
+    return
+  }
+
+  let rows: SetRow[] = [emptyRow()]
+  let note = ''
   try {
     const lp = await lastPerformance(ex.id)
-    rows.value = rowsFromLastPerformance(lp)
-    prefillNote.value = lastPerformanceNote(lp)
+    rows = rowsFromLastPerformance(lp)
+    note = lastPerformanceNote(lp)
   } catch (e) {
     // 带不出上次不该拦住记录：给一行空组，把原因说出来
-    rows.value = [emptyRow()]
-    prefillNote.value = ''
     saveError.value = reason(e)
   }
+
+  draft.value.push({
+    exerciseId: ex.id,
+    nameZh: ex.nameZh,
+    nameEn: ex.nameEn,
+    rows,
+    prefillNote: note,
+  })
 }
 
-function addRow() {
-  rows.value.push(emptyRow())
+function addRow(item: DraftItem) {
+  item.rows.push(emptyRow())
 }
 
-function removeRow(index: number) {
-  rows.value.splice(index, 1)
+function removeRow(item: DraftItem, index: number) {
+  item.rows.splice(index, 1)
+}
+
+/** 把整个动作从草稿里去掉（不是删它的某一组）。 */
+function removeExercise(index: number) {
+  draft.value.splice(index, 1)
+}
+
+/** 这个动作是否已在草稿里（选择器上打高亮用）。 */
+function isPicked(id: number): boolean {
+  return draft.value.some((item) => item.exerciseId === id)
 }
 
 async function save() {
   saveError.value = ''
   savedSummary.value = ''
 
-  const problem = validationError(selectedExercise.value?.id ?? null, rows.value)
+  const problem = validationErrorMulti(draft.value)
   if (problem !== null) {
     saveError.value = problem
     return
@@ -179,20 +210,17 @@ async function save() {
   saving.value = true
   try {
     const result = await recordSession(
-      toSessionInput({
+      toSessionInputMulti({
         sessionDate: todayIso(),
         title: title.value,
         perceivedState: perceivedState.value,
         note: note.value,
-        exerciseId: selectedExercise.value!.id,
-        rows: rows.value,
+        items: draft.value,
       }),
     )
     savedSummary.value = `已记录：${result.exercises} 个动作 / ${result.sets} 组`
-    // 清空这一轮的表单，但**保留肌群与搜索词**——连着记第二个动作时不用重选
-    selectedExercise.value = null
-    rows.value = [emptyRow()]
-    prefillNote.value = ''
+    // 清空草稿，但**保留肌群与搜索词**——下一场训练多半还是这几块肌肉
+    draft.value = []
     title.value = ''
     perceivedState.value = ''
     note.value = ''
@@ -222,17 +250,14 @@ async function openDetail(id: number) {
  * 连点（或关掉又开）时用序号丢掉过期响应——先发的可能后到，把已关闭的
  * 面板改成有内容只会让人以为点错了。
  */
-async function openExerciseDetail() {
-  const ex = selectedExercise.value
-  if (ex === null) return
-
+async function openExerciseDetail(item: DraftItem) {
   const seq = ++panelSeq
   panelOpen.value = true
   panelDetail.value = null
   panelError.value = null
   panelLoading.value = true
   try {
-    const d = await exerciseDetail(ex.id)
+    const d = await exerciseDetail(item.exerciseId)
     if (seq !== panelSeq) return
     panelDetail.value = d
   } catch (e) {
@@ -286,7 +311,7 @@ onMounted(() => {
         <button
           type="button"
           class="exercise"
-          :class="{ picked: selectedExercise?.id === ex.id }"
+          :class="{ picked: isPicked(ex.id) }"
           @click="pickExercise(ex)"
         >
           <span class="ex-name">{{ ex.nameZh || ex.nameEn }}</span>
@@ -295,36 +320,44 @@ onMounted(() => {
       </li>
     </ul>
 
-    <!-- 2. 选动作 → 带出上次重量 → 填组 -->
-    <template v-if="selectedExercise">
-      <div class="exercise-head">
-        <h3>{{ selectedExercise.nameZh || selectedExercise.nameEn }}</h3>
-        <!-- 看做法是抽屉，不跳页：跳走会把下面已经填好的组丢掉 -->
-        <button type="button" class="look-up" @click="openExerciseDetail">看做法</button>
-      </div>
-      <p v-if="prefillNote" class="prefill">{{ prefillNote }}</p>
+    <!--
+      2. 草稿：**多个动作**，每个动作一块，各自有自己的组。
+         点「结束训练」一次性全部保存 —— 动作可以一直往上加，加错了就移除那一块。
+    -->
+    <template v-if="draft.length > 0">
+      <section v-for="(item, idx) in draft" :key="item.exerciseId" class="draft-item">
+        <div class="exercise-head">
+          <h3>{{ item.nameZh || item.nameEn }}</h3>
+          <div class="head-actions">
+            <!-- 看做法是抽屉，不跳页：跳走会把已经填好的组丢掉 -->
+            <button type="button" class="look-up" @click="openExerciseDetail(item)">看做法</button>
+            <button type="button" class="drop-exercise" @click="removeExercise(idx)">移除动作</button>
+          </div>
+        </div>
+        <p v-if="item.prefillNote" class="prefill">{{ item.prefillNote }}</p>
 
-      <table class="sets">
-        <thead>
-          <tr><th>#</th><th>重量</th><th>次数</th><th>完成</th><th></th></tr>
-        </thead>
-        <tbody>
-          <tr v-for="(row, i) in rows" :key="row.id" class="set-row">
-            <td class="idx">{{ i + 1 }}</td>
-            <td><input v-model="row.weight" class="weight" inputmode="decimal" /></td>
-            <td><input v-model="row.repetitions" class="reps" inputmode="numeric" /></td>
-            <td><input v-model="row.completed" class="completed" type="checkbox" /></td>
-            <td><button type="button" class="remove" @click="removeRow(i)">删除</button></td>
-          </tr>
-        </tbody>
-      </table>
+        <table class="sets">
+          <thead>
+            <tr><th>#</th><th>重量</th><th>次数</th><th>完成</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, i) in item.rows" :key="row.id" class="set-row">
+              <td class="idx">{{ i + 1 }}</td>
+              <td><input v-model="row.weight" class="weight" inputmode="decimal" /></td>
+              <td><input v-model="row.repetitions" class="reps" inputmode="numeric" /></td>
+              <td><input v-model="row.completed" class="completed" type="checkbox" /></td>
+              <td><button type="button" class="remove" @click="removeRow(item, i)">删除</button></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="row-actions">
+          <button type="button" class="add-row" @click="addRow(item)">加一组</button>
+        </div>
+      </section>
 
       <!-- 这条口径不写出来就没人知道：没打勾的组**不计入**本周容量 -->
       <p class="hint">打勾的组才算训练量；没打勾的是「还没做 / 还没记」。</p>
-
-      <div class="row-actions">
-        <button type="button" class="add-row" @click="addRow">加一组</button>
-      </div>
 
       <div class="session-fields">
         <label class="field">
@@ -342,7 +375,9 @@ onMounted(() => {
       </div>
 
       <div class="save-row">
-        <button type="button" class="primary" :disabled="saving" @click="save">结束训练</button>
+        <button type="button" class="primary" :disabled="saving" @click="save">
+          结束训练（{{ draft.length }} 个动作）
+        </button>
       </div>
     </template>
 
@@ -375,7 +410,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.page { padding: var(--gap-xl); max-width: 900px; }
+.page {
+  margin-inline: auto; padding: var(--gap-xl); max-width: 1440px; }
 h2 { font-size: 26px; margin: var(--gap-sm) 0 var(--gap-md); }
 h3 { font-size: 16px; margin: var(--gap-lg) 0 var(--gap-sm); }
 
@@ -409,6 +445,25 @@ select, input {
 .exercise.picked .ex-name { color: var(--accent); font-weight: 700; }
 .ex-name { font-weight: 600; }
 .ex-meta { color: var(--text-dim); font-size: 12px; }
+
+/* 一个动作一块：用户明确要求「点击动作后应该有框框框住动作名字」。
+   没有边框时，多个动作的组表会连成一片，分不清哪几行属于哪个动作。 */
+.draft-item {
+  border: var(--line-width) solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: var(--gap-md);
+  margin-top: var(--gap-md);
+  background: var(--panel);
+}
+
+.head-actions { display: flex; gap: var(--gap-sm); }
+
+.drop-exercise {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-color: var(--danger);
+  color: var(--danger);
+}
 
 .exercise-head { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-md); }
 .exercise-head h3 { margin-bottom: 0; }

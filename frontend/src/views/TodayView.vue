@@ -192,7 +192,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.page { padding: var(--gap-xl); max-width: 1000px; }
+.page {
+  margin-inline: auto; padding: var(--gap-xl); max-width: 1440px; }
 
 /* ── hero ─────────────────────────────────────────────── */
 .hero {

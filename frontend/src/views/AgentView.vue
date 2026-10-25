@@ -193,7 +193,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.page { padding: var(--gap-xl); max-width: 820px; display: flex; flex-direction: column; height: 100%; }
+.page {
+  margin-inline: auto; padding: var(--gap-xl); max-width: 960px; display: flex; flex-direction: column; height: 100%; }
 h2 { font-size: 26px; margin: var(--gap-sm) 0 var(--gap-md); }
 
 .empty { margin-top: var(--gap-lg); }

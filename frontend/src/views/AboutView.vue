@@ -252,7 +252,8 @@ const sources = [
 </template>
 
 <style scoped>
-.page { padding: var(--gap-xl); max-width: 760px; }
+.page {
+  margin-inline: auto; padding: var(--gap-xl); max-width: 960px; }
 h2 { font-size: 26px; margin: var(--gap-sm) 0 var(--gap-md); }
 
 /* 竖幅油画整幅放，不裁：它本身就是一个成品，裁了就只剩构图碎片 */
