@@ -53,12 +53,6 @@ for rel in sys.argv[2:]:
         Write-Host '写版本号失败，停下来。' -ForegroundColor Red
         exit 1
     }
-# 更新说明落成文件：prepare-release.py 从 docs/release-notes.txt 读它，
-# 最终写进 latest.json 的 notes —— 也就是应用里「有新版本」那句话。
- = Join-Path (Split-Path -Parent ) 'docs/release-notes.txt'
-$notesFile = Join-Path (Split-Path -Parent $PSScriptRoot) 'docs/release-notes.txt'
-[System.IO.File]::WriteAllText($notesFile, $Notes, [System.Text.UTF8Encoding]::new($false))
-
 }
 $pythonPath = 'E:\dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe'
 $root = Split-Path -Parent $PSScriptRoot
