@@ -27,9 +27,13 @@ export const LLM_PROVIDERS: LlmProvider[] = [
     id: 'qwen',
     label: '通义千问（阿里云百炼）',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    model: 'qwen-vl-max',
+    // 2026-10-25 实测：qwen-vl-max 已下线（返回 Model not exist）。
+    // 这里的默认值只是**起点** —— 百炼的型号上下线很频繁，
+    // 真正的权威是控制台「模型广场」里的 Model ID 原文。
+    model: 'qwen3-vl-plus',
     vision: true,
-    note: '国内直连、便宜，视觉与工具调用都支持。拍照记饮食可以用。',
+    note: '视觉与工具调用都支持。型号名以百炼控制台的 Model ID 为准'
+      + '（qwen-vl-max 这类旧型号已下线）。',
   },
   {
     id: 'zhipu',

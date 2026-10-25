@@ -190,7 +190,11 @@ public class OpenAiCompatibleClient implements LlmClient {
     private String explainStatus(int status, String body) {
         String hint = switch (status) {
             case 401, 403 -> "API key 不对或没有权限。";
-            case 404 -> "baseUrl 可能写错了（它应当以 /v1 这类版本号结尾，且不带 /chat/completions）。";
+            // 404 有两种常见原因，**必须都说出来**：地址错，或者型号不存在。
+            // 2026-10-25 实测：用户把 qwen-vl-max 填进百炼，返回的是
+            // {"error":{"message":"Model not exist."}} —— 地址完全正确。
+            // 只说「baseUrl 可能写错了」会把人往错误的方向带。
+            case 404 -> "接口返回 404：多半是**型号名不存在**（服务商会下线旧型号），其次是 baseUrl 写错（它应当以 /v1 这类版本号结尾，且不带 /chat/completions）。下面原文里的 message 会说明是哪一种。";
             case 429 -> "被限流了，等一会儿再试。";
             default -> null;
         };
