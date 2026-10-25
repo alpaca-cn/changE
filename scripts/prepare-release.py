@@ -83,6 +83,9 @@ for label, d in (("上传到 OSS", oss_dir), ("上传到 GitHub release", gh_dir
     for f in sorted(d.iterdir()):
         print(f"    {f.name:<42} {f.stat().st_size:>11,} B")
 print()
+print("  ── 分享给朋友的直链（贴到 release 说明最上面）──")
+print(f"    {OSS_BASE}/{exe_name}")
+print()
 print("  两份 latest.json 的差别只在 url：")
 print(f"    OSS    版本 -> {OSS_BASE}/{exe_name}")
 print(f"    GitHub 版本 -> https://github.com/{REPO}/releases/download/{tag}/{exe_name}")
