@@ -70,7 +70,7 @@ fn get_health(backend: tauri::State<'_, Backend>) -> Result<backend::Health, Str
 /// `Starting` 时去连 `127.0.0.1:0` 只会得到一个「连不上」的假错误，
 /// 把「后端还在起」误报成「后端坏了」。
 #[tauri::command]
-fn api_request(
+async fn api_request(
     backend: tauri::State<'_, Backend>,
     method: String,
     path: String,
@@ -87,7 +87,18 @@ fn api_request(
                 "后端状态是 ready，但没有端口——这是外壳内部的矛盾，请报告".to_string()
             })?;
             let timeout = timeout_ms.map(http::clamp_timeout);
-            http::api_request(port, &method, &path, body.as_deref(), timeout)
+            // **必须挪出主线程。** `std::net::TcpStream` 是阻塞的，而同步的
+            // `#[tauri::command] fn` 会在**主线程**上跑 —— 一次等模型的请求
+            // （现在给了 180 秒）就会把窗口的消息循环整个堵住，Windows 标题栏
+            // 出现「未响应」。2026-10-25 用户看到的正是这一条。
+            //
+            // 超时从 10 秒提到 180 秒之前，这个 bug 只是「卡一下」所以没被注意；
+            // 拉长超时把它放大了。早就该挪，与超时无关。
+            tauri::async_runtime::spawn_blocking(move || {
+                http::api_request(port, &method, &path, body.as_deref(), timeout)
+            })
+            .await
+            .map_err(|e| format!("请求线程异常退出：{e}"))?
         }
         BackendStatus::Starting => Err("后端还在启动中，请稍候".to_string()),
         BackendStatus::Failed => Err(format!("后端没有起来：{message}")),

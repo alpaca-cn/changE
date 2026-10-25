@@ -57,6 +57,11 @@ async function load() {
 }
 
 async function send() {
+  // **防重入。** 2026-10-25 用户连点了两次发送，界面上出现两条一模一样的
+  // 消息、后端跑了两轮 —— 而第二次那一轮在「正在想…」里根本看不出来。
+  // 按钮的 disabled 只是视觉上的，键盘回车与连点都绕得过它。
+  if (sending.value) return
+
   const text = draft.value.trim()
   const attached = image.value
   if ((text === '' && attached === null) || sending.value) return
@@ -185,7 +190,7 @@ onMounted(() => {
           placeholder="说一句话…"
           @keyup.enter="send"
         />
-        <button class="primary" :disabled="!canSend" @click="send">发送</button>
+        <button class="primary" :disabled="!canSend || sending" @click="send">发送</button>
         <button class="undo" title="回退智能体最近一次改动" @click="doUndo">撤销上一步</button>
       </div>
     </template>
