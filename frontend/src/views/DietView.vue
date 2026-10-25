@@ -4,7 +4,9 @@ import {
   MEAL_SLOTS,
   SLOT_LABELS,
   dailyNutrition,
+  deleteMeal,
   mealsOn,
+  moveMeal,
   recordMeal,
   searchFoods,
   type DailyNutrition,
@@ -164,6 +166,8 @@ const savedSummary = ref<string | null>(null)
 
 const daily = ref<DailyNutrition | null>(null)
 const dailyError = ref<string | null>(null)
+/** 改餐次 / 删除的失败原因。与加载失败分开放，否则一条错误会同时出现在两处。 */
+const actionError = ref<string | null>(null)
 const meals = ref<MealDetail[]>([])
 
 const preview = computed(() => draftTotal(draft.value))
@@ -199,6 +203,33 @@ function round1(v: number): number {
 function slotLabel(value: string): string {
   // 不做模板里的 `as` 断言：模板对 TS 语法的支持比脚本窄，一个字符串到远点更稳。
   return (SLOT_LABELS as Record<string, string>)[value] ?? value
+}
+
+/**
+ * 改一餐的餐次。
+ *
+ * 改完**重新拉当天**：总量、早/午/晚的分布都变了，只改本地对象会让
+ * 顶部的汇总与下面的列表对不上。
+ */
+async function onMoveMeal(id: number, slot: string) {
+  actionError.value = null
+  try {
+    await moveMeal(id, slot as MealSlot)
+    await loadDay()
+  } catch (e) {
+    actionError.value = reason(e)
+  }
+}
+
+/** 删除一餐（连条目）。走变更日志，误删可以在历史里撤销。 */
+async function onDeleteMeal(id: number) {
+  actionError.value = null
+  try {
+    await deleteMeal(id)
+    await loadDay()
+  } catch (e) {
+    actionError.value = reason(e)
+  }
 }
 
 async function loadDay() {
@@ -482,6 +513,8 @@ onMounted(() => {
       只列出有数据的餐次，等于把「晚餐忘了记」这件事从界面上抹掉 ——
       而那正是记饮食最需要被提醒的一类事实。
     -->
+    <p v-if="actionError" class="err action-error">{{ actionError }}</p>
+
     <div v-else class="slots">
       <section
         v-for="g in mealsBySlot"
@@ -500,19 +533,39 @@ onMounted(() => {
           <span v-else class="not-yet">还没记</span>
         </header>
 
-        <ul v-if="g.count > 0" class="items">
-          <template v-for="meal in g.meals" :key="meal.id">
-            <li v-for="it in meal.items" :key="it.mealItemId" class="item">
-              <span class="i-name">{{ it.nameZh }}</span>
-              <span class="i-amount">{{ it.grams }} 克</span>
-              <span class="i-macros">
-                P {{ round1(it.nutrition.protein) }} · F {{ round1(it.nutrition.fat) }} ·
-                C {{ round1(it.nutrition.carb) }}
-              </span>
-              <span class="i-kcal">{{ round1(it.nutrition.kcal) }}</span>
-            </li>
-          </template>
-        </ul>
+        <div v-if="g.count > 0" class="items">
+          <!--
+            按**餐**分组：同一个餐次下可能有多餐（一次外卖一次加餐），
+            每一餐都要能单独换餐次或删除 —— 记错餐次是最常见的错误。
+          -->
+          <div v-for="meal in g.meals" :key="meal.id" class="meal-block">
+            <div class="meal-bar">
+              <select
+                class="meal-slot"
+                :value="meal.slot"
+                :aria-label="'改这一餐的餐次'"
+                @change="onMoveMeal(meal.id, ($event.target as HTMLSelectElement).value)"
+              >
+                <option v-for="s in MEAL_SLOTS" :key="s" :value="s">{{ SLOT_LABELS[s] }}</option>
+              </select>
+              <span v-if="meal.eatenAt" class="meal-time">{{ meal.eatenAt.slice(11, 16) }}</span>
+              <button type="button" class="meal-delete" @click="onDeleteMeal(meal.id)">
+                删除
+              </button>
+            </div>
+            <ul class="meal-items">
+              <li v-for="it in meal.items" :key="it.mealItemId" class="item">
+                <span class="i-name">{{ it.nameZh }}</span>
+                <span class="i-amount">{{ it.grams }} 克</span>
+                <span class="i-macros">
+                  P {{ round1(it.nutrition.protein) }} · F {{ round1(it.nutrition.fat) }} ·
+                  C {{ round1(it.nutrition.carb) }}
+                </span>
+                <span class="i-kcal">{{ round1(it.nutrition.kcal) }}</span>
+              </li>
+            </ul>
+          </div>
+        </div>
       </section>
     </div>
   </section>
@@ -603,6 +656,33 @@ select, input {
   font-variant-numeric: tabular-nums;
 }
 .macro span { font-size: 10px; color: var(--eyebrow); }
+
+.meal-block + .meal-block { margin-top: var(--gap-sm); padding-top: var(--gap-sm); border-top: 1px dashed var(--line); }
+
+/* 控制条默认很淡：它是给「记错了要改」这种情况用的，
+   平时不该抢走食物名称和热量的注意力。 */
+.meal-bar { display: flex; align-items: center; gap: var(--gap-sm); margin-bottom: 2px; }
+.meal-slot {
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+}
+.meal-time { font-size: 11px; color: var(--text-dim); }
+.meal-delete {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.meal-delete:hover { color: var(--danger); border-color: var(--danger); }
+.meal-items { list-style: none; margin: 0; padding: 0; }
+.action-error { margin-top: var(--gap-sm); }
 
 .slots { display: flex; flex-direction: column; gap: var(--gap-sm); }
 .slot-card {

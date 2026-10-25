@@ -269,6 +269,56 @@ public class NutritionService {
         }
     }
 
+    /**
+     * 改一餐的餐次（比如记成午餐的那条其实是晚餐）。
+     *
+     * <p>只动 {@code slot} 一个字段，但**照样写一条变更日志** —— 改餐次会改变
+     * 「今天早/午/晚各吃了多少」的分布，那是用户会想撤销的操作。
+     *
+     * @throws IllegalArgumentException 这一餐不存在，或餐次不在合法值里
+     */
+    @Transactional
+    public void moveMeal(long mealId, String slot) {
+        Meal meal = meals.findById(mealId)
+                .orElseThrow(() -> new IllegalArgumentException("找不到这一餐：" + mealId));
+        if (slot == null || !Meal.VALID_SLOTS.contains(slot)) {
+            throw new IllegalArgumentException("餐次不合法：" + slot
+                    + "（合法值 " + Meal.VALID_SLOTS + "）");
+        }
+        if (slot.equals(meal.slot)) {
+            return;   // 没变就别写日志，否则撤销历史里会多一条什么也没改的记录
+        }
+        Map<String, Object> before = mealSnapshot(meal);
+        meal.slot = slot;
+        meals.save(meal);
+        changeLog.recordUpdate("meal", mealId, before, mealSnapshot(meal), USER_ORIGIN, null);
+    }
+
+    /**
+     * 删除一餐，连它的条目一起。
+     *
+     * <p><b>先删条目再删餐</b>：条目挂在餐上，真实的写入顺序是「先餐后条目」，
+     * 撤销走的是逆序，所以日志要按「先条目后餐」记，撤销时才会先还原餐、
+     * 再还原条目。
+     *
+     * <p><b>日志是「可审计」，不是「可撤销」。</b> 通用回放故意拒绝删除
+     * （ChangeLogService.undo 会抛：「回退它需要重建整行，包括主键」）。
+     * 所以删掉的一餐在日志里留得住痕迹，但**点撤销恢复不了** ——
+     * 这是当前的设计边界，不要在这里误以为能反悔。
+     */
+    @Transactional
+    public void deleteMeal(long mealId) {
+        Meal meal = meals.findById(mealId)
+                .orElseThrow(() -> new IllegalArgumentException("找不到这一餐：" + mealId));
+
+        for (MealItem item : items.findByMealIdOrderByOrderIndexAsc(mealId)) {
+            changeLog.recordDelete("meal_item", item.id, itemSnapshot(item), USER_ORIGIN, null);
+            items.delete(item);
+        }
+        changeLog.recordDelete("meal", mealId, mealSnapshot(meal), USER_ORIGIN, null);
+        meals.delete(meal);
+    }
+
     private static Map<String, Object> mealSnapshot(Meal m) {
         Map<String, Object> map = new LinkedHashMap<>();
         // 日期/时间戳一律 toString()：ChangeLogService 用的是裸 ObjectMapper

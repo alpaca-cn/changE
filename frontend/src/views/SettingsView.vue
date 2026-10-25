@@ -18,6 +18,33 @@ import {
  * 否则用户会以为自己的 key 丢了。
  */
 const config = ref<AgentConfig | null>(null)
+// 服务商预设：换模型时不用自己记接口地址和型号名（各家路径都不一样）
+import { LLM_PROVIDERS, providerById } from './llm-providers'
+
+/** 当前选中的预设 id。「自定义」时是 'custom'。 */
+const providerId = ref('custom')
+
+/** 选中一个预设：把地址与型号填进表单（仍可手动改）。 */
+function applyProvider(id: string) {
+  providerId.value = id
+  const p = providerById(id)
+  if (p === undefined) return
+  baseUrl.value = p.baseUrl
+  model.value = p.model
+}
+
+/** 当前预设给的那句提示（没有预设时为空）。 */
+const providerNote = computed(() => {
+  const p = providerById(providerId.value)
+  return p === undefined ? '' : p.note
+})
+
+/** 当前预设是不是**不支持图片**——拍照记饮食那一条会一直失败。 */
+const providerLacksVision = computed(() => {
+  const p = providerById(providerId.value)
+  return p !== undefined && !p.vision
+})
+
 const baseUrl = ref('')
 const model = ref('')
 const apiKey = ref('')
@@ -126,6 +153,15 @@ onMounted(() => {
       <p v-else class="warn">还没配置，智能体对话用不了。</p>
 
       <label class="field">
+        <span class="label">服务商</span>
+        <select class="provider" :value="providerId" @change="applyProvider(($event.target as HTMLSelectElement).value)">
+          <option v-for="p in LLM_PROVIDERS" :key="p.id" :value="p.id">{{ p.label }}</option>
+        </select>
+        <!-- 不支持图片的要说出来：否则用户会一直以为是自己照片的问题 -->
+        <span v-if="providerNote" class="note" :class="{ bad: providerLacksVision }">{{ providerNote }}</span>
+      </label>
+
+      <label class="field">
         <span class="label">接口地址</span>
         <input v-model="baseUrl" type="text" placeholder="https://api.deepseek.com/v1" />
         <span class="note">要带版本号，但不要带 /chat/completions。</span>
@@ -198,6 +234,9 @@ h2 { font-size: 26px; margin: var(--gap-sm) 0 var(--gap-md); }
 h3 { font-size: 15px; }
 .hint { color: var(--text-dim); font-size: 12px; line-height: 1.7; margin: var(--gap-sm) 0 var(--gap-md); }
 .hint code { font-family: var(--mono); font-size: 11px; }
+
+.provider { font-size: 13px; }
+.note.bad { color: var(--danger); }
 
 .field { display: block; margin-bottom: var(--gap-md); }
 .label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 5px; }

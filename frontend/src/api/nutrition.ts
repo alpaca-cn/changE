@@ -144,6 +144,20 @@ export async function mealDetail(id: number): Promise<MealDetail> {
 }
 
 /** 某一天的餐（`date` 省略 = 今天，由后端决定）。没记过就是空数组。 */
+/**
+ * 改一餐的餐次。
+ *
+ * <p>用 POST 不用 PATCH：外壳的 `api_request` 白名单只有 GET / POST。
+ */
+export function moveMeal(id: number, slot: MealSlot): Promise<unknown> {
+  return callApi('POST', `/api/meals/${id}/move`, { slot })
+}
+
+/** 删除一餐（连条目）。走变更日志，可以撤销。 */
+export function deleteMeal(id: number): Promise<unknown> {
+  return callApi('POST', `/api/meals/${id}/delete`)
+}
+
 export async function mealsOn(date?: string): Promise<MealDetail[]> {
   return (await callApi('GET', `/api/meals${date === undefined ? '' : `?date=${date}`}`)) as MealDetail[]
 }

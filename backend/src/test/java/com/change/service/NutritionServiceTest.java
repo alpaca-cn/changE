@@ -29,6 +29,13 @@ class NutritionServiceTest {
 
     @Autowired NutritionService nutrition;
     @Autowired JdbcTemplate jdbc;
+    @Autowired ChangeLogService changeLog;
+    /**
+     * JPA 的 save/delete 要等到 flush 才落库，而这里的断言用裸 jdbc 查。
+     * 不手动 flush 的话，查到的永远是改动之前的状态——那会让「删了没有」
+     * 这类断言在任何实现下都失败，看起来像服务的问题。
+     */
+    @Autowired jakarta.persistence.EntityManager em;
 
     /** 100 kcal/100g、10 克蛋白/100g 的测试食物。 */
     private long newFood(String nameZh, String unitName, double gramsPerUnit) {
@@ -299,5 +306,97 @@ class NutritionServiceTest {
     @Test
     void a_day_with_nothing_recorded_returns_an_empty_list() {
         assertThat(nutrition.mealsOn(LocalDate.of(2030, 1, 1))).isEmpty();
+    }
+    // ── 改餐次 ────────────────────────────────────────────────────────────
+
+    /** 记一餐，返回它的 id。 */
+    private long recordOneMeal(String foodName) {
+        long rice = newFood(foodName, null, 0);
+        nutrition.recordMeal(meal(List.of(new NutritionService.ItemInput(rice, 175, null))));
+        return jdbc.queryForObject("SELECT MAX(id) FROM meal", Long.class);
+    }
+
+    @Test
+    void moving_a_meal_changes_its_slot_and_logs_one_update() {
+        long mealId = recordOneMeal("ZZ 挪餐米饭");
+        int before = logsFor("meal", mealId);
+
+        nutrition.moveMeal(mealId, "dinner");
+        em.flush();
+
+        assertThat(jdbc.queryForObject("SELECT slot FROM meal WHERE id = ?", String.class, mealId))
+                .isEqualTo("dinner");
+        // 改餐次会改变「早/午/晚各吃了多少」的分布，用户会想撤销 —— 所以必须留日志
+        assertThat(logsFor("meal", mealId)).isEqualTo(before + 1);
+    }
+
+    @Test
+    void moving_a_meal_to_the_same_slot_writes_no_log() {
+        long mealId = recordOneMeal("ZZ 同餐次米饭");
+        int before = logsFor("meal", mealId);
+
+        nutrition.moveMeal(mealId, "lunch");
+
+        // 没变就别写：撤销历史里多一条「什么也没改」的记录只会碍事
+        assertThat(logsFor("meal", mealId)).isEqualTo(before);
+    }
+
+    @Test
+    void moving_a_meal_to_an_invalid_slot_is_rejected() {
+        long mealId = recordOneMeal("ZZ 坏餐次米饭");
+
+        assertThatThrownBy(() -> nutrition.moveMeal(mealId, "brunch"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("餐次不合法");
+
+        assertThat(jdbc.queryForObject("SELECT slot FROM meal WHERE id = ?", String.class, mealId))
+                .isEqualTo("lunch");
+    }
+
+    @Test
+    void moving_a_missing_meal_is_rejected() {
+        assertThatThrownBy(() -> nutrition.moveMeal(999_999L, "dinner"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("找不到这一餐");
+    }
+
+    // ── 删除 ──────────────────────────────────────────────────────────────
+
+    @Test
+    void deleting_a_meal_removes_it_and_its_items() {
+        long mealId = recordOneMeal("ZZ 删除米饭");
+
+        nutrition.deleteMeal(mealId);
+        em.flush();
+
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM meal WHERE id = ?", Integer.class, mealId)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM meal_item WHERE meal_id = ?", Integer.class, mealId)).isZero();
+    }
+
+    @Test
+    void deleting_a_meal_is_logged_but_undo_refuses_it_by_design() {
+        long mealId = recordOneMeal("ZZ 撤销米饭");
+
+        nutrition.deleteMeal(mealId);
+        em.flush();
+
+        // 删除留下了日志（可审计）
+        assertThat(logsFor("meal", mealId)).isGreaterThanOrEqualTo(1);
+
+        // 但通用回放**拒绝**撤销删除：要回退就得重建整行，包括主键。
+        // 把这条钉住，免得以后有人以为「有日志 = 能撤销」。
+        assertThatThrownBy(() -> changeLog.undo(
+                jdbc.queryForObject("SELECT MAX(id) FROM change_log", Long.class)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("删除");
+    }
+
+    @Test
+    void deleting_a_missing_meal_is_rejected() {
+        assertThatThrownBy(() -> nutrition.deleteMeal(999_999L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("找不到这一餐");
     }
 }

@@ -15,6 +15,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 饮食的读写入口。
@@ -69,6 +70,26 @@ public class NutritionController {
     @PostMapping("/meals")
     public NutritionService.Result record(@RequestBody NutritionService.MealInput input) {
         return nutrition.recordMeal(input);
+    }
+
+    /**
+     * 改一餐的餐次。
+     *
+     * <p>用 POST 而不是 PATCH：外壳的 {@code api_request} 只放行 GET / POST
+     * （见 http.rs 的白名单），PATCH 会让这个接口从应用里根本调不到。
+     */
+    @PostMapping("/meals/{id}/move")
+    public Map<String, Object> moveMeal(@PathVariable long id,
+                                        @RequestBody Map<String, String> body) {
+        nutrition.moveMeal(id, body == null ? null : body.get("slot"));
+        return Map.of("ok", true);
+    }
+
+    /** 删除一餐（连条目）。走变更日志，可以撤销。 */
+    @PostMapping("/meals/{id}/delete")
+    public Map<String, Object> deleteMeal(@PathVariable long id) {
+        nutrition.deleteMeal(id);
+        return Map.of("ok", true);
     }
 
     /** 一餐的详情；不存在时 404。 */
