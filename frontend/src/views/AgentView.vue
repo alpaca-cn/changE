@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { chat, getAgentConfig, history, undo, type AgentConfig, type AgentMessage } from '../api/agent'
 import { toImageDataUrl } from '../lib/image'
@@ -7,7 +7,43 @@ import { toImageDataUrl } from '../lib/image'
 const router = useRouter()
 
 const config = ref<AgentConfig | null>(null)
-const messages = ref<AgentMessage[]>([])
+/**
+ * 界面上的消息。
+ *
+ * 比后端的 `AgentMessage` 多两样**只该活在前端**的东西：
+ *
+ * - `image`：这条消息附带的图片（data URL）。后端只存文字，所以刷新页面后
+ *   图片会消失 —— 这是已知的取舍，不是 bug。但**本次会话里必须看得见自己发了哪张图**：
+ *   原来把 data URL 直接丢掉、只留一个「（图片）」字样，用户没法确认发的是不是那张。
+ * - `elapsedMs`：这一轮模型用了多久。用户问「思考时间」，而「正在想…」三个字
+ *   让人不知道是在算还是卡了。
+ */
+interface UiMessage extends AgentMessage {
+  image?: string
+  elapsedMs?: number
+}
+
+const messages = ref<UiMessage[]>([])
+
+/** 本轮已经想了多久（秒）。发送期间每 100ms 刷一次。 */
+const elapsed = ref(0)
+let elapsedTimer: ReturnType<typeof setInterval> | undefined
+
+function startTimer() {
+  const began = Date.now()
+  elapsed.value = 0
+  stopTimer()
+  elapsedTimer = setInterval(() => {
+    elapsed.value = (Date.now() - began) / 1000
+  }, 100)
+}
+
+function stopTimer() {
+  if (elapsedTimer !== undefined) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = undefined
+  }
+}
 const draft = ref('')
 /** 已选好、已压好的图片（data URL）。发出去之后清空。 */
 const image = ref<string | null>(null)
@@ -70,24 +106,29 @@ async function send() {
   // 不做乐观更新的坏处是空白等两秒，不知道有没有发出去。
   messages.value.push({
     role: 'user',
-    content: attached === null ? text : (text === '' ? '（图片）' : `${text}（图片）`),
+    content: attached === null ? text : (text === '' ? '（图片）' : text),
     tool_calls: null,
     created_at: new Date().toISOString(),
+    // **图片本身要留在消息上**，否则气泡里永远只有一个「（图片）」字样
+    image: attached ?? undefined,
   })
   draft.value = ''
   image.value = null
   sending.value = true
   error.value = null
   undoNote.value = null
+  startTimer()
   await scrollToBottom()
 
   try {
+    const began = Date.now()
     const r = await chat(text, attached ?? undefined)
     messages.value.push({
       role: 'assistant',
       content: r.reply,
       tool_calls: r.tools.length > 0 ? JSON.stringify(r.tools) : null,
       created_at: new Date().toISOString(),
+      elapsedMs: Date.now() - began,
     })
   } catch (e) {
     // 失败的一句话也要留在对话里：否则用户重试时会重复发一次已经成功的部分
@@ -98,6 +139,7 @@ async function send() {
     error.value = reason(e)
   } finally {
     sending.value = false
+    stopTimer()
     await scrollToBottom()
   }
 }
@@ -126,9 +168,30 @@ async function doUndo() {
   }
 }
 
+/**
+ * 把后端保存的对话拉回来。
+ *
+ * **不拉的话切一次页面就没了**：`messages` 是组件内的 ref，路由一换组件卸载，
+ * 历史连同上下文全清空。2026-10-25 用户报的就是这个。
+ *
+ * 后端一直在存（`GET /api/agent/history`），只是界面从来没读过它。
+ */
+async function loadHistory() {
+  try {
+    const h = await history()
+    messages.value = h.map((m) => ({ ...m }))
+    await scrollToBottom()
+  } catch {
+    // 读不到历史不该拦住新对话：静默从空开始，比弹一个错让人以为「坏了」好
+  }
+}
+
 onMounted(() => {
   void load()
+  void loadHistory()
 })
+
+onUnmounted(stopTimer)
 </script>
 
 <template>
@@ -155,14 +218,17 @@ onMounted(() => {
           class="msg"
           :class="m.role === 'user' ? 'me' : 'ai'"
         >
-          <p class="text">{{ m.content }}</p>
+          <!-- 发出去的图要看得见：只写「（图片）」等于没发过 -->
+          <img v-if="m.image" :src="m.image" class="msg-image" alt="我发的图片" />
+          <p v-if="m.content !== ''" class="text">{{ m.content }}</p>
           <!-- 调了哪些工具要露出来：用户有权知道这一句话到底动了什么 -->
           <p v-if="toolsOf(m).length > 0" class="tools">
             调用了：{{ toolsOf(m).join('、') }}
           </p>
+          <p v-if="m.elapsedMs" class="took">用时 {{ (m.elapsedMs / 1000).toFixed(1) }} 秒</p>
         </div>
 
-        <p v-if="sending" class="hint">正在想…</p>
+        <p v-if="sending" class="hint">正在想… {{ elapsed.toFixed(1) }} 秒</p>
       </div>
 
       <p v-if="error" class="err">{{ error }}</p>
@@ -244,6 +310,15 @@ h2 { font-size: 26px; margin: var(--gap-sm) 0 var(--gap-md); }
 .undo { color: var(--text-dim); }
 .pick { white-space: nowrap; }
 .file { display: none; }
+
+.msg-image {
+  display: block;
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: 10px;
+  margin-bottom: 6px;
+}
+.took { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
 
 .preview {
   display: flex;
